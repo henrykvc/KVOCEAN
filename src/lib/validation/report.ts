@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { ACCOUNT_ALIASES, DEFAULT_CLASSIFICATION_GROUPS, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, pasteEditKey, safeFloat, type SessionSignFixes } from "./engine";
 
 export type ReportPeriod = {
@@ -13,7 +13,9 @@ export type ReportPeriod = {
 export type StatementMatrixRow = {
   signFlag: 0 | 1;
   section: string;
+  sectionKey: string;
   accountName: string;
+  canonicalKey: string;
   values: Record<string, number | null>;
 };
 
@@ -44,8 +46,8 @@ export type SavedQuarterSnapshot = {
   quarterKey: string;
   quarterLabel: string;
   savedAt: string;
-  rawStatementRows: Array<{ signFlag: 0 | 1; section: string; accountName: string; value: number | null }>;
-  adjustedStatementRows: Array<{ signFlag: 0 | 1; section: string; accountName: string; value: number | null }>;
+  rawStatementRows: Array<{ signFlag: 0 | 1; section: string; sectionKey: string; accountName: string; canonicalKey: string; value: number | null }>;
+  adjustedStatementRows: Array<{ signFlag: 0 | 1; section: string; sectionKey: string; accountName: string; canonicalKey: string; value: number | null }>;
   source: {
     pastedText: string;
     tolerance: number;
@@ -59,6 +61,8 @@ export type SavedQuarterSnapshot = {
 type RowMeta = {
   accountName: string;
   section: string;
+  sectionKey: string;
+  canonicalKey: string;
   signFlag: 0 | 1;
   signCode: SignCode;
   sourceCol: number;
@@ -83,7 +87,46 @@ const ASSET_LIABILITY_ITEMS = ["현금및현금성자산", "매도가능증권",
 const VARIABLE_COST_ALIASES = ["매출원가", "외주용역비", "외주비", "지급수수료", "광고선전비", "배송비", "운반비"];
 const BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
-const PAYABLE_POSITIVE_ALIASES = ["단기대여금", "개발비", "선급금", "퇴직급여충당부채", "차입금"];
+
+function normalizeText(value: string) {
+  return value.replace(/\s+/g, "").trim();
+}
+
+function normalizeSectionKey(section: string) {
+  const normalized = normalizeText(section);
+  if (["판매비와관리비", "판관비", "영업비용"].includes(normalized)) {
+    return "영업비용";
+  }
+  return normalized || "기타";
+}
+
+function resolveCanonicalAccountKey(accountName: string, sectionKey: string, classificationGroups: ClassificationGroups) {
+  const normalizedName = normalizeText(accountName);
+
+  for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
+    if (aliases.some((alias) => normalizedName === normalizeText(alias) || normalizedName.includes(normalizeText(alias)))) {
+      return canonicalKey;
+    }
+  }
+
+  for (const [canonicalKey, aliases] of Object.entries(ACCOUNT_ALIASES)) {
+    if (aliases.some((alias) => normalizedName === normalizeText(alias) || normalizedName.includes(normalizeText(alias)))) {
+      return canonicalKey;
+    }
+  }
+
+  if (sectionKey === "영업비용" && normalizedName.includes("광고")) {
+    return "광고선전비";
+  }
+  if (sectionKey === "영업비용" && normalizedName.includes("연구")) {
+    return "연구개발비";
+  }
+  if (sectionKey === "영업비용" && normalizedName.includes("인건비")) {
+    return "인건비";
+  }
+
+  return normalizedName;
+}
 
 function dateLabelFromValue(value: string | number | Date | null | undefined) {
   if (value instanceof Date) {
@@ -162,6 +205,7 @@ function resolveRowMeta(
   nameRow: string[],
   logicConfig: LogicConfig,
   companyConfigs: CompanyConfigs,
+  classificationGroups: ClassificationGroups,
   companyName: string | null,
   sessionSignFixes: SessionSignFixes
 ) {
@@ -175,6 +219,7 @@ function resolveRowMeta(
     }
 
     const section = prevSect || "기타";
+    const sectionKey = normalizeSectionKey(section);
     let signCode = inferSignFromName(accountName, logicConfig) ?? 0;
 
     for (const [keyword, override] of Object.entries(overrides[section] ?? {})) {
@@ -191,6 +236,8 @@ function resolveRowMeta(
         return {
           accountName,
           section,
+          sectionKey,
+          canonicalKey: resolveCanonicalAccountKey(accountName, sectionKey, classificationGroups),
           signFlag: signCode === 1 ? 1 : 0,
           signCode,
           sourceCol: index
@@ -222,16 +269,26 @@ function buildStatementRows(
       return {
         signFlag: meta.signFlag,
         section: meta.section,
+        sectionKey: meta.sectionKey,
         accountName: meta.accountName,
+        canonicalKey: meta.canonicalKey,
         values
       } satisfies StatementMatrixRow;
     });
 }
 
 function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName?: string) {
+  const canonicalCandidates = candidates.flatMap((candidate) => {
+    const base = [candidate];
+    const aliases = DEFAULT_CLASSIFICATION_GROUPS[candidate] ?? ACCOUNT_ALIASES[candidate] ?? [];
+    return [...base, ...aliases].map(normalizeText);
+  });
+  const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const matches = rows.filter((row) => {
-    const byName = candidates.some((candidate) => row.accountName === candidate || row.accountName.includes(candidate));
-    const bySection = !sectionName || row.section === sectionName;
+    const rowKey = normalizeText(row.canonicalKey || row.accountName);
+    const rowName = normalizeText(row.accountName);
+    const byName = canonicalCandidates.some((candidate) => rowKey === candidate || rowName === candidate || rowName.includes(candidate));
+    const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
     return byName && bySection;
   });
 
@@ -243,11 +300,11 @@ function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates:
 function getSectionTotals(rows: StatementMatrixRow[], periods: ReportPeriod[]) {
   const totals = new Map<string, Record<string, number>>();
   rows.forEach((row) => {
-    const current = totals.get(row.section) ?? Object.fromEntries(periods.map((period) => [period.key, 0]));
+    const current = totals.get(row.sectionKey) ?? Object.fromEntries(periods.map((period) => [period.key, 0]));
     periods.forEach((period) => {
       current[period.key] += row.values[period.key] ?? 0;
     });
-    totals.set(row.section, current);
+    totals.set(row.sectionKey, current);
   });
   return totals;
 }
@@ -633,6 +690,7 @@ export function buildReportingModel(args: {
   tolerance?: number;
   logicConfig: LogicConfig;
   companyConfigs: CompanyConfigs;
+  classificationGroups: ClassificationGroups;
   pasteEdits: Record<string, number>;
   sessionSignFixes: SessionSignFixes;
 }) {
@@ -651,7 +709,7 @@ export function buildReportingModel(args: {
   const detectedCompany = detectCompanyFromPaste(args.pastedText);
   const companyName = args.selectedCompany?.trim() || detectedCompany || null;
   const periods = buildPeriods(parsed.nameRow, parsed.dataRows);
-  const metaRows = resolveRowMeta(parsed.catRow, parsed.nameRow, args.logicConfig, args.companyConfigs, companyName, args.sessionSignFixes);
+  const metaRows = resolveRowMeta(parsed.catRow, parsed.nameRow, args.logicConfig, args.companyConfigs, args.classificationGroups, companyName, args.sessionSignFixes);
   const rawStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, args.pasteEdits, false);
   const adjustedStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, args.pasteEdits, true);
   const context: MetricContext = {
@@ -677,6 +735,7 @@ export function buildQuarterSnapshots(args: {
   tolerance: number;
   logicConfig: LogicConfig;
   companyConfigs: CompanyConfigs;
+  classificationGroups: ClassificationGroups;
   pasteEdits: Record<string, number>;
   sessionSignFixes: SessionSignFixes;
 }) {
@@ -692,13 +751,17 @@ export function buildQuarterSnapshots(args: {
     rawStatementRows: reporting.rawStatementRows.map((row) => ({
       signFlag: row.signFlag,
       section: row.section,
+      sectionKey: row.sectionKey,
       accountName: row.accountName,
+      canonicalKey: row.canonicalKey,
       value: row.values[period.key] ?? null
     })),
     adjustedStatementRows: reporting.adjustedStatementRows.map((row) => ({
       signFlag: row.signFlag,
       section: row.section,
+      sectionKey: row.sectionKey,
       accountName: row.accountName,
+      canonicalKey: row.canonicalKey,
       value: row.values[period.key] ?? null
     })),
     source: {
@@ -744,16 +807,19 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[]) {
     const rowMap = new Map<string, StatementMatrixRow>();
     snapshots.forEach((snapshot) => {
       snapshot[kind].forEach((row) => {
-        const key = `${row.section}__${row.accountName}`;
+        const key = `${row.sectionKey}__${row.canonicalKey}`;
         if (!rowMap.has(key)) {
           rowMap.set(key, {
             signFlag: row.signFlag,
             section: row.section,
+            sectionKey: row.sectionKey,
             accountName: row.accountName,
+            canonicalKey: row.canonicalKey,
             values: Object.fromEntries(periods.map((period) => [period.key, null]))
           });
         }
-        rowMap.get(key)!.values[snapshot.quarterKey] = row.value;
+        const current = rowMap.get(key)!;
+        current.values[snapshot.quarterKey] = (current.values[snapshot.quarterKey] ?? 0) + (row.value ?? 0);
       });
     });
     return Array.from(rowMap.values());

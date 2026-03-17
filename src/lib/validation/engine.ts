@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 
 export type ParsedPaste = {
   catRow: string[];
@@ -68,6 +68,7 @@ export function pasteEditKey(rowIndex: number, colIndex: number) {
 export type PersistedState = {
   logicConfig: LogicConfig;
   companyConfigs: CompanyConfigs;
+  classificationGroups: ClassificationGroups;
 };
 
 export const STORAGE_KEYS = {
@@ -78,7 +79,8 @@ export const STORAGE_KEYS = {
 export function getDefaultPersistedState(): PersistedState {
   return {
     logicConfig: structuredClone(DEFAULT_LOGIC_CONFIG),
-    companyConfigs: structuredClone(DEFAULT_COMPANY_CONFIGS)
+    companyConfigs: structuredClone(DEFAULT_COMPANY_CONFIGS),
+    classificationGroups: structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
   };
 }
 
@@ -92,7 +94,8 @@ export function parsePersistedState(raw: string | null): PersistedState {
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
     return {
       logicConfig: { ...fallback.logicConfig, ...(parsed.logicConfig ?? {}) },
-      companyConfigs: { ...fallback.companyConfigs, ...(parsed.companyConfigs ?? {}) }
+      companyConfigs: { ...fallback.companyConfigs, ...(parsed.companyConfigs ?? {}) },
+      classificationGroups: { ...fallback.classificationGroups, ...(parsed.classificationGroups ?? {}) }
     };
   } catch {
     return fallback;
