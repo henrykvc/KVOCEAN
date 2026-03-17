@@ -476,6 +476,23 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
 
     const currentSign = signFromLabel(item.부호);
     const allowedSigns = item._allowedSigns ?? [0, 1, 2];
+
+    if (currentSign === 1 && item.원본값 < 0 && allowedSigns.includes(0)) {
+      const plusApplied = applySign(item.원본값, 0);
+      const plusComputed = result.computed - item.적용값 + plusApplied;
+      const plusDiff = result.parent_val - plusComputed;
+      const plusAbsDiff = Math.abs(plusDiff);
+
+      if (plusAbsDiff <= 1 || (absDiff > 0 && (absDiff - plusAbsDiff) / absDiff >= 0.5)) {
+        actions.push({
+          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 차감 계정인데 값이 이미 **음수(-)**로 들어왔습니다. 먼저 **가산(+)**으로 바꿔서 확인하는 것이 가장 정확합니다. 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(plusDiff)}원으로 줄어듭니다.`,
+          label: `가산(+)으로 수정: ${item.계정명}`,
+          fix: { sect, acct: item.계정명, newSign: 0 }
+        });
+        continue;
+      }
+    }
+
     const candidates = allowedSigns
       .filter((candidate) => candidate !== currentSign)
       .map((candidate) => {
