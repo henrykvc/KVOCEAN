@@ -26,6 +26,7 @@ import {
   buildCompanyReport,
   buildQuarterSnapshots,
   buildReportingModel,
+  formatMetricRatio,
   formatMetricValue,
   type FinalMetricRow,
   type ReportingModel,
@@ -180,7 +181,8 @@ function buildFinalSheetRows(reporting: ReportingModel) {
         구분: section.title,
         항목: metric.label,
         ...Object.fromEntries(reporting.periods.flatMap((period) => ([
-          [`${period.label} 금액`, metric.values[period.key]],
+          [`${period.label} 금액`, metric.amounts[period.key]],
+          [`${period.label} 비율`, metric.ratios[period.key]],
           [`${period.label} 증감율`, metric.growthRates[period.key]]
         ])))
       });
@@ -1085,7 +1087,8 @@ export function ValidatorApp() {
                                   {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
-                                        <strong>{formatMetricValue(row, row.values[period.key])}</strong>
+                                        <strong>금액 {formatMetricValue(row, row.amounts[period.key])}</strong>
+                                        <span className="muted">비율 {formatMetricRatio(row.ratios[period.key])}</span>
                                         <span className="muted">
                                           {row.growthRates[period.key] === null || row.growthRates[period.key] === undefined ? "-" : `전분기 ${row.growthRates[period.key]!.toFixed(1)}%`}
                                         </span>
