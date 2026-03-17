@@ -3,9 +3,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import {
+  DEFAULT_CLASSIFICATION_GROUPS,
   DEFAULT_COMPANY_CONFIGS,
   DEFAULT_LOGIC_CONFIG,
   LAST_PATCH,
+  type ClassificationGroups,
   type CompanyConfigs,
   type LogicConfig,
   type SignCode
@@ -34,12 +36,17 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "validate" | "data" | "report" | "config" | "formulas" | "export";
+type TabKey = "validate" | "data" | "report" | "config" | "classify" | "formulas" | "export";
 
 type OverrideRow = {
   section: string;
   keyword: string;
   sign: SignCode;
+};
+
+type ClassificationRow = {
+  canonicalKey: string;
+  aliases: string;
 };
 
 function renderDiagnosisText(text: string) {
@@ -79,6 +86,10 @@ function cloneCompanyConfigs(configs: CompanyConfigs): CompanyConfigs {
   return structuredClone(configs);
 }
 
+function cloneClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
+  return structuredClone(groups);
+}
+
 function parseKeywordList(value: string) {
   return value
     .split(/\r?\n|,/)
@@ -114,6 +125,21 @@ function rowsToOverrides(rows: OverrideRow[]) {
     }
     acc[section] ??= {};
     acc[section][keyword] = row.sign;
+    return acc;
+  }, {});
+}
+
+function classificationGroupsToRows(groups: ClassificationGroups): ClassificationRow[] {
+  return Object.entries(groups).map(([canonicalKey, aliases]) => ({ canonicalKey, aliases: aliases.join("\n") }));
+}
+
+function rowsToClassificationGroups(rows: ClassificationRow[]) {
+  return rows.reduce<ClassificationGroups>((acc, row) => {
+    const canonicalKey = row.canonicalKey.trim();
+    if (!canonicalKey) {
+      return acc;
+    }
+    acc[canonicalKey] = parseKeywordList(row.aliases);
     return acc;
   }, {});
 }
@@ -287,11 +313,13 @@ export function ValidatorApp() {
   const [selectedCompany, setSelectedCompany] = useState("");
   const [logicConfig, setLogicConfig] = useState<LogicConfig>(cloneLogicConfig(DEFAULT_LOGIC_CONFIG));
   const [companyConfigs, setCompanyConfigs] = useState<CompanyConfigs>(cloneCompanyConfigs(DEFAULT_COMPANY_CONFIGS));
+  const [classificationGroups, setClassificationGroups] = useState<ClassificationGroups>(cloneClassificationGroups(DEFAULT_CLASSIFICATION_GROUPS));
   const [pasteEdits, setPasteEdits] = useState<Record<string, number>>({});
   const [sessionSignFixes, setSessionSignFixes] = useState<SessionSignFixes>({});
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
+  const [classificationRows, setClassificationRows] = useState<ClassificationRow[]>(classificationGroupsToRows(DEFAULT_CLASSIFICATION_GROUPS));
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
@@ -303,8 +331,10 @@ export function ValidatorApp() {
     const saved = parseSavedDatasets(window.localStorage.getItem(STORAGE_KEYS.datasets));
     setLogicConfig(cloneLogicConfig(persisted.logicConfig));
     setCompanyConfigs(cloneCompanyConfigs(persisted.companyConfigs));
+    setClassificationGroups(cloneClassificationGroups(persisted.classificationGroups));
     setGlobalOverrideRows(overridesToRows(persisted.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(persisted.logicConfig.pasteSectToParent));
+    setClassificationRows(classificationGroupsToRows(persisted.classificationGroups));
     setSavedDatasets(saved);
     if (saved[0]?.id) {
       setSelectedDatasetId(saved[0].id);
@@ -318,9 +348,9 @@ export function ValidatorApp() {
     }
     window.localStorage.setItem(
       STORAGE_KEYS.config,
-      JSON.stringify({ logicConfig, companyConfigs })
+      JSON.stringify({ logicConfig, companyConfigs, classificationGroups })
     );
-  }, [mounted, logicConfig, companyConfigs]);
+  }, [mounted, logicConfig, companyConfigs, classificationGroups]);
 
   useEffect(() => {
     if (!mounted) {
@@ -332,13 +362,13 @@ export function ValidatorApp() {
   useEffect(() => {
     const autoCompany = runValidation({
       pastedText,
-      selectedCompany: selectedCompany || null,
-      tolerance,
-      logicConfig,
-      companyConfigs,
-      pasteEdits,
-      sessionSignFixes
-    }).detectedCompany;
+        selectedCompany: selectedCompany || null,
+        tolerance,
+        logicConfig,
+        companyConfigs,
+        pasteEdits,
+        sessionSignFixes
+      }).detectedCompany;
 
     if (autoCompany && autoCompany !== selectedCompany.trim()) {
       setSelectedCompany(autoCompany);
@@ -365,16 +395,20 @@ export function ValidatorApp() {
     [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
   );
   const reporting = useMemo(
-    () => buildReportingModel({
-      pastedText,
-      selectedCompany: selectedCompany.trim() || null,
-      tolerance,
-      logicConfig,
-      companyConfigs,
-      pasteEdits,
-      sessionSignFixes
-    }),
-    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
+    () => {
+      const reportArgs = {
+        pastedText,
+        selectedCompany: selectedCompany.trim() || null,
+        tolerance,
+        logicConfig,
+        companyConfigs,
+        classificationGroups,
+        pasteEdits,
+        sessionSignFixes
+      };
+      return buildReportingModel(reportArgs);
+    },
+    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, classificationGroups, pasteEdits, sessionSignFixes]
   );
 
   const companyKnown = selectedCompany.trim() && companyConfigs[selectedCompany.trim()];
@@ -408,15 +442,17 @@ export function ValidatorApp() {
     if (validation.parsed.error || !reporting.periods.length) {
       return;
     }
-    const snapshots = buildQuarterSnapshots({
+    const snapshotArgs = {
       pastedText,
       selectedCompany: selectedCompany.trim() || null,
       tolerance,
       logicConfig,
       companyConfigs,
+      classificationGroups,
       pasteEdits,
       sessionSignFixes
-    });
+    };
+    const snapshots = buildQuarterSnapshots(snapshotArgs);
 
     setSavedDatasets((prev) => {
       const next = [...prev];
@@ -443,6 +479,7 @@ export function ValidatorApp() {
     setSessionSignFixes(structuredClone(dataset.source.sessionSignFixes));
     setLogicConfig(structuredClone(dataset.source.logicConfig));
     setCompanyConfigs(structuredClone(dataset.source.companyConfigs));
+    setClassificationRows(classificationGroupsToRows(classificationGroups));
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
   }
@@ -578,8 +615,10 @@ export function ValidatorApp() {
     const defaults = getDefaultPersistedState();
     setLogicConfig(cloneLogicConfig(defaults.logicConfig));
     setCompanyConfigs(cloneCompanyConfigs(defaults.companyConfigs));
+    setClassificationGroups(cloneClassificationGroups(defaults.classificationGroups));
     setGlobalOverrideRows(overridesToRows(defaults.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(defaults.logicConfig.pasteSectToParent));
+    setClassificationRows(classificationGroupsToRows(defaults.classificationGroups));
   }
 
   function saveConfigEditors() {
@@ -599,9 +638,11 @@ export function ValidatorApp() {
         }
       }));
     }
+
+    setClassificationGroups(rowsToClassificationGroups(classificationRows));
   }
 
-  const configPayload = JSON.stringify({ logicConfig, companyConfigs }, null, 2);
+  const configPayload = JSON.stringify({ logicConfig, companyConfigs, classificationGroups }, null, 2);
 
   return (
     <main className="page-shell">
@@ -648,6 +689,7 @@ export function ValidatorApp() {
               <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>데이터</button>
               <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>결과물</button>
               <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>규칙관리</button>
+              <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>분류</button>
               <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>수식</button>
             </div>
             <div className="side-nav-utils">
@@ -713,6 +755,8 @@ export function ValidatorApp() {
                   ? `저장된 검증 데이터 ${savedDatasets.length}건이 누적되어 있습니다. 필요한 항목을 선택해 다시 불러오거나 결과물로 보낼 수 있습니다.`
                   : activeTab === "report"
                     ? `${selectedResultCompany ? `${selectedResultCompany} 데이터` : "저장된 데이터"}를 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
+                    : activeTab === "classify"
+                      ? "표준 항목별 분류를 카드 형태로 수정할 수 있습니다. 계정명 추가/삭제 후 저장하면 이후 계산에 바로 반영됩니다."
                     : activeTab === "formulas"
                       ? "결과물 계산에 쓰는 기준 수식을 그대로 정리했습니다."
                     : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
@@ -1244,6 +1288,53 @@ export function ValidatorApp() {
                 <h3>현재 설정 JSON</h3>
                 <textarea className="textarea" value={configPayload} readOnly />
               </section>
+            </>
+          )}
+
+          {activeTab === "classify" && (
+            <>
+              <section className="overview-card report-hero-card">
+                <div className="section-title">
+                  <div>
+                    <span className="section-kicker">분류 기준</span>
+                    <h3>표준 항목 분류</h3>
+                    <p className="result-meta">인건비 아래에 급여, 상여, 퇴직급여 같은 하위 계정을 묶어 관리할 수 있게 정리했습니다. 여기서 추가/삭제하면 이후 결과물 계산에 반영됩니다.</p>
+                  </div>
+                  <div className="inline-actions">
+                    <button className="ghost-button" onClick={() => setClassificationRows(classificationGroupsToRows(DEFAULT_CLASSIFICATION_GROUPS))}>초안 복원</button>
+                    <button className="button" onClick={() => setClassificationGroups(rowsToClassificationGroups(classificationRows))}>분류 저장</button>
+                  </div>
+                </div>
+              </section>
+
+              <section className="classification-grid">
+                {classificationRows.map((row, index) => (
+                  <article className="config-card classification-card" key={`classification-${index}`}>
+                    <div className="section-title">
+                      <input
+                        className="input"
+                        value={row.canonicalKey}
+                        placeholder="표준 항목명"
+                        onChange={(event) => setClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))}
+                      />
+                      <button className="danger-button" onClick={() => setClassificationRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                    </div>
+                    <label className="field">
+                      <span>하위 계정 목록</span>
+                      <textarea
+                        className="textarea classification-textarea"
+                        value={row.aliases}
+                        placeholder="급여&#10;상여금&#10;퇴직급여"
+                        onChange={(event) => setClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: event.target.value } : item))}
+                      />
+                    </label>
+                  </article>
+                ))}
+              </section>
+
+              <div className="inline-actions">
+                <button className="ghost-button" onClick={() => setClassificationRows((prev) => [...prev, { canonicalKey: "", aliases: "" }])}>분류 항목 추가</button>
+              </div>
             </>
           )}
 

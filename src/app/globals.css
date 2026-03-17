@@ -763,6 +763,22 @@ a {
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
+.classification-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.classification-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.classification-textarea {
+  min-height: 180px;
+}
+
 .data-list {
   display: flex;
   flex-direction: column;
@@ -865,7 +881,8 @@ a {
 
   .metric-grid,
   .two-col,
-  .field-grid {
+  .field-grid,
+  .classification-grid {
     grid-template-columns: 1fr;
   }
 }
