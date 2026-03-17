@@ -202,14 +202,33 @@ function buildFormulaGuideRows() {
   ];
 }
 
+function isSavedQuarterSnapshot(value: unknown): value is SavedQuarterSnapshot {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const item = value as Partial<SavedQuarterSnapshot>;
+  return typeof item.id === "string"
+    && typeof item.companyName === "string"
+    && typeof item.quarterKey === "string"
+    && typeof item.quarterLabel === "string"
+    && Array.isArray(item.rawStatementRows)
+    && Array.isArray(item.adjustedStatementRows)
+    && !!item.source
+    && typeof item.source === "object";
+}
+
 function parseSavedDatasets(raw: string | null): SavedQuarterSnapshot[] {
   if (!raw) {
     return [];
   }
 
   try {
-    const parsed = JSON.parse(raw) as SavedQuarterSnapshot[];
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter(isSavedQuarterSnapshot);
   } catch {
     return [];
   }
