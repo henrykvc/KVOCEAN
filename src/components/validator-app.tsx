@@ -37,6 +37,16 @@ function renderDiagnosisText(text: string) {
   );
 }
 
+function upsertOverrideRow(rows: OverrideRow[], nextRow: OverrideRow) {
+  const foundIndex = rows.findIndex((row) => row.section === nextRow.section && row.keyword === nextRow.keyword);
+  if (foundIndex === -1) {
+    const cleanedRows = rows.filter((row) => row.section.trim() || row.keyword.trim());
+    return [...cleanedRows, nextRow];
+  }
+
+  return rows.map((row, index) => (index === foundIndex ? nextRow : row));
+}
+
 type MapRow = {
   section: string;
   parent: string;
@@ -186,10 +196,10 @@ export function ValidatorApp() {
       sessionSignFixes
     }).detectedCompany;
 
-    if (!selectedCompany && autoCompany) {
+    if (autoCompany && autoCompany !== selectedCompany.trim()) {
       setSelectedCompany(autoCompany);
     }
-  }, [pastedText]);
+  }, [pastedText, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes, selectedCompany]);
 
   useEffect(() => {
     const company = selectedCompany.trim();
@@ -267,6 +277,7 @@ export function ValidatorApp() {
         }
       }
     }));
+    setCompanyOverrideRows((prev) => upsertOverrideRow(prev, { section: sect, keyword: acct, sign: newSign }));
     applySessionFix(sect, acct, newSign);
   }
 
