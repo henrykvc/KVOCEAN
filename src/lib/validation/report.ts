@@ -1,5 +1,5 @@
 import { ACCOUNT_ALIASES, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
-import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, safeFloat, type SessionSignFixes } from "./engine";
+import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, pasteEditKey, safeFloat, type SessionSignFixes } from "./engine";
 
 export type ReportPeriod = {
   key: string;
@@ -36,6 +36,24 @@ export type ReportingModel = {
   rawStatementRows: StatementMatrixRow[];
   adjustedStatementRows: StatementMatrixRow[];
   finalSections: FinalMetricSection[];
+};
+
+export type SavedQuarterSnapshot = {
+  id: string;
+  companyName: string;
+  quarterKey: string;
+  quarterLabel: string;
+  savedAt: string;
+  rawStatementRows: Array<{ signFlag: 0 | 1; section: string; accountName: string; value: number | null }>;
+  adjustedStatementRows: Array<{ signFlag: 0 | 1; section: string; accountName: string; value: number | null }>;
+  source: {
+    pastedText: string;
+    tolerance: number;
+    pasteEdits: Record<string, number>;
+    sessionSignFixes: SessionSignFixes;
+    logicConfig: LogicConfig;
+    companyConfigs: CompanyConfigs;
+  };
 };
 
 type RowMeta = {
@@ -180,7 +198,7 @@ function buildStatementRows(
   metaRows: RowMeta[],
   periods: ReportPeriod[],
   dataRows: Array<Array<string | number | null>>,
-  pasteEdits: Record<number, number>,
+  pasteEdits: Record<string, number>,
   adjusted: boolean
 ) {
   return metaRows
@@ -189,7 +207,8 @@ function buildStatementRows(
       const values: Record<string, number | null> = {};
       for (const period of periods) {
         const rawValue = safeFloat(dataRows[period.rowIndex]?.[index]);
-        const editedValue = pasteEdits[index] !== undefined ? pasteEdits[index] : rawValue;
+        const edited = pasteEdits[pasteEditKey(period.rowIndex, index)];
+        const editedValue = edited !== undefined ? edited : rawValue;
         if (meta.signCode === 2) {
           values[period.key] = adjusted ? 0 : editedValue;
         } else {
@@ -482,9 +501,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
 export function buildReportingModel(args: {
   pastedText: string;
   selectedCompany: string | null;
+  tolerance?: number;
   logicConfig: LogicConfig;
   companyConfigs: CompanyConfigs;
-  pasteEdits: Record<number, number>;
+  pasteEdits: Record<string, number>;
   sessionSignFixes: SessionSignFixes;
 }) {
   const parsed = parsePastedText(args.pastedText);
@@ -514,6 +534,112 @@ export function buildReportingModel(args: {
   return {
     detectedCompany,
     companyName,
+    periods,
+    rawStatementRows,
+    adjustedStatementRows,
+    finalSections: buildFinalSections(context)
+  } satisfies ReportingModel;
+}
+
+export function buildQuarterSnapshots(args: {
+  pastedText: string;
+  selectedCompany: string | null;
+  tolerance: number;
+  logicConfig: LogicConfig;
+  companyConfigs: CompanyConfigs;
+  pasteEdits: Record<string, number>;
+  sessionSignFixes: SessionSignFixes;
+}) {
+  const reporting = buildReportingModel(args);
+  const companyName = args.selectedCompany?.trim() || reporting.companyName || reporting.detectedCompany || "미지정 회사";
+
+  return reporting.periods.map((period) => ({
+    id: `${companyName}__${period.label}`,
+    companyName,
+    quarterKey: period.key,
+    quarterLabel: period.label,
+    savedAt: new Date().toISOString(),
+    rawStatementRows: reporting.rawStatementRows.map((row) => ({
+      signFlag: row.signFlag,
+      section: row.section,
+      accountName: row.accountName,
+      value: row.values[period.key] ?? null
+    })),
+    adjustedStatementRows: reporting.adjustedStatementRows.map((row) => ({
+      signFlag: row.signFlag,
+      section: row.section,
+      accountName: row.accountName,
+      value: row.values[period.key] ?? null
+    })),
+    source: {
+      pastedText: args.pastedText,
+      tolerance: args.tolerance,
+      pasteEdits: { ...args.pasteEdits },
+      sessionSignFixes: structuredClone(args.sessionSignFixes),
+      logicConfig: structuredClone(args.logicConfig),
+      companyConfigs: structuredClone(args.companyConfigs)
+    }
+  } satisfies SavedQuarterSnapshot));
+}
+
+export function buildCompanyReport(snapshots: SavedQuarterSnapshot[]) {
+  if (!snapshots.length) {
+    return {
+      detectedCompany: null,
+      companyName: null,
+      periods: [],
+      rawStatementRows: [],
+      adjustedStatementRows: [],
+      finalSections: []
+    } satisfies ReportingModel;
+  }
+
+  const periods = snapshots
+    .map((snapshot) => ({
+      key: snapshot.quarterKey,
+      label: snapshot.quarterLabel,
+      rawLabel: snapshot.quarterLabel,
+      date: parseDate(snapshot.quarterLabel),
+      monthsElapsed: parseDate(snapshot.quarterLabel) ? Math.max(parseDate(snapshot.quarterLabel)!.getMonth() + 1, 1) : 12,
+      rowIndex: 0
+    }))
+    .sort((a, b) => {
+      if (a.date && b.date) {
+        return b.date.getTime() - a.date.getTime();
+      }
+      return a.label.localeCompare(b.label);
+    });
+
+  const buildMatrix = (kind: "rawStatementRows" | "adjustedStatementRows") => {
+    const rowMap = new Map<string, StatementMatrixRow>();
+    snapshots.forEach((snapshot) => {
+      snapshot[kind].forEach((row) => {
+        const key = `${row.section}__${row.accountName}`;
+        if (!rowMap.has(key)) {
+          rowMap.set(key, {
+            signFlag: row.signFlag,
+            section: row.section,
+            accountName: row.accountName,
+            values: Object.fromEntries(periods.map((period) => [period.key, null]))
+          });
+        }
+        rowMap.get(key)!.values[snapshot.quarterKey] = row.value;
+      });
+    });
+    return Array.from(rowMap.values());
+  };
+
+  const rawStatementRows = buildMatrix("rawStatementRows");
+  const adjustedStatementRows = buildMatrix("adjustedStatementRows");
+  const context: MetricContext = {
+    periods,
+    adjustedValues: getValueMap(adjustedStatementRows),
+    sectionTotals: getSectionTotals(adjustedStatementRows, periods)
+  };
+
+  return {
+    detectedCompany: snapshots[0].companyName,
+    companyName: snapshots[0].companyName,
     periods,
     rawStatementRows,
     adjustedStatementRows,

@@ -12,6 +12,7 @@ export type DetailRow = {
   원본값: number;
   부호: string;
   적용값: number;
+  _row?: number;
   _col?: number;
   _allowedSigns?: SignCode[];
 };
@@ -59,6 +60,10 @@ export type ValidationRun = {
   };
   copyText: string;
 };
+
+export function pasteEditKey(rowIndex: number, colIndex: number) {
+  return `${rowIndex}:${colIndex}`;
+}
 
 export type PersistedState = {
   logicConfig: LogicConfig;
@@ -211,16 +216,16 @@ export function inferSignFromName(name: string, logicConfig: LogicConfig): SignC
   return null;
 }
 
-function getAccountValue(nameToValue: Record<string, number | null>, account: string): number | null {
+function getAccountValue(nameToValue: Record<string, { value: number | null; col: number }>, account: string): number | null {
   const matched = getAccountMatch(nameToValue, account);
   return matched?.value ?? null;
 }
 
-function getAccountMatch(nameToValue: Record<string, number | null>, account: string): { alias: string; value: number } | null {
+function getAccountMatch(nameToValue: Record<string, { value: number | null; col: number }>, account: string): { alias: string; value: number; col: number } | null {
   for (const alias of ACCOUNT_ALIASES[account] ?? [account]) {
-    const value = nameToValue[alias];
-    if (value !== null && value !== undefined) {
-      return { alias, value };
+    const item = nameToValue[alias];
+    if (item && item.value !== null && item.value !== undefined) {
+      return { alias, value: item.value, col: item.col };
     }
   }
   return null;
@@ -230,6 +235,7 @@ export function validatePasteSections(
   catRow: string[],
   nameRow: string[],
   dataRow: Array<string | number | null>,
+  rowIndex: number,
   tolerance: number,
   companyName: string | null,
   sessionSignFixes: SessionSignFixes,
@@ -240,7 +246,7 @@ export function validatePasteSections(
   const sectionOverrides = getEffectiveSectionOverrides(logicConfig, companyConfigs, companyName);
 
   const allItems: Array<{ name: string; sect: string; val: number | null; col: number }> = [];
-  const nameToValue: Record<string, number | null> = {};
+  const nameToValue: Record<string, { value: number | null; col: number }> = {};
   let prevSect = "";
 
   for (let i = 0; i < Math.min(catRow.length, nameRow.length); i += 1) {
@@ -256,7 +262,7 @@ export function validatePasteSections(
     const value = safeFloat(dataRow[i]);
     allItems.push({ name, sect: sectLabel, val: value, col: i });
     if (!(name in nameToValue)) {
-      nameToValue[name] = value;
+      nameToValue[name] = { value, col: i };
     }
   }
 
@@ -294,13 +300,13 @@ export function validatePasteSections(
         sign = sessionSignFixes[sect][child.name];
       }
       if (sign === 2) {
-        used.push({ 계정명: child.name, 원본값: child.val!, 부호: "제외", 적용값: 0, _col: child.col });
+        used.push({ 계정명: child.name, 원본값: child.val!, 부호: "제외", 적용값: 0, _row: rowIndex, _col: child.col });
         continue;
       }
       const resolvedSign = (sign ?? 0) as 0 | 1;
       const signedValue = applySign(child.val, resolvedSign);
       computed += signedValue;
-      used.push({ 계정명: child.name, 원본값: child.val!, 부호: resolvedSign === 1 ? "−" : "+", 적용값: signedValue, _col: child.col });
+      used.push({ 계정명: child.name, 원본값: child.val!, 부호: resolvedSign === 1 ? "−" : "+", 적용값: signedValue, _row: rowIndex, _col: child.col });
     }
 
     const diff = parentVal - computed;
@@ -345,16 +351,20 @@ export function validatePasteSections(
         sign = sessionSignFixes["자본"][compName];
       }
       if (sign === 2) {
-        used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _allowedSigns: isPositive ? [0] : [0, 1] });
+        const capitalMatch = getAccountMatch(nameToValue, compName);
+        used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _row: rowIndex, _col: capitalMatch?.col, _allowedSigns: isPositive ? [0] : [0, 1] });
         continue;
       }
       const signedValue = applySign(value, sign);
       computed += signedValue;
+      const capitalMatch = getAccountMatch(nameToValue, compName);
       used.push({
         계정명: compName,
         원본값: value,
         부호: sign === 1 ? "−" : "+",
         적용값: signedValue,
+        _row: rowIndex,
+        _col: capitalMatch?.col,
         _allowedSigns: isPositive ? [0] : [0, 1]
       });
     }
@@ -399,7 +409,7 @@ export function validatePasteSections(
       const sign = sessionSignFixes[ruleName]?.[compName] ?? defaultSign;
       const signedValue = applySign(compVal, sign as 0 | 1);
       computed += signedValue;
-      used.push({ 계정명: compName, 원본값: compVal, 부호: sign === 1 ? "−" : "+", 적용값: signedValue });
+      used.push({ 계정명: compName, 원본값: compVal, 부호: sign === 1 ? "−" : "+", 적용값: signedValue, _row: rowIndex, _col: compMatch.col });
     }
 
     const diff = parentVal - computed;
@@ -576,18 +586,19 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
 export function buildCopyText(
   catRow: string[],
   nameRow: string[],
-  rawFirst: Array<string | number | null>,
-  pasteEdits: Record<number, number>
+  dataRows: Array<Array<string | number | null>>,
+  pasteEdits: Record<string, number>
 ) {
-  const values = nameRow.map((_, index) => {
-    if (pasteEdits[index] !== undefined) {
-      return String(Math.round(pasteEdits[index]));
+  const valueLines = dataRows.map((rawRow, rowIndex) => nameRow.map((_, colIndex) => {
+    const edited = pasteEdits[pasteEditKey(rowIndex, colIndex)];
+    if (edited !== undefined) {
+      return String(Math.round(edited));
     }
-    const raw = rawFirst[index];
+    const raw = rawRow[colIndex];
     return raw === null || raw === undefined ? "" : String(raw);
-  });
+  }).join("\t"));
 
-  return [catRow.join("\t"), nameRow.join("\t"), values.join("\t")].join("\n");
+  return [catRow.join("\t"), nameRow.join("\t"), ...valueLines].join("\n");
 }
 
 export function runValidation(args: {
@@ -596,13 +607,16 @@ export function runValidation(args: {
   tolerance: number;
   logicConfig: LogicConfig;
   companyConfigs: CompanyConfigs;
-  pasteEdits: Record<number, number>;
+  pasteEdits: Record<string, number>;
   sessionSignFixes: SessionSignFixes;
 }): ValidationRun {
   const parsed = parsePastedText(args.pastedText);
   const detectedCompany = detectCompanyFromPaste(args.pastedText);
   const rawFirst = parsed.dataRows[0] ?? [];
-  const editableRow = rawFirst.map((value, index) => (args.pasteEdits[index] !== undefined ? args.pasteEdits[index] : value));
+  const editableRow = rawFirst.map((value, index) => {
+    const edited = args.pasteEdits[pasteEditKey(0, index)];
+    return edited !== undefined ? edited : value;
+  });
 
   if (parsed.error) {
     return {
@@ -622,12 +636,16 @@ export function runValidation(args: {
   const resultsByDate: Record<string, ValidationResult[]> = {};
 
   for (const [rowIndex, rawRow] of parsed.dataRows.entries()) {
-    const effectiveRow = rawRow.map((value, index) => (args.pasteEdits[index] !== undefined ? args.pasteEdits[index] : value));
+    const effectiveRow = rawRow.map((value, index) => {
+      const edited = args.pasteEdits[pasteEditKey(rowIndex, index)];
+      return edited !== undefined ? edited : value;
+    });
     const label = dateIdx >= 0 && effectiveRow[dateIdx] ? String(effectiveRow[dateIdx]) : `데이터${rowIndex + 1}`;
     const results = validatePasteSections(
       parsed.catRow,
       parsed.nameRow,
       effectiveRow,
+      rowIndex,
       args.tolerance,
       args.selectedCompany,
       args.sessionSignFixes,
@@ -658,7 +676,7 @@ export function runValidation(args: {
       failed,
       rate: allResults.length ? (passed / allResults.length) * 100 : 0
     },
-    copyText: buildCopyText(parsed.catRow, parsed.nameRow, rawFirst, args.pasteEdits)
+    copyText: buildCopyText(parsed.catRow, parsed.nameRow, parsed.dataRows, args.pasteEdits)
   };
 }
 
