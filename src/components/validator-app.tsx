@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   DEFAULT_COMPANY_CONFIGS,
@@ -21,8 +21,15 @@ import {
   safeFloat,
   type SessionSignFixes
 } from "@/lib/validation/engine";
+import {
+  buildReportingModel,
+  formatMetricValue,
+  type FinalMetricRow,
+  type ReportingModel,
+  type StatementMatrixRow
+} from "@/lib/validation/report";
 
-type TabKey = "validate" | "config" | "export";
+type TabKey = "validate" | "report" | "config" | "export";
 
 type OverrideRow = {
   section: string;
@@ -151,6 +158,46 @@ function buildPreviewGroups(catRow: string[], nameRow: string[]): { groups: Prev
   return { groups, tones };
 }
 
+function buildStatementSheetRows(rows: StatementMatrixRow[], periods: ReportingModel["periods"]) {
+  return rows.map((row) => ({
+    양음: row.signFlag,
+    섹션: row.section,
+    계정명: row.accountName,
+    ...Object.fromEntries(periods.map((period) => [period.label, row.values[period.key]]))
+  }));
+}
+
+function buildFinalSheetRows(reporting: ReportingModel) {
+  const rows: Array<Record<string, string | number | null>> = [];
+  for (const section of reporting.finalSections) {
+    rows.push({ 구분: section.title, 항목: null });
+    for (const metric of section.rows) {
+      rows.push({
+        구분: section.title,
+        항목: metric.label,
+        ...Object.fromEntries(reporting.periods.flatMap((period) => ([
+          [`${period.label} 금액`, metric.values[period.key]],
+          [`${period.label} 증감율`, metric.growthRates[period.key]]
+        ])))
+      });
+    }
+    rows.push({ 구분: null, 항목: null });
+  }
+  return rows;
+}
+
+function buildFormulaGuideRows() {
+  return [
+    { 항목: "런웨이(E)", 계산식: "현금및현금성자산 * 경과월수 / (매출원가 + 판관비 - 감가/상각비)" },
+    { 항목: "EBITDA", 계산식: "매출액 - 매출원가 - 판관비 + 감가상각비 + 무형자산상각비 + 사용권자산상각비" },
+    { 항목: "유동비율", 계산식: "유동자산 / 유동부채 * 100" },
+    { 항목: "당좌비율", 계산식: "(유동자산 - 재고자산) / 유동부채 * 100" },
+    { 항목: "부채비율", 계산식: "부채 / 자본 * 100" },
+    { 항목: "영업이익률", 계산식: "영업이익 / 매출액 * 100" },
+    { 항목: "매출액증가율", 계산식: "(당기 매출액 - 직전 분기 매출액) / |직전 분기 매출액| * 100" }
+  ];
+}
+
 export function ValidatorApp() {
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
   const [mounted, setMounted] = useState(false);
@@ -219,6 +266,17 @@ export function ValidatorApp() {
         sessionSignFixes
       }),
     [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
+  );
+  const reporting = useMemo(
+    () => buildReportingModel({
+      pastedText,
+      selectedCompany: selectedCompany.trim() || null,
+      logicConfig,
+      companyConfigs,
+      pasteEdits,
+      sessionSignFixes
+    }),
+    [pastedText, selectedCompany, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
   );
 
   const companyKnown = selectedCompany.trim() && companyConfigs[selectedCompany.trim()];
@@ -343,6 +401,12 @@ export function ValidatorApp() {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(allRows), "전체결과");
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(failRows), "실패항목");
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(configRows), "설정값");
+    if (reporting.rawStatementRows.length) {
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildStatementSheetRows(reporting.rawStatementRows, reporting.periods)), "재무제표");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildStatementSheetRows(reporting.adjustedStatementRows, reporting.periods)), "재무제표_음양반영");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildFinalSheetRows(reporting)), "최종결과물");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildFormulaGuideRows()), "전체 수식");
+    }
     XLSX.writeFile(workbook, "ocr-validation-results.xlsx");
   }
 
@@ -465,6 +529,7 @@ export function ValidatorApp() {
         <section className="panel main-panel">
           <div className="tab-list">
             <button className={`tab ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>검증</button>
+            <button className={`tab ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>보고서</button>
             <button className={`tab ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>규칙 관리</button>
             <button className={`tab ${activeTab === "export" ? "active" : ""}`} onClick={() => setActiveTab("export")}>내보내기</button>
           </div>
@@ -685,6 +750,146 @@ export function ValidatorApp() {
                     </div>
                     <textarea className="textarea" value={validation.copyText} readOnly style={{ minHeight: 140, marginTop: 12 }} />
                   </div>
+                </>
+              )}
+            </>
+          )}
+
+          {activeTab === "report" && (
+            <>
+              {!reporting.periods.length && <div className="notice">검증 가능한 OCR 3행 데이터를 넣으면 재무제표, 음양반영, 최종결과물 보고서를 자동으로 만듭니다.</div>}
+
+              {!!reporting.periods.length && (
+                <>
+                  <section className="overview-card report-hero-card">
+                    <div className="section-title">
+                      <div>
+                        <span className="section-kicker">3. 보고서</span>
+                        <h3>{reporting.companyName ?? reporting.detectedCompany ?? "미지정 회사"} 분석 결과</h3>
+                        <p className="result-meta">엑셀의 `재무제표 → 재무제표_음양반영 → 최종결과물` 흐름을 현재 입력 데이터 기준으로 바로 보여줍니다.</p>
+                      </div>
+                      <div className="result-actions">
+                        {reporting.periods.map((period) => (
+                          <span className="soft-badge" key={period.key}>{period.label}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="metric-grid compact-metrics">
+                      <article className="metric-card"><span className="muted">기간 수</span><strong>{reporting.periods.length}</strong></article>
+                      <article className="metric-card"><span className="muted">원본 계정</span><strong>{reporting.rawStatementRows.length}</strong></article>
+                      <article className="metric-card"><span className="muted">지표 섹션</span><strong>{reporting.finalSections.length}</strong></article>
+                      <article className="metric-card"><span className="muted">자동 회사</span><strong>{reporting.companyName ?? "-"}</strong></article>
+                    </div>
+                  </section>
+
+                  <section className="report-grid">
+                    <article className="config-card">
+                      <div className="section-title">
+                        <div>
+                          <h3>재무제표</h3>
+                          <p className="result-meta">OCR 수정값이 반영된 기본 원장</p>
+                        </div>
+                        <span className="soft-badge">{reporting.rawStatementRows.length}행</span>
+                      </div>
+                      <div className="report-table-wrap">
+                        <table className="table report-table">
+                          <thead>
+                            <tr>
+                              <th>양음</th>
+                              <th>섹션</th>
+                              <th>계정명</th>
+                              {reporting.periods.map((period) => <th key={`raw-${period.key}`}>{period.label}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reporting.rawStatementRows.map((row) => (
+                              <tr key={`raw-${row.section}-${row.accountName}`}>
+                                <td>{row.signFlag}</td>
+                                <td>{row.section}</td>
+                                <td>{row.accountName}</td>
+                                {reporting.periods.map((period) => <td key={`${row.accountName}-${period.key}`}>{formatNumber(row.values[period.key])}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+
+                    <article className="config-card">
+                      <div className="section-title">
+                        <div>
+                          <h3>재무제표_음양반영</h3>
+                          <p className="result-meta">검증 규칙까지 적용한 분석용 재무제표</p>
+                        </div>
+                        <span className="soft-badge">분석 레이어</span>
+                      </div>
+                      <div className="report-table-wrap">
+                        <table className="table report-table">
+                          <thead>
+                            <tr>
+                              <th>양음</th>
+                              <th>섹션</th>
+                              <th>계정명</th>
+                              {reporting.periods.map((period) => <th key={`adj-${period.key}`}>{period.label}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reporting.adjustedStatementRows.map((row) => (
+                              <tr key={`adj-${row.section}-${row.accountName}`}>
+                                <td>{row.signFlag}</td>
+                                <td>{row.section}</td>
+                                <td>{row.accountName}</td>
+                                {reporting.periods.map((period) => <td key={`${row.accountName}-adj-${period.key}`}>{formatNumber(row.values[period.key])}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                  </section>
+
+                  {reporting.finalSections.map((section) => (
+                    <section className="config-card" key={section.title}>
+                      <div className="section-title">
+                        <div>
+                          <h3>{section.title}</h3>
+                          <p className="result-meta">최신 분기부터 금액과 전분기 대비 증감율을 함께 표시합니다.</p>
+                        </div>
+                      </div>
+                      <div className="report-table-wrap">
+                        <table className="table report-table">
+                          <thead>
+                            <tr>
+                              <th>항목</th>
+                              {reporting.periods.map((period) => (
+                                <th key={`${section.title}-${period.key}`}>{period.label}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {section.rows.map((row: FinalMetricRow) => (
+                              <Fragment key={`${section.title}-${row.label}`}>
+                                <tr key={`${section.title}-${row.label}-value`}>
+                                  <td>{row.label}</td>
+                                  {reporting.periods.map((period) => (
+                                    <td key={`${row.label}-${period.key}-value`}>{formatMetricValue(row, row.values[period.key])}</td>
+                                  ))}
+                                </tr>
+                                <tr key={`${section.title}-${row.label}-growth`} className="report-growth-row">
+                                  <td className="muted">전분기 증감율</td>
+                                  {reporting.periods.map((period) => (
+                                    <td key={`${row.label}-${period.key}-growth`} className="muted">
+                                      {row.growthRates[period.key] === null || row.growthRates[period.key] === undefined ? "-" : `${row.growthRates[period.key]!.toFixed(1)}%`}
+                                    </td>
+                                  ))}
+                                </tr>
+                              </Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ))}
                 </>
               )}
             </>

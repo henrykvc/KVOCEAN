@@ -647,6 +647,32 @@ a {
   background: #f8fafc;
 }
 
+.report-hero-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.report-table-wrap {
+  overflow: auto;
+  margin-top: 14px;
+}
+
+.report-table th,
+.report-table td {
+  white-space: nowrap;
+}
+
+.report-growth-row td {
+  background: #fafbfc;
+}
+
 .two-col {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
