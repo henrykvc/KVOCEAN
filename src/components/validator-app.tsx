@@ -35,6 +35,13 @@ type MapRow = {
   parent: string;
 };
 
+type PreviewGroup = {
+  label: string;
+  start: number;
+  span: number;
+  tone: number;
+};
+
 function cloneLogicConfig(config: LogicConfig): LogicConfig {
   return structuredClone(config);
 }
@@ -84,6 +91,47 @@ function rowsToOverrides(rows: OverrideRow[]) {
 
 function signLabel(sign: SignCode) {
   return sign === 0 ? "가산(+)" : sign === 1 ? "차감(−)" : "제외";
+}
+
+function displayedSignToCode(sign: string): SignCode {
+  if (sign === "−") {
+    return 1;
+  }
+  if (sign === "제외") {
+    return 2;
+  }
+  return 0;
+}
+
+function countSessionFixes(sessionSignFixes: SessionSignFixes) {
+  return Object.values(sessionSignFixes).reduce((count, items) => count + Object.keys(items).length, 0);
+}
+
+function buildPreviewGroups(catRow: string[], nameRow: string[]): { groups: PreviewGroup[]; tones: number[] } {
+  const length = Math.max(catRow.length, nameRow.length);
+  const tones = Array.from({ length }, () => 0);
+  const groups: PreviewGroup[] = [];
+  let currentLabel = "기타";
+  let toneIndex = -1;
+
+  for (let index = 0; index < length; index += 1) {
+    const nextLabel = catRow[index]?.trim();
+    if (nextLabel) {
+      currentLabel = nextLabel;
+    }
+
+    const lastGroup = groups[groups.length - 1];
+    if (!lastGroup || lastGroup.label !== currentLabel) {
+      toneIndex += 1;
+      groups.push({ label: currentLabel, start: index, span: 1, tone: toneIndex % 6 });
+    } else {
+      lastGroup.span += 1;
+    }
+
+    tones[index] = groups[groups.length - 1].tone;
+  }
+
+  return { groups, tones };
 }
 
 export function ValidatorApp() {
@@ -156,6 +204,14 @@ export function ValidatorApp() {
   );
 
   const companyKnown = selectedCompany.trim() && companyConfigs[selectedCompany.trim()];
+  const inputReady = pastedText.trim().length > 0;
+  const failedDateCount = Object.values(validation.resultsByDate).filter((items) => items.some((item) => !item.passed)).length;
+  const sessionFixCount = countSessionFixes(sessionSignFixes);
+  const editedValueCount = Object.keys(pasteEdits).length;
+  const previewGroups = useMemo(
+    () => buildPreviewGroups(validation.parsed.catRow, validation.parsed.nameRow),
+    [validation.parsed.catRow, validation.parsed.nameRow]
+  );
 
   function resetAdjustments() {
     setPasteEdits({});
@@ -204,6 +260,10 @@ export function ValidatorApp() {
       }
     }));
     applySessionFix(sect, acct, newSign);
+  }
+
+  function updateDetailSign(sect: string, acct: string, nextSign: SignCode) {
+    applySessionFix(sect, acct, nextSign);
   }
 
   function copyModifiedText() {
@@ -278,19 +338,47 @@ export function ValidatorApp() {
   return (
     <main className="page-shell">
       <section className="hero">
-        <h1>OCR 검증 프로그램</h1>
-        <p>이제 Streamlit 대신 Vercel에 바로 올릴 수 있는 구조입니다. 3줄 붙여넣기 검증만 남기고, 세션 수정·회사별 부호 저장·결과 내보내기 흐름만 유지했습니다.</p>
+        <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
+        <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
+        <p>복잡한 설정 없이 3행 OCR 텍스트를 넣으면 바로 비교하고, 값 수정과 부호 수정까지 같은 화면에서 끝낼 수 있게 단순화했습니다.</p>
         <div className="hero-meta">
-          <span className="pill">배포 대상: Vercel / Next.js</span>
-          <span className="pill">제거됨: PDF 읽기, Excel 업로드, 매핑 DB 초기화</span>
-          <span className="pill">마지막 로직 기준: {LAST_PATCH}</span>
+          <span className="pill">1. 텍스트 붙여넣기</span>
+          <span className="pill">2. 실패 항목 확인</span>
+          <span className="pill">3. 값/부호 바로 수정</span>
         </div>
+      </section>
+
+      <section className="summary-strip">
+        <article className="summary-card">
+          <span className="summary-label">입력 상태</span>
+          <strong>{inputReady ? "준비됨" : "대기 중"}</strong>
+          <p>{inputReady ? "붙여넣은 데이터를 기준으로 즉시 검증 중" : "왼쪽 입력창에 OCR 3행 텍스트를 넣어 주세요"}</p>
+        </article>
+        <article className="summary-card">
+          <span className="summary-label">실패 묶음</span>
+          <strong>{failedDateCount}건</strong>
+          <p>날짜별 결과 중 실패 항목이 포함된 묶음 수</p>
+        </article>
+        <article className="summary-card">
+          <span className="summary-label">세션 수정</span>
+          <strong>{editedValueCount + sessionFixCount}건</strong>
+          <p>값 수정 {editedValueCount}건 / 부호 수정 {sessionFixCount}건</p>
+        </article>
+        <article className="summary-card">
+          <span className="summary-label">로직 기준</span>
+          <strong>v31</strong>
+          <p>{LAST_PATCH}</p>
+        </article>
       </section>
 
       <section className="layout-grid">
         <aside className="panel sidebar">
-          <div className="section-title">
-            <h2>입력</h2>
+          <div className="section-title panel-title-wrap">
+            <div>
+              <span className="section-kicker">1. 입력</span>
+              <h2>검증할 데이터를 넣어 주세요</h2>
+              <p className="panel-desc">회사명과 허용 오차를 확인한 뒤 OCR 3행 텍스트를 그대로 붙여넣으면 됩니다.</p>
+            </div>
             <span className={`tag ${companyKnown ? "pass" : ""}`}>{companyKnown ? "회사 규칙 적용 중" : "공통 규칙 사용"}</span>
           </div>
 
@@ -320,13 +408,17 @@ export function ValidatorApp() {
           </label>
 
           <div className="button-row">
-            <button className="button" onClick={() => setActiveTab("validate")}>검증 보기</button>
-            <button className="ghost-button" onClick={resetAdjustments}>수정값 초기화</button>
+            <button className="button" onClick={() => setActiveTab("validate")}>검증 결과 보기</button>
+            <button className="ghost-button" onClick={resetAdjustments}>입력 수정 초기화</button>
           </div>
 
-          <div className="notice">
-            <strong>현재 구조 메모</strong>
-            <p className="muted">세션 수정값과 회사 규칙은 브라우저 저장소에 보관됩니다. 배포 후에도 같은 브라우저에서는 유지됩니다.</p>
+          <div className="notice input-helper">
+            <strong>입력 팁</strong>
+            <ul className="helper-list muted">
+              <li>행 1은 섹션명, 행 2는 계정명, 행 3부터 값입니다.</li>
+              <li>회사명이 자동 감지되면 회사별 부호 규칙을 바로 불러옵니다.</li>
+              <li>값 수정과 부호 수정은 검증 화면에서 바로 반영됩니다.</li>
+            </ul>
           </div>
         </aside>
 
@@ -344,41 +436,68 @@ export function ValidatorApp() {
 
               {!validation.parsed.error && validation.parsed.nameRow.length > 0 && (
                 <>
+                  <section className="overview-card">
+                    <div className="section-title">
+                      <div>
+                        <span className="section-kicker">2. 검증</span>
+                        <h3>한눈에 결과 보기</h3>
+                      </div>
+                      <div className="result-actions">
+                        <span className="soft-badge">수정값 {editedValueCount}</span>
+                        <span className="soft-badge">부호 변경 {sessionFixCount}</span>
+                      </div>
+                    </div>
+                    <div className="metric-grid compact-metrics">
+                      <article className="metric-card"><span className="muted">전체 검증</span><strong>{validation.stats.total}</strong></article>
+                      <article className="metric-card"><span className="muted">통과</span><strong>{validation.stats.passed}</strong></article>
+                      <article className="metric-card"><span className="muted">실패</span><strong>{validation.stats.failed}</strong></article>
+                      <article className="metric-card"><span className="muted">통과율</span><strong>{validation.stats.rate.toFixed(1)}%</strong></article>
+                    </div>
+                  </section>
+
                   <div className="preview-table-wrap">
                     <div className="section-title">
-                      <h3>붙여넣기 미리보기</h3>
-                      <span className="muted">계정 {validation.parsed.nameRow.length}개 / 데이터 {validation.parsed.dataRows.length}행</span>
+                      <div>
+                        <h3>붙여넣기 미리보기</h3>
+                        <p className="result-meta">계정 {validation.parsed.nameRow.length}개 / 데이터 {validation.parsed.dataRows.length}행</p>
+                      </div>
+                      <span className="preview-scroll-chip">좌우로 넘겨서 전체 열 보기</span>
                     </div>
-                    <div style={{ overflowX: "auto", marginTop: 12 }}>
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            {validation.parsed.nameRow.map((name, index) => (
-                              <th key={`${name}-${index}`}>{name || `열${index}`}</th>
-                            ))}
-                          </tr>
-                        </thead>
+                    <div className="preview-scroll-wrap">
+                      <div className="preview-scroll-shadow left" aria-hidden="true" />
+                      <div className="preview-scroll-shadow right" aria-hidden="true" />
+                      <div className="preview-scroll" role="region" aria-label="붙여넣기 미리보기 가로 스크롤 영역">
+                        <table className="preview-grid-table">
                         <tbody>
                           <tr>
-                            {validation.parsed.catRow.map((cat, index) => (
-                              <td key={`cat-${index}`}>{cat || ""}</td>
+                            <th className="preview-row-label">분류</th>
+                            {previewGroups.groups.map((group) => (
+                              <th key={`group-${group.start}`} colSpan={group.span} className={`preview-group-cell tone-${group.tone}`}>
+                                {group.label}
+                              </th>
                             ))}
                           </tr>
                           <tr>
+                            <th className="preview-row-label">계정명</th>
+                            {validation.parsed.nameRow.map((name, index) => (
+                              <td key={`${name}-${index}`} className={`preview-name-cell tone-${previewGroups.tones[index] ?? 0}`}>
+                                {name || `열${index}`}
+                              </td>
+                            ))}
+                          </tr>
+                          <tr>
+                            <th className="preview-row-label">값</th>
                             {validation.editableRow.map((value, index) => (
-                              <td key={`val-${index}`}>{typeof value === "number" ? formatNumber(value) : value ?? ""}</td>
+                              <td key={`val-${index}`} className={`preview-value-cell tone-${previewGroups.tones[index] ?? 0}`}>
+                                {typeof value === "number" ? formatNumber(value) : value ?? ""}
+                              </td>
                             ))}
                           </tr>
                         </tbody>
-                      </table>
+                        </table>
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="metric-grid">
-                    <article className="metric-card"><span className="muted">전체 검증</span><strong>{validation.stats.total}</strong></article>
-                    <article className="metric-card"><span className="muted">통과</span><strong>{validation.stats.passed}</strong></article>
-                    <article className="metric-card"><span className="muted">실패</span><strong>{validation.stats.failed}</strong></article>
-                    <article className="metric-card"><span className="muted">통과율</span><strong>{validation.stats.rate.toFixed(1)}%</strong></article>
+                    <div className="preview-scroll-note muted">모바일이나 트랙패드에서는 표를 좌우로 밀어서 나머지 계정 열을 확인할 수 있습니다.</div>
                   </div>
 
                   {validation.stats.total === 0 && <div className="notice">검증 결과가 없습니다. 섹션명 1행이 `유동자산`, `판관비` 같은 검증 대상 형식인지 확인해 주세요.</div>}
@@ -386,17 +505,21 @@ export function ValidatorApp() {
                   {Object.entries(validation.resultsByDate).map(([dateLabel, results]) => (
                     <section className="result-group" key={dateLabel}>
                       <div className="section-title">
-                        <h3>{dateLabel}</h3>
+                        <div>
+                          <h3>{dateLabel}</h3>
+                          <p className="muted result-meta">검증 {results.length}건</p>
+                        </div>
                         <span className={`tag ${results.some((item) => !item.passed) ? "fail" : "pass"}`}>{results.some((item) => !item.passed) ? "실패 항목 포함" : "전부 통과"}</span>
                       </div>
 
                       {results.map((result, resultIndex) => {
                         const actions = result.passed ? [] : diagnoseDiff(result);
+                        const resultSection = result.sect ?? result.parent;
                         return (
                           <article className="result-card" key={`${dateLabel}-${result.rule}-${resultIndex}`}>
                             <div className="result-header">
                               <div>
-                                <div className={result.passed ? "status-pass" : "status-fail"}>{result.passed ? "✅ 통과" : "❌ 실패"}</div>
+                                <div className={result.passed ? "status-pass" : "status-fail"}>{result.passed ? "통과" : "실패"}</div>
                                 <strong>{result.rule}</strong>
                               </div>
                               <div>
@@ -420,6 +543,7 @@ export function ValidatorApp() {
                                     <tbody>
                                       {result.detail.map((detail, index) => {
                                         const currentValue = detail._col !== undefined && pasteEdits[detail._col] !== undefined ? pasteEdits[detail._col] : detail.원본값;
+                                        const currentSign = displayedSignToCode(detail.부호);
                                         return (
                                           <tr key={`${detail.계정명}-${index}`}>
                                             <td>{detail.계정명}</td>
@@ -431,7 +555,26 @@ export function ValidatorApp() {
                                                 <span className="muted">자동 계산</span>
                                               )}
                                             </td>
-                                            <td>{detail.부호}</td>
+                                            <td>
+                                              <div className="sign-editor">
+                                                <select
+                                                  className="mini-select"
+                                                  value={String(currentSign)}
+                                                  onChange={(event) => updateDetailSign(resultSection, detail.계정명, Number(event.target.value) as SignCode)}
+                                                >
+                                                  <option value="0">가산(+)</option>
+                                                  <option value="1">차감(−)</option>
+                                                  <option value="2">제외</option>
+                                                </select>
+                                                <button
+                                                  className="tiny-button"
+                                                  disabled={!selectedCompany.trim()}
+                                                  onClick={() => saveCompanyFix(resultSection, detail.계정명, currentSign)}
+                                                >
+                                                  회사 저장
+                                                </button>
+                                              </div>
+                                            </td>
                                             <td>{formatNumber(detail.적용값)}</td>
                                           </tr>
                                         );
