@@ -147,6 +147,7 @@ export function ValidatorApp() {
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
+  const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -264,6 +265,27 @@ export function ValidatorApp() {
 
   function updateDetailSign(sect: string, acct: string, nextSign: SignCode) {
     applySessionFix(sect, acct, nextSign);
+  }
+
+  function toggleResultCard(cardKey: string, defaultOpen: boolean) {
+    setResultOpenState((prev) => ({
+      ...prev,
+      [cardKey]: !(prev[cardKey] ?? defaultOpen)
+    }));
+  }
+
+  function openAllResultCards() {
+    const next: Record<string, boolean> = {};
+    for (const [dateLabel, results] of Object.entries(validation.resultsByDate)) {
+      results.forEach((result, index) => {
+        next[`${dateLabel}-${result.rule}-${index}`] = true;
+      });
+    }
+    setResultOpenState(next);
+  }
+
+  function focusFailedResultCards() {
+    setResultOpenState({});
   }
 
   function copyModifiedText() {
@@ -445,6 +467,8 @@ export function ValidatorApp() {
                       <div className="result-actions">
                         <span className="soft-badge">수정값 {editedValueCount}</span>
                         <span className="soft-badge">부호 변경 {sessionFixCount}</span>
+                        <button className="tiny-button" onClick={focusFailedResultCards}>실패만 펼치기</button>
+                        <button className="tiny-button" onClick={openAllResultCards}>전체 펼치기</button>
                       </div>
                     </div>
                     <div className="metric-grid compact-metrics">
@@ -515,19 +539,24 @@ export function ValidatorApp() {
                       {results.map((result, resultIndex) => {
                         const actions = result.passed ? [] : diagnoseDiff(result);
                         const resultSection = result.sect ?? result.parent;
+                        const cardKey = `${dateLabel}-${result.rule}-${resultIndex}`;
+                        const isOpen = resultOpenState[cardKey] ?? !result.passed;
                         return (
-                          <article className="result-card" key={`${dateLabel}-${result.rule}-${resultIndex}`}>
+                          <article className={`result-card ${isOpen ? "" : "collapsed"}`} key={cardKey}>
                             <div className="result-header">
                               <div>
                                 <div className={result.passed ? "status-pass" : "status-fail"}>{result.passed ? "통과" : "실패"}</div>
                                 <strong>{result.rule}</strong>
                               </div>
-                              <div>
+                              <div className="result-header-actions">
                                 <div className="muted">차이</div>
                                 <strong className={result.passed ? "status-pass" : "status-fail"}>{formatNumber(result.diff)}원</strong>
+                                <button className="collapse-toggle" onClick={() => toggleResultCard(cardKey, !result.passed)} aria-expanded={isOpen}>
+                                  {isOpen ? "접기" : "펼치기"}
+                                </button>
                               </div>
                             </div>
-                            <div className="result-body">
+                            {isOpen && <div className="result-body">
                               {result.detail.length > 0 ? (
                                 <div style={{ overflowX: "auto" }}>
                                   <table className="table">
@@ -617,7 +646,7 @@ export function ValidatorApp() {
                                   </div>
                                 </div>
                               )}
-                            </div>
+                            </div>}
                           </article>
                         );
                       })}

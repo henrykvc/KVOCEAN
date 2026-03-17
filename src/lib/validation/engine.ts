@@ -210,10 +210,15 @@ export function inferSignFromName(name: string, logicConfig: LogicConfig): SignC
 }
 
 function getAccountValue(nameToValue: Record<string, number | null>, account: string): number | null {
+  const matched = getAccountMatch(nameToValue, account);
+  return matched?.value ?? null;
+}
+
+function getAccountMatch(nameToValue: Record<string, number | null>, account: string): { alias: string; value: number } | null {
   for (const alias of ACCOUNT_ALIASES[account] ?? [account]) {
     const value = nameToValue[alias];
     if (value !== null && value !== undefined) {
-      return value;
+      return { alias, value };
     }
   }
   return null;
@@ -349,11 +354,12 @@ export function validatePasteSections(
   }
 
   for (const [ruleName, parentName, components] of SUMMARY_RULES) {
-    let parentVal = getAccountValue(nameToValue, parentName);
-    if (parentVal === null) {
+    const parentMatch = getAccountMatch(nameToValue, parentName);
+    if (!parentMatch) {
       continue;
     }
-    if (LOSS_ACCOUNTS.has(parentName) || (ACCOUNT_ALIASES[parentName] ?? []).some((alias) => LOSS_ACCOUNTS.has(alias))) {
+    let parentVal = parentMatch.value;
+    if (LOSS_ACCOUNTS.has(parentMatch.alias)) {
       parentVal = -Math.abs(parentVal);
     }
 
@@ -362,18 +368,12 @@ export function validatePasteSections(
     let computed = 0;
 
     for (const [compName, defaultSign] of components) {
-      let compVal: number | null = null;
-      for (const alias of ACCOUNT_ALIASES[compName] ?? [compName]) {
-        const value = nameToValue[alias];
-        if (value !== null && value !== undefined) {
-          compVal = LOSS_ACCOUNTS.has(alias) ? -Math.abs(value) : value;
-          break;
-        }
-      }
-      if (compVal === null) {
+      const compMatch = getAccountMatch(nameToValue, compName);
+      if (!compMatch) {
         missing.push(compName);
         continue;
       }
+      const compVal = LOSS_ACCOUNTS.has(compMatch.alias) ? -Math.abs(compMatch.value) : compMatch.value;
       const sign = sessionSignFixes[ruleName]?.[compName] ?? defaultSign;
       const signedValue = applySign(compVal, sign as 0 | 1);
       computed += signedValue;
