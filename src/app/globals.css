@@ -711,6 +711,47 @@ a {
   background: #fafbfc;
 }
 
+.final-output-card {
+  padding: 18px;
+}
+
+.final-section-card {
+  padding: 18px;
+}
+
+.final-report-table th,
+.final-report-table td {
+  vertical-align: top;
+}
+
+.final-period-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.final-period-head small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.final-metric-label {
+  min-width: 220px;
+  font-weight: 700;
+}
+
+.final-metric-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 120px;
+}
+
+.final-metric-cell strong {
+  font-size: 15px;
+}
+
 .data-list {
   display: flex;
   flex-direction: column;
