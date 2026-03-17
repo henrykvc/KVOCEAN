@@ -582,8 +582,8 @@ export function ValidatorApp() {
                                       <tr>
                                         <th>계정명</th>
                                         <th>원본값</th>
-                                        <th>수정값</th>
-                                        <th>부호</th>
+                                        <th>OCR 수정값</th>
+                                        <th>검증 규칙</th>
                                         <th>적용값</th>
                                       </tr>
                                     </thead>
@@ -618,7 +618,7 @@ export function ValidatorApp() {
                                                   disabled={!selectedCompany.trim()}
                                                   onClick={() => saveCompanyFix(resultSection, detail.계정명, currentSign)}
                                                 >
-                                                  회사 저장
+                                                  회사별 규칙 저장
                                                 </button>
                                               </div>
                                             </td>
@@ -630,6 +630,12 @@ export function ValidatorApp() {
                                   </table>
                                 </div>
                               ) : null}
+
+                              {result.detail.length > 0 && (
+                                <div className="rule-helper muted">
+                                  `OCR 수정값`은 복사/내보내기 되는 실제 데이터에 반영됩니다. `검증 규칙`은 이번 검증 해석과 회사별 규칙 저장에만 사용됩니다.
+                                </div>
+                              )}
 
                               <div className="two-col">
                                 <div className="diagnosis-card">
@@ -644,7 +650,8 @@ export function ValidatorApp() {
 
                               {!result.passed && actions.length > 0 && (
                                 <div className="diagnosis-card">
-                                  <strong>원인 추정 및 수정</strong>
+                                  <strong>원인 추정과 처리 방향</strong>
+                                  <p className="muted diagnosis-note">먼저 `OCR 수정값`을 확인하고, 반복되는 패턴만 `검증 규칙`으로 저장하는 흐름을 권장합니다.</p>
                                   <div className="list-editor" style={{ marginTop: 12 }}>
                                     {actions.map((action, index) => (
                                       <div key={`${action.text}-${index}`} className="notice">
@@ -652,10 +659,10 @@ export function ValidatorApp() {
                                         {action.fix ? (
                                           <div className="inline-actions" style={{ marginTop: 12 }}>
                                             <button className="secondary-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              세션 적용: {action.label}
+                                              이번 검증 규칙 적용: {action.label}
                                             </button>
                                             <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              {selectedCompany.trim() ? `[${selectedCompany.trim()}] 회사 규칙 저장` : "회사명 입력 필요"}
+                                              {selectedCompany.trim() ? `[${selectedCompany.trim()}] 회사별 검증 규칙 저장` : "회사명 입력 필요"}
                                             </button>
                                           </div>
                                         ) : null}

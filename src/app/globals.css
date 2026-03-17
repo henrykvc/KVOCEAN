@@ -634,6 +634,19 @@ a {
   color: var(--text);
 }
 
+.diagnosis-note,
+.rule-helper {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rule-helper {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
 .two-col {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
