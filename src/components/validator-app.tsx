@@ -30,6 +30,13 @@ type OverrideRow = {
   sign: SignCode;
 };
 
+function renderDiagnosisText(text: string) {
+  const parts = text.split("**");
+  return parts.map((part, index) =>
+    index % 2 === 1 ? <strong key={`${part}-${index}`}>{part}</strong> : <span key={`${part}-${index}`}>{part}</span>
+  );
+}
+
 type MapRow = {
   section: string;
   parent: string;
@@ -630,7 +637,7 @@ export function ValidatorApp() {
                                   <div className="list-editor" style={{ marginTop: 12 }}>
                                     {actions.map((action, index) => (
                                       <div key={`${action.text}-${index}`} className="notice">
-                                        <div className="pre">{action.text}</div>
+                                        <div className="pre diagnosis-copy">{renderDiagnosisText(action.text)}</div>
                                         {action.fix ? (
                                           <div className="inline-actions" style={{ marginTop: 12 }}>
                                             <button className="secondary-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>

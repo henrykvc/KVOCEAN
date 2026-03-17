@@ -629,6 +629,11 @@ a {
   font-size: 13px;
 }
 
+.diagnosis-copy strong {
+  font-weight: 800;
+  color: var(--text);
+}
+
 .two-col {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
