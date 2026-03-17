@@ -34,7 +34,7 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "validate" | "data" | "report" | "config" | "export";
+type TabKey = "validate" | "data" | "report" | "config" | "formulas" | "export";
 
 type OverrideRow = {
   section: string;
@@ -201,6 +201,49 @@ function buildFormulaGuideRows() {
     { 항목: "부채비율", 계산식: "부채 / 자본 * 100" },
     { 항목: "영업이익률", 계산식: "영업이익 / 매출액 * 100" },
     { 항목: "매출액증가율", 계산식: "(당기 매출액 - 직전 분기 매출액) / |직전 분기 매출액| * 100" }
+  ];
+}
+
+function buildRequestedFormulaRows() {
+  return [
+    { 항목: "유동비율", 수식: "(유동자산/유동부채) * 100" },
+    { 항목: "당좌비율", 수식: "(당좌자산/유동부채) * 100" },
+    { 항목: "부채비율", 수식: "(부채/자본) * 100" },
+    { 항목: "차입금 의존도", 수식: "(((차입금_양수) - (차입금_음수))/자산) * 100" },
+    { 항목: "이자보상비율", 수식: "영업이익(손실)/이자비용" },
+    { 항목: "매출액순이익률", 수식: "(계속사업당기순이익/매출액) * 100" },
+    { 항목: "총자산이익률(ROA)", 수식: "(계속사업당기순이익/자산) * 100" },
+    { 항목: "자기자본이익률(ROE)", 수식: "(계속사업당기순이익/자본) * 100" },
+    { 항목: "영업이익률", 수식: "(영업이익(손실)/매출액) * 100" },
+    { 항목: "공헌이익률", 수식: "(매출액 - 변동비)/매출액 * 100" },
+    { 항목: "인건비", 수식: "(인건비/(영업비용+영업외비용)) * 100" },
+    { 항목: "연구개발비", 수식: "(연구비/(영업비용+영업외비용)) * 100" },
+    { 항목: "접대비", 수식: "(접대비/(영업비용+영업외비용)) * 100" },
+    { 항목: "복리후생비", 수식: "(복리후생비/(영업비용+영업외비용)) * 100" },
+    { 항목: "광고선전비", 수식: "(광고선전비/(영업비용+영업외비용)) * 100" },
+    { 항목: "지급수수료", 수식: "(지급수수료/(영업비용+영업외비용)) * 100" },
+    { 항목: "외주용역비", 수식: "(외주용역비/(영업비용+영업외비용)) * 100" },
+    { 항목: "임차료", 수식: "(임차료/(영업비용+영업외비용)) * 100" },
+    { 항목: "이자비용", 수식: "(총이자비용/(영업비용+영업외비용)) * 100" },
+    { 항목: "현금및현금성자산", 수식: "(현금및현금성자산/자산) * 100" },
+    { 항목: "단기대여금", 수식: "((단기대여금_양수 - 단기대여금_음수)/자산) * 100" },
+    { 항목: "개발비(자산)", 수식: "((개발비_양수 - 개발비_음수)/자산) * 100" },
+    { 항목: "선급금", 수식: "((선급금_양수 - 선급금_음수)/자산) * 100" },
+    { 항목: "가수금", 수식: "(가수금/부채) * 100" },
+    { 항목: "가지급금", 수식: "(가지급금/자산) * 100" },
+    { 항목: "퇴직급여충당부채", 수식: "((퇴직급여충당부채_양수 + 퇴직급여충당부채_음수)/부채) * 100" },
+    { 항목: "총자산회전율", 수식: "매출액 / 평균총자산" },
+    { 항목: "매출채권회전율", 수식: "매출액 / 평균매출채권" },
+    { 항목: "매출채권회전기간", 수식: "365일 / 매출채권회전율" },
+    { 항목: "재고자산회전율", 수식: "매출원가 / 평균재고자산" },
+    { 항목: "재고자산회전기간", 수식: "365일 / 재고자산회전율" },
+    { 항목: "정상영업순환주기", 수식: "매출채권회전기간 + 재고자산회전기간" },
+    { 항목: "매출액 증가율", 수식: "(당기 매출액 - 전기 매출액) / 전기 매출액 * 100" },
+    { 항목: "영업이익 증가율", 수식: "(당기 영업이익 - 전기 영업이익) / 전기 영업이익 * 100" },
+    { 항목: "매도가능증권", 수식: "(매도가능증권/자산) * 100" },
+    { 항목: "런웨이(E)", 수식: "현금및현금성자산 * 2 * 3 / (매출액 - 영업이익(손실) - 감가상각비 - 무형자산상각비 - 사용권자산상각비)" },
+    { 항목: "EBITDA", 수식: "영업이익(손실) + 감가상각비 + 무형자산상각비 + 사용권자산상각비" },
+    { 항목: "월 평균 지출액", 수식: "(매출액 - 영업이익(손실) + 감가상각비 + 무형자산상각비 + 사용권자산상각비) / 3" }
   ];
 }
 
@@ -604,9 +647,10 @@ export function ValidatorApp() {
               <button className={`side-nav-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>OCR검증</button>
               <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>데이터</button>
               <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>결과물</button>
+              <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>규칙관리</button>
+              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>수식</button>
             </div>
             <div className="side-nav-utils">
-              <button className={`ghost-button ${activeTab === "config" ? "is-selected" : ""}`} onClick={() => setActiveTab("config")}>규칙 관리</button>
               <button className={`ghost-button ${activeTab === "export" ? "is-selected" : ""}`} onClick={() => setActiveTab("export")}>내보내기</button>
             </div>
           </div>
@@ -669,6 +713,8 @@ export function ValidatorApp() {
                   ? `저장된 검증 데이터 ${savedDatasets.length}건이 누적되어 있습니다. 필요한 항목을 선택해 다시 불러오거나 결과물로 보낼 수 있습니다.`
                   : activeTab === "report"
                     ? `${selectedResultCompany ? `${selectedResultCompany} 데이터` : "저장된 데이터"}를 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
+                    : activeTab === "formulas"
+                      ? "결과물 계산에 쓰는 기준 수식을 그대로 정리했습니다."
                     : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
               </p>
             </div>
@@ -1197,6 +1243,41 @@ export function ValidatorApp() {
               <section className="config-card">
                 <h3>현재 설정 JSON</h3>
                 <textarea className="textarea" value={configPayload} readOnly />
+              </section>
+            </>
+          )}
+
+          {activeTab === "formulas" && (
+            <>
+              <section className="overview-card report-hero-card">
+                <div className="section-title">
+                  <div>
+                    <span className="section-kicker">수식 기준</span>
+                    <h3>최종결과물 계산 수식</h3>
+                    <p className="result-meta">지금 결과물 탭에서 맞추고 있는 기준 수식입니다. 이후 계산 수정도 이 목록을 기준으로 진행합니다.</p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="config-card">
+                <div className="report-table-wrap">
+                  <table className="table report-table formula-table">
+                    <thead>
+                      <tr>
+                        <th>항목</th>
+                        <th>수식</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {buildRequestedFormulaRows().map((row) => (
+                        <tr key={row.항목}>
+                          <td className="formula-label-cell">{row.항목}</td>
+                          <td className="pre formula-cell">{row.수식}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </section>
             </>
           )}

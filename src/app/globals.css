@@ -752,6 +752,17 @@ a {
   font-size: 15px;
 }
 
+.formula-table .formula-label-cell {
+  min-width: 220px;
+  font-weight: 700;
+}
+
+.formula-table .formula-cell {
+  min-width: 520px;
+  white-space: pre-wrap;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
 .data-list {
   display: flex;
   flex-direction: column;
