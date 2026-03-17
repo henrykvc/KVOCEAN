@@ -17,7 +17,7 @@ export type CompanyConfig = {
 
 export type CompanyConfigs = Record<string, CompanyConfig>;
 
-export const LAST_PATCH = "2026-03-12  v31 – 자동 원인 진단 + 수정 버튼: 실패 검증 항목에서 원클릭으로 부호 수정 적용";
+export const LAST_PATCH = "2026-03-17 13:46";
 
 export const RESULT_ORDER = [
   "자산", "유동자산", "비유동자산",

@@ -362,7 +362,7 @@ export function ValidatorApp() {
       <section className="hero">
         <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
         <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
-        <p>복잡한 설정 없이 3행 OCR 텍스트를 넣으면 바로 비교하고, 값 수정과 부호 수정까지 같은 화면에서 끝낼 수 있게 단순화했습니다.</p>
+        <p>최종 수정: {LAST_PATCH}</p>
         <div className="hero-meta">
           <span className="pill">1. 텍스트 붙여넣기</span>
           <span className="pill">2. 실패 항목 확인</span>
