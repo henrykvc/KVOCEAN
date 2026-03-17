@@ -1,0 +1,33 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local config
+.env
+.env.local
+.env.*.local
+
+# Logs and temp outputs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+parse_output.txt
+debug_bs_output.txt
+pdf_debug.json
+error_log.json
+
+# Scratch / experiments
+xlsxtmp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/
