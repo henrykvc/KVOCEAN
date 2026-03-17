@@ -411,12 +411,71 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     return max > 0 && Math.abs(a - b) / max < 0.02;
   };
 
+  const signFromLabel = (label: string): SignCode => {
+    if (label === "−") {
+      return 1;
+    }
+    if (label === "제외") {
+      return 2;
+    }
+    return 0;
+  };
+
+  const signName = (sign: SignCode) => {
+    if (sign === 1) {
+      return "차감(−)";
+    }
+    if (sign === 2) {
+      return "제외";
+    }
+    return "가산(+)";
+  };
+
+  const buildReason = (item: DetailRow, currentSign: SignCode, nextSign: SignCode) => {
+    if (item.원본값 < 0 && currentSign === 1 && nextSign === 0) {
+      return "원본값이 이미 음수라 현재 차감하면 부호가 두 번 뒤집힙니다.";
+    }
+    if (item.원본값 < 0 && currentSign === 0 && nextSign === 1) {
+      return "원본값이 이미 음수인데 가산 중이라 방향이 반대로 들어갔습니다.";
+    }
+    if (nextSign === 2) {
+      return "이 계정은 이번 합계에서 제외해야 차이가 줄어듭니다.";
+    }
+    return "이 계정 하나의 부호 해석을 바꾸면 현재 차이가 대부분 해소됩니다.";
+  };
+
   const actions: DiagnosisAction[] = [];
   const sect = result.sect ?? result.parent;
 
   for (const item of result.detail) {
     const absRaw = Math.abs(item.원본값);
     if (absRaw < 1) {
+      continue;
+    }
+
+    const currentSign = signFromLabel(item.부호);
+    const candidates = ([0, 1, 2] as SignCode[])
+      .filter((candidate) => candidate !== currentSign)
+      .map((candidate) => {
+        const candidateApplied = candidate === 2 ? 0 : applySign(item.원본값, candidate as 0 | 1);
+        const nextComputed = result.computed - item.적용값 + candidateApplied;
+        const nextDiff = result.parent_val - nextComputed;
+        return {
+          candidate,
+          candidateApplied,
+          nextDiff,
+          nextAbsDiff: Math.abs(nextDiff)
+        };
+      })
+      .sort((a, b) => a.nextAbsDiff - b.nextAbsDiff);
+
+    const best = candidates[0];
+    if (best && (best.nextAbsDiff <= 1 || (absDiff > 0 && (absDiff - best.nextAbsDiff) / absDiff >= 0.85))) {
+      actions.push({
+        text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **${signName(currentSign)}** → **${signName(best.candidate)}**로 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(best.nextDiff)}원으로 줄어듭니다. ${buildReason(item, currentSign, best.candidate)} 반복되면 회사 규칙 저장으로 고정하세요.`,
+        label: `${signName(best.candidate)}으로 수정: ${item.계정명}`,
+        fix: { sect, acct: item.계정명, newSign: best.candidate }
+      });
       continue;
     }
 
