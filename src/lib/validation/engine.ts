@@ -13,6 +13,7 @@ export type DetailRow = {
   부호: string;
   적용값: number;
   _col?: number;
+  _allowedSigns?: SignCode[];
 };
 
 export type ValidationResult = {
@@ -321,6 +322,7 @@ export function validatePasteSections(
   if (capitalVal !== null) {
     const used: DetailRow[] = [];
     let computed = 0;
+    const capitalOverrides = sectionOverrides["자본"] ?? {};
     for (const [compName, isPositive] of Object.entries(logicConfig.capitalL1Signs)) {
       const parent = logicConfig.capitalL1Parent[compName];
       const parentVal = parent ? getAccountValue(nameToValue, parent) : null;
@@ -331,10 +333,29 @@ export function validatePasteSections(
       if (value === null) {
         continue;
       }
-      const sign = isPositive ? 0 : 1;
+      let sign: SignCode = isPositive ? 0 : 1;
+      for (const [keyword, override] of Object.entries(capitalOverrides)) {
+        if (compName.includes(keyword)) {
+          sign = override;
+          break;
+        }
+      }
+      if (sessionSignFixes["자본"]?.[compName] !== undefined) {
+        sign = sessionSignFixes["자본"][compName];
+      }
+      if (sign === 2) {
+        used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _allowedSigns: isPositive ? [0] : [0, 1] });
+        continue;
+      }
       const signedValue = applySign(value, sign);
       computed += signedValue;
-      used.push({ 계정명: compName, 원본값: value, 부호: isPositive ? "+" : "−", 적용값: signedValue });
+      used.push({
+        계정명: compName,
+        원본값: value,
+        부호: sign === 1 ? "−" : "+",
+        적용값: signedValue,
+        _allowedSigns: isPositive ? [0] : [0, 1]
+      });
     }
     if (used.length) {
       const diff = capitalVal - computed;
@@ -454,7 +475,8 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     }
 
     const currentSign = signFromLabel(item.부호);
-    const candidates = ([0, 1, 2] as SignCode[])
+    const allowedSigns = item._allowedSigns ?? [0, 1, 2];
+    const candidates = allowedSigns
       .filter((candidate) => candidate !== currentSign)
       .map((candidate) => {
         const candidateApplied = candidate === 2 ? 0 : applySign(item.원본값, candidate as 0 | 1);
