@@ -29,7 +29,21 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "validate" | "report" | "config" | "export";
+type TabKey = "validate" | "data" | "report" | "config" | "export";
+
+type SavedDataset = {
+  id: string;
+  companyName: string;
+  detectedCompany: string | null;
+  savedAt: string;
+  periodSignature: string;
+  pastedText: string;
+  tolerance: number;
+  pasteEdits: Record<number, number>;
+  sessionSignFixes: SessionSignFixes;
+  logicConfig: LogicConfig;
+  companyConfigs: CompanyConfigs;
+};
 
 type OverrideRow = {
   section: string;
@@ -198,6 +212,23 @@ function buildFormulaGuideRows() {
   ];
 }
 
+function parseSavedDatasets(raw: string | null): SavedDataset[] {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as SavedDataset[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function buildDatasetSignature(companyName: string, periods: ReportingModel["periods"]) {
+  return `${companyName}__${periods.map((period) => period.label).join("|")}`;
+}
+
 export function ValidatorApp() {
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
   const [mounted, setMounted] = useState(false);
@@ -212,14 +243,21 @@ export function ValidatorApp() {
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
+  const [savedDatasets, setSavedDatasets] = useState<SavedDataset[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
 
   useEffect(() => {
     setMounted(true);
     const persisted = parsePersistedState(window.localStorage.getItem(STORAGE_KEYS.config));
+    const saved = parseSavedDatasets(window.localStorage.getItem(STORAGE_KEYS.datasets));
     setLogicConfig(cloneLogicConfig(persisted.logicConfig));
     setCompanyConfigs(cloneCompanyConfigs(persisted.companyConfigs));
     setGlobalOverrideRows(overridesToRows(persisted.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(persisted.logicConfig.pasteSectToParent));
+    setSavedDatasets(saved);
+    if (saved[0]?.id) {
+      setSelectedDatasetId(saved[0].id);
+    }
   }, []);
 
   useEffect(() => {
@@ -231,6 +269,13 @@ export function ValidatorApp() {
       JSON.stringify({ logicConfig, companyConfigs })
     );
   }, [mounted, logicConfig, companyConfigs]);
+
+  useEffect(() => {
+    if (!mounted) {
+      return;
+    }
+    window.localStorage.setItem(STORAGE_KEYS.datasets, JSON.stringify(savedDatasets));
+  }, [mounted, savedDatasets]);
 
   useEffect(() => {
     const autoCompany = runValidation({
@@ -288,10 +333,78 @@ export function ValidatorApp() {
     () => buildPreviewGroups(validation.parsed.catRow, validation.parsed.nameRow),
     [validation.parsed.catRow, validation.parsed.nameRow]
   );
+  const selectedDataset = useMemo(
+    () => savedDatasets.find((item) => item.id === selectedDatasetId) ?? null,
+    [savedDatasets, selectedDatasetId]
+  );
+  const selectedDatasetReporting = useMemo(() => {
+    if (!selectedDataset) {
+      return null;
+    }
+    return buildReportingModel({
+      pastedText: selectedDataset.pastedText,
+      selectedCompany: selectedDataset.companyName,
+      logicConfig: selectedDataset.logicConfig,
+      companyConfigs: selectedDataset.companyConfigs,
+      pasteEdits: selectedDataset.pasteEdits,
+      sessionSignFixes: selectedDataset.sessionSignFixes
+    });
+  }, [selectedDataset]);
+  const resultReporting = selectedDatasetReporting;
 
   function resetAdjustments() {
     setPasteEdits({});
     setSessionSignFixes({});
+  }
+
+  function saveCurrentDataset() {
+    if (validation.parsed.error || !reporting.periods.length) {
+      return;
+    }
+
+    const companyName = selectedCompany.trim() || reporting.companyName || reporting.detectedCompany || "미지정 회사";
+    const periodSignature = buildDatasetSignature(companyName, reporting.periods);
+    const existingDataset = savedDatasets.find((item) => item.periodSignature === periodSignature);
+
+    const dataset: SavedDataset = {
+      id: existingDataset?.id ?? `ds-${Date.now()}`,
+      companyName,
+      detectedCompany: reporting.detectedCompany,
+      savedAt: new Date().toISOString(),
+      periodSignature,
+      pastedText,
+      tolerance,
+      pasteEdits: { ...pasteEdits },
+      sessionSignFixes: structuredClone(sessionSignFixes),
+      logicConfig: structuredClone(logicConfig),
+      companyConfigs: structuredClone(companyConfigs)
+    };
+
+    setSavedDatasets((prev) => [dataset, ...prev.filter((item) => item.id !== dataset.id)]);
+    setSelectedDatasetId(dataset.id);
+    setActiveTab("data");
+  }
+
+  function loadDatasetIntoValidator(dataset: SavedDataset) {
+    setPastedText(dataset.pastedText);
+    setTolerance(dataset.tolerance);
+    setSelectedCompany(dataset.companyName);
+    setPasteEdits({ ...dataset.pasteEdits });
+    setSessionSignFixes(structuredClone(dataset.sessionSignFixes));
+    setLogicConfig(structuredClone(dataset.logicConfig));
+    setCompanyConfigs(structuredClone(dataset.companyConfigs));
+    setSelectedDatasetId(dataset.id);
+    setActiveTab("validate");
+  }
+
+  function deleteDataset(datasetId: string) {
+    setSavedDatasets((prev) => {
+      const next = prev.filter((item) => item.id !== datasetId);
+      if (selectedDatasetId === datasetId) {
+        setSelectedDatasetId(next[0]?.id ?? "");
+      }
+      return next;
+    });
   }
 
   function updateEditableValue(colIndex: number, rawValue: number, nextValue: string) {
@@ -477,63 +590,84 @@ export function ValidatorApp() {
 
       <section className="layout-grid">
         <aside className="panel sidebar">
-          <div className="section-title panel-title-wrap">
-            <div>
-              <span className="section-kicker">1. 입력</span>
-              <h2>검증할 데이터를 넣어 주세요</h2>
-              <p className="panel-desc">회사명과 허용 오차를 확인한 뒤 OCR 3행 텍스트를 그대로 붙여넣으면 됩니다.</p>
+          <div className="side-nav-card">
+            <span className="section-kicker">메뉴</span>
+            <div className="side-nav-list">
+              <button className={`side-nav-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>OCR검증</button>
+              <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>데이터</button>
+              <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>결과물</button>
             </div>
-            <span className={`tag ${companyKnown ? "pass" : ""}`}>{companyKnown ? "회사 규칙 적용 중" : "공통 규칙 사용"}</span>
+            <div className="side-nav-utils">
+              <button className={`ghost-button ${activeTab === "config" ? "is-selected" : ""}`} onClick={() => setActiveTab("config")}>규칙 관리</button>
+              <button className={`ghost-button ${activeTab === "export" ? "is-selected" : ""}`} onClick={() => setActiveTab("export")}>내보내기</button>
+            </div>
           </div>
 
-          <div className="field-grid">
-            <label className="field">
-              <span>허용 오차 (원)</span>
-              <input className="number-input" type="number" min={0} step={1} value={tolerance} onChange={(event) => setTolerance(Number(event.target.value) || 0)} />
-            </label>
-            <label className="field">
-              <span>회사명</span>
-              <input className="input" value={selectedCompany} onChange={(event) => setSelectedCompany(event.target.value)} placeholder="예) 소셜빈" />
-            </label>
-          </div>
+          {activeTab === "validate" ? (
+            <>
+              <div className="section-title panel-title-wrap">
+                <div>
+                  <span className="section-kicker">1. 입력</span>
+                  <h2>검증할 데이터를 넣어 주세요</h2>
+                  <p className="panel-desc">회사명과 허용 오차를 확인한 뒤 OCR 3행 텍스트를 그대로 붙여넣으면 됩니다.</p>
+                </div>
+                <span className={`tag ${companyKnown ? "pass" : ""}`}>{companyKnown ? "회사 규칙 적용 중" : "공통 규칙 사용"}</span>
+              </div>
 
-          <label className="field">
-            <span>3행 OCR 텍스트</span>
-            <textarea
-              className="textarea"
-              value={pastedText}
-              onChange={(event) => {
-                setPastedText(event.target.value);
-                setPasteEdits({});
-                setSessionSignFixes({});
-              }}
-              placeholder={"행1: 기타\t재무상태표\t유동자산\t...\n행2: 회사명\t날짜\t...\n행3: 에이슬립\t2024-12-31\t..."}
-            />
-          </label>
+              <div className="field-grid">
+                <label className="field">
+                  <span>허용 오차 (원)</span>
+                  <input className="number-input" type="number" min={0} step={1} value={tolerance} onChange={(event) => setTolerance(Number(event.target.value) || 0)} />
+                </label>
+                <label className="field">
+                  <span>회사명</span>
+                  <input className="input" value={selectedCompany} onChange={(event) => setSelectedCompany(event.target.value)} placeholder="예) 소셜빈" />
+                </label>
+              </div>
 
-          <div className="button-row">
-            <button className="button" onClick={() => setActiveTab("validate")}>검증 결과 보기</button>
-            <button className="ghost-button" onClick={resetAdjustments}>입력 수정 초기화</button>
-          </div>
+              <label className="field">
+                <span>3행 OCR 텍스트</span>
+                <textarea
+                  className="textarea"
+                  value={pastedText}
+                  onChange={(event) => {
+                    setPastedText(event.target.value);
+                    setPasteEdits({});
+                    setSessionSignFixes({});
+                  }}
+                  placeholder={"행1: 기타\t재무상태표\t유동자산\t...\n행2: 회사명\t날짜\t...\n행3: 에이슬립\t2024-12-31\t..."}
+                />
+              </label>
 
-          <div className="notice input-helper">
-            <strong>입력 팁</strong>
-            <ul className="helper-list muted">
-              <li>행 1은 섹션명, 행 2는 계정명, 행 3부터 값입니다.</li>
-              <li>회사명이 자동 감지되면 회사별 부호 규칙을 바로 불러옵니다.</li>
-              <li>값 수정과 부호 수정은 검증 화면에서 바로 반영됩니다.</li>
-            </ul>
-          </div>
+              <div className="button-row">
+                <button className="button" onClick={() => setActiveTab("validate")}>검증 결과 보기</button>
+                <button className="ghost-button" onClick={resetAdjustments}>입력 수정 초기화</button>
+              </div>
+
+              <div className="notice input-helper">
+                <strong>입력 팁</strong>
+                <ul className="helper-list muted">
+                  <li>행 1은 섹션명, 행 2는 계정명, 행 3부터 값입니다.</li>
+                  <li>회사명이 자동 감지되면 회사별 부호 규칙을 바로 불러옵니다.</li>
+                  <li>값 수정과 부호 수정은 검증 화면에서 바로 반영됩니다.</li>
+                </ul>
+              </div>
+            </>
+          ) : (
+            <div className="notice input-helper">
+              <strong>{activeTab === "data" ? "데이터 안내" : activeTab === "report" ? "결과물 안내" : "보조 기능"}</strong>
+              <p className="muted" style={{ marginTop: 8 }}>
+                {activeTab === "data"
+                  ? `저장된 검증 데이터 ${savedDatasets.length}건이 누적되어 있습니다. 필요한 항목을 선택해 다시 불러오거나 결과물로 보낼 수 있습니다.`
+                  : activeTab === "report"
+                    ? `${selectedDataset ? `${selectedDataset.companyName} 데이터` : "저장된 데이터"}를 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
+                    : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
+              </p>
+            </div>
+          )}
         </aside>
 
         <section className="panel main-panel">
-          <div className="tab-list">
-            <button className={`tab ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>검증</button>
-            <button className={`tab ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>보고서</button>
-            <button className={`tab ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>규칙 관리</button>
-            <button className={`tab ${activeTab === "export" ? "active" : ""}`} onClick={() => setActiveTab("export")}>내보내기</button>
-          </div>
-
           {activeTab === "validate" && (
             <>
               {!pastedText.trim() && <div className="notice">사이드바에 OCR 3행 텍스트를 붙여넣으면 검증 결과가 나타납니다.</div>}
@@ -550,6 +684,7 @@ export function ValidatorApp() {
                       <div className="result-actions">
                         <span className="soft-badge">수정값 {editedValueCount}</span>
                         <span className="soft-badge">부호 변경 {sessionFixCount}</span>
+                        <button className="button" disabled={!reporting.periods.length} onClick={saveCurrentDataset}>저장하기</button>
                         <button className="tiny-button" onClick={focusFailedResultCards}>실패만 펼치기</button>
                         <button className="tiny-button" onClick={openAllResultCards}>전체 펼치기</button>
                       </div>
@@ -755,30 +890,70 @@ export function ValidatorApp() {
             </>
           )}
 
+          {activeTab === "data" && (
+            <>
+              <section className="overview-card report-hero-card">
+                <div className="section-title">
+                  <div>
+                    <span className="section-kicker">2. 데이터</span>
+                    <h3>저장된 검증 데이터</h3>
+                    <p className="result-meta">검증 완료 후 `저장하기`를 누른 데이터가 여기에 누적됩니다. 선택한 데이터는 결과물 탭에서 바로 사용합니다.</p>
+                  </div>
+                  <span className="soft-badge">총 {savedDatasets.length}건</span>
+                </div>
+              </section>
+
+              {!savedDatasets.length && <div className="notice">저장된 데이터가 없습니다. OCR검증에서 값을 확인한 뒤 `저장하기`를 눌러 주세요.</div>}
+
+              {!!savedDatasets.length && (
+                <section className="config-card">
+                  <div className="data-list">
+                    {savedDatasets.map((dataset) => (
+                      <article className={`data-card ${selectedDatasetId === dataset.id ? "selected" : ""}`} key={dataset.id}>
+                        <div className="section-title">
+                          <div>
+                            <strong>{dataset.companyName}</strong>
+                            <p className="result-meta">저장 시각 {new Date(dataset.savedAt).toLocaleString("ko-KR")}</p>
+                          </div>
+                          <span className="soft-badge">{dataset.detectedCompany ?? "수동 선택"}</span>
+                        </div>
+                        <div className="inline-actions" style={{ marginTop: 12 }}>
+                          <button className="secondary-button" onClick={() => { setSelectedDatasetId(dataset.id); setActiveTab("report"); }}>결과물 보기</button>
+                          <button className="ghost-button" onClick={() => loadDatasetIntoValidator(dataset)}>검증기로 불러오기</button>
+                          <button className="danger-button" onClick={() => deleteDataset(dataset.id)}>삭제</button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
           {activeTab === "report" && (
             <>
-              {!reporting.periods.length && <div className="notice">검증 가능한 OCR 3행 데이터를 넣으면 재무제표, 음양반영, 최종결과물 보고서를 자동으로 만듭니다.</div>}
+              {!resultReporting?.periods.length && <div className="notice">결과물에 보여줄 저장 데이터가 없습니다. 먼저 OCR검증에서 `저장하기`를 누른 뒤 데이터 탭에서 항목을 선택해 주세요.</div>}
 
-              {!!reporting.periods.length && (
+              {!!resultReporting?.periods.length && (
                 <>
                   <section className="overview-card report-hero-card">
                     <div className="section-title">
                       <div>
                         <span className="section-kicker">3. 보고서</span>
-                        <h3>{reporting.companyName ?? reporting.detectedCompany ?? "미지정 회사"} 분석 결과</h3>
+                        <h3>{resultReporting.companyName ?? resultReporting.detectedCompany ?? "미지정 회사"} 결과물</h3>
                         <p className="result-meta">엑셀의 `재무제표 → 재무제표_음양반영 → 최종결과물` 흐름을 현재 입력 데이터 기준으로 바로 보여줍니다.</p>
                       </div>
                       <div className="result-actions">
-                        {reporting.periods.map((period) => (
+                        {resultReporting.periods.map((period) => (
                           <span className="soft-badge" key={period.key}>{period.label}</span>
                         ))}
                       </div>
                     </div>
                     <div className="metric-grid compact-metrics">
-                      <article className="metric-card"><span className="muted">기간 수</span><strong>{reporting.periods.length}</strong></article>
-                      <article className="metric-card"><span className="muted">원본 계정</span><strong>{reporting.rawStatementRows.length}</strong></article>
-                      <article className="metric-card"><span className="muted">지표 섹션</span><strong>{reporting.finalSections.length}</strong></article>
-                      <article className="metric-card"><span className="muted">자동 회사</span><strong>{reporting.companyName ?? "-"}</strong></article>
+                      <article className="metric-card"><span className="muted">기간 수</span><strong>{resultReporting.periods.length}</strong></article>
+                      <article className="metric-card"><span className="muted">원본 계정</span><strong>{resultReporting.rawStatementRows.length}</strong></article>
+                      <article className="metric-card"><span className="muted">지표 섹션</span><strong>{resultReporting.finalSections.length}</strong></article>
+                      <article className="metric-card"><span className="muted">저장 데이터</span><strong>{selectedDataset?.companyName ?? "-"}</strong></article>
                     </div>
                   </section>
 
@@ -789,7 +964,7 @@ export function ValidatorApp() {
                           <h3>재무제표</h3>
                           <p className="result-meta">OCR 수정값이 반영된 기본 원장</p>
                         </div>
-                        <span className="soft-badge">{reporting.rawStatementRows.length}행</span>
+                        <span className="soft-badge">{resultReporting.rawStatementRows.length}행</span>
                       </div>
                       <div className="report-table-wrap">
                         <table className="table report-table">
@@ -798,16 +973,16 @@ export function ValidatorApp() {
                               <th>양음</th>
                               <th>섹션</th>
                               <th>계정명</th>
-                              {reporting.periods.map((period) => <th key={`raw-${period.key}`}>{period.label}</th>)}
+                              {resultReporting.periods.map((period) => <th key={`raw-${period.key}`}>{period.label}</th>)}
                             </tr>
                           </thead>
                           <tbody>
-                            {reporting.rawStatementRows.map((row) => (
+                            {resultReporting.rawStatementRows.map((row) => (
                               <tr key={`raw-${row.section}-${row.accountName}`}>
                                 <td>{row.signFlag}</td>
                                 <td>{row.section}</td>
                                 <td>{row.accountName}</td>
-                                {reporting.periods.map((period) => <td key={`${row.accountName}-${period.key}`}>{formatNumber(row.values[period.key])}</td>)}
+                                {resultReporting.periods.map((period) => <td key={`${row.accountName}-${period.key}`}>{formatNumber(row.values[period.key])}</td>)}
                               </tr>
                             ))}
                           </tbody>
@@ -830,16 +1005,16 @@ export function ValidatorApp() {
                               <th>양음</th>
                               <th>섹션</th>
                               <th>계정명</th>
-                              {reporting.periods.map((period) => <th key={`adj-${period.key}`}>{period.label}</th>)}
+                              {resultReporting.periods.map((period) => <th key={`adj-${period.key}`}>{period.label}</th>)}
                             </tr>
                           </thead>
                           <tbody>
-                            {reporting.adjustedStatementRows.map((row) => (
+                            {resultReporting.adjustedStatementRows.map((row) => (
                               <tr key={`adj-${row.section}-${row.accountName}`}>
                                 <td>{row.signFlag}</td>
                                 <td>{row.section}</td>
                                 <td>{row.accountName}</td>
-                                {reporting.periods.map((period) => <td key={`${row.accountName}-adj-${period.key}`}>{formatNumber(row.values[period.key])}</td>)}
+                                {resultReporting.periods.map((period) => <td key={`${row.accountName}-adj-${period.key}`}>{formatNumber(row.values[period.key])}</td>)}
                               </tr>
                             ))}
                           </tbody>
@@ -848,7 +1023,7 @@ export function ValidatorApp() {
                     </article>
                   </section>
 
-                  {reporting.finalSections.map((section) => (
+                  {resultReporting.finalSections.map((section) => (
                     <section className="config-card" key={section.title}>
                       <div className="section-title">
                         <div>
@@ -861,7 +1036,7 @@ export function ValidatorApp() {
                           <thead>
                             <tr>
                               <th>항목</th>
-                              {reporting.periods.map((period) => (
+                              {resultReporting.periods.map((period) => (
                                 <th key={`${section.title}-${period.key}`}>{period.label}</th>
                               ))}
                             </tr>
@@ -871,13 +1046,13 @@ export function ValidatorApp() {
                               <Fragment key={`${section.title}-${row.label}`}>
                                 <tr key={`${section.title}-${row.label}-value`}>
                                   <td>{row.label}</td>
-                                  {reporting.periods.map((period) => (
+                                  {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>{formatMetricValue(row, row.values[period.key])}</td>
                                   ))}
                                 </tr>
                                 <tr key={`${section.title}-${row.label}-growth`} className="report-growth-row">
                                   <td className="muted">전분기 증감율</td>
-                                  {reporting.periods.map((period) => (
+                                  {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-growth`} className="muted">
                                       {row.growthRates[period.key] === null || row.growthRates[period.key] === undefined ? "-" : `${row.growthRates[period.key]!.toFixed(1)}%`}
                                     </td>
