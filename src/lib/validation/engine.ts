@@ -97,6 +97,17 @@ function sanitizeClassificationGroups(groups: ClassificationGroups): Classificat
   return next;
 }
 
+function mergeClassificationGroups(defaults: ClassificationGroups, persisted: ClassificationGroups): ClassificationGroups {
+  const merged: ClassificationGroups = structuredClone(defaults);
+
+  for (const [key, aliases] of Object.entries(persisted)) {
+    const defaultAliases = merged[key] ?? [];
+    merged[key] = Array.from(new Set([...(defaultAliases ?? []), ...(aliases ?? [])]));
+  }
+
+  return sanitizeClassificationGroups(merged);
+}
+
 export function parsePersistedState(raw: string | null): PersistedState {
   const fallback = getDefaultPersistedState();
   if (!raw) {
@@ -108,7 +119,7 @@ export function parsePersistedState(raw: string | null): PersistedState {
     return {
       logicConfig: { ...fallback.logicConfig, ...(parsed.logicConfig ?? {}) },
       companyConfigs: { ...fallback.companyConfigs, ...(parsed.companyConfigs ?? {}) },
-      classificationGroups: sanitizeClassificationGroups({ ...fallback.classificationGroups, ...(parsed.classificationGroups ?? {}) })
+      classificationGroups: mergeClassificationGroups(fallback.classificationGroups, parsed.classificationGroups ?? {})
     };
   } catch {
     return fallback;
