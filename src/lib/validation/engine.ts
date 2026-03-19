@@ -92,7 +92,7 @@ function sanitizeClassificationGroups(groups: ClassificationGroups): Classificat
       (alias) => !["당기순이익", "당기순이익(손실)", "당기순손익", "당기순손실"].includes(alias.trim())
     );
     if (!next.계속사업당기순이익.length) {
-      next.계속사업당기순이익 = ["계속사업당기순이익"];
+      next.계속사업당기순이익 = ["계속사업당기순이익", "계속사업당기순손실", "계속사업당기순이익(손실)"];
     }
   }
 

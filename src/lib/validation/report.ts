@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, DEFAULT_CLASSIFICATION_GROUPS, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { ACCOUNT_ALIASES, DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, pasteEditKey, safeFloat, type SessionSignFixes } from "./engine";
 
 export type ReportPeriod = {
@@ -87,7 +87,16 @@ const ASSET_LIABILITY_ITEMS = ["현금및현금성자산", "매도가능증권",
 const VARIABLE_COST_ALIASES = ["매출원가", "외주용역비", "외주비", "지급수수료", "광고선전비", "배송비", "운반비", "수출제비용", "인건비", "복리후생비", "접대비", "연구개발비", "여비교통비", "통신비", "세금과공과금", "도서인쇄비", "소모품비", "대손상각비", "판매촉진비", "대외협력비", "행사비", "기술이전료", "경상기술료", "전산운영비", "반품비용", "기타변동비"];
 const BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
-const QUICK_ASSET_ALIASES = ["현금및현금성자산", "매출채권", "매출채권_양수", "매출채권_음수", "미수금", "미수수익", "매도가능증권"];
+const QUICK_ASSET_ALIASES = [
+  "현금및현금성자산",
+  "매출채권",
+  "매출채권_음수",
+  "미수금",
+  "미수금_음수",
+  "미수수익",
+  "미수수익_음수",
+  "매도가능증권"
+];
 
 function normalizeText(value: string) {
   return value.replace(/\s+/g, "").trim();
@@ -222,6 +231,9 @@ function resolveRowMeta(
     const section = prevSect || "기타";
     const sectionKey = normalizeSectionKey(section);
     let signCode = inferSignFromName(accountName, logicConfig) ?? 0;
+    if (LOSS_ACCOUNTS.has(accountName.trim())) {
+      signCode = 1;
+    }
 
     for (const [keyword, override] of Object.entries(overrides[section] ?? {})) {
       if (accountName.includes(keyword)) {
