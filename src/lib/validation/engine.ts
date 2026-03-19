@@ -72,7 +72,7 @@ export type PersistedState = {
 };
 
 export const STORAGE_KEYS = {
-  config: "ocr-validation-config-v1",
+  config: "ocr-validation-config-v2",
   datasets: "ocr-validation-datasets-v1"
 } as const;
 

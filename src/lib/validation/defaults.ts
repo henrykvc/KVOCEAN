@@ -18,7 +18,7 @@ export type CompanyConfig = {
 export type CompanyConfigs = Record<string, CompanyConfig>;
 export type ClassificationGroups = Record<string, string[]>;
 
-export const LAST_PATCH = "2026-03-17 13:46";
+export const LAST_PATCH = "2026-03-19 17:55";
 
 export const RESULT_ORDER = [
   "자산", "유동자산", "비유동자산",
