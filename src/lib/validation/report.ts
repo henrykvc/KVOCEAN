@@ -84,7 +84,7 @@ type MetricSpec = {
 const DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
 const COST_STRUCTURE_ITEMS = ["인건비", "광고선전비", "연구개발비", "접대비", "복리후생비", "지급수수료", "외주용역비", "임차료", "총이자비용"];
 const ASSET_LIABILITY_ITEMS = ["현금및현금성자산", "매도가능증권", "단기대여금", "개발비(자산)", "선급금", "가수금", "가지급금", "퇴직급여충당부채(자산)"];
-const VARIABLE_COST_ALIASES = ["매출원가", "외주용역비", "외주비", "지급수수료", "광고선전비", "배송비", "운반비"];
+const VARIABLE_COST_ALIASES = ["매출원가", "외주용역비", "외주비", "지급수수료", "광고선전비", "배송비", "운반비", "수출제비용", "인건비", "복리후생비", "접대비", "연구개발비", "여비교통비", "통신비", "세금과공과금", "도서인쇄비", "소모품비", "대손상각비", "판매촉진비", "대외협력비", "행사비", "기술이전료", "경상기술료", "전산운영비", "반품비용", "기타변동비"];
 const BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
 
@@ -334,6 +334,10 @@ function getRawMetricValue(context: MetricContext, periodKey: string, names: str
   return firstAvailableValue(context.rawRows, periodKey, names, sectionName);
 }
 
+function getRawMetricSum(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
+  return sumValues(context.rawRows, periodKey, names, sectionName);
+}
+
 function getAdjustedMetricValue(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
   return firstAvailableValue(context.adjustedRows, periodKey, names, sectionName);
 }
@@ -379,7 +383,7 @@ function getNetMetricValue(context: MetricContext, periodKey: string, positiveNa
   if (positive === null && negative === null) {
     return null;
   }
-  return (positive ?? 0) - (negative ?? 0);
+  return (positive ?? 0) + (negative ?? 0);
 }
 
 function buildMetricRows(context: MetricContext, specs: MetricSpec[]) {
@@ -414,7 +418,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const runwaySpec: MetricSpec = {
     label: "런웨이(E)",
     amount: (period, current) => {
-      const cash = getMetricValue(current, period.key, ["현금및현금성자산"]);
+      const cash = getAdjustedMetricSum(current, period.key, ["현금및현금성자산"]);
       const sales = getMetricValue(current, period.key, ["매출액"]);
       const operatingIncome = getMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
       const depreciation = getMetricSum(current, period.key, DEPRECIATION_ALIASES);
@@ -451,12 +455,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     }
   };
 
+  const groupedRawValue = (period: ReportPeriod, current: MetricContext, names: string[]) => getRawMetricSum(current, period.key, names);
+
   const costStructureSpecs = COST_STRUCTURE_ITEMS.map((label) => ({
     label,
-    amount: (period: ReportPeriod, current: MetricContext) => getRawMetricValue(current, period.key, [label]),
-    ratio: label === "총이자비용" ? undefined : (period: ReportPeriod, current: MetricContext) => {
-      const value = getRawMetricValue(current, period.key, [label]);
-      const expenseTotal = getSectionTotal(current, period.key, ["영업비용", "판매비와관리비", "판관비", "영업외비용"]);
+    amount: (period: ReportPeriod, current: MetricContext) => groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]),
+    ratio: (period: ReportPeriod, current: MetricContext) => {
+      const value = groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]);
+      const expenseTotal = getSectionTotal(current, period.key, ["매출원가", "영업비용", "판매비와관리비", "판관비", "영업외비용"]);
       return safeDivide(value, expenseTotal, 100);
     }
   } satisfies MetricSpec));
@@ -464,13 +470,13 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const assetLiabilitySpecs: MetricSpec[] = [
     {
       label: "현금및현금성자산",
-      amount: (period, current) => getRawMetricValue(current, period.key, ["현금및현금성자산"]),
-      ratio: (period, current) => safeDivide(getRawMetricValue(current, period.key, ["현금및현금성자산"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amount: (period, current) => getRawMetricSum(current, period.key, ["현금및현금성자산"]),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["현금및현금성자산"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
     },
     {
       label: "매도가능증권",
-      amount: (period, current) => getRawMetricValue(current, period.key, ["매도가능증권"]),
-      ratio: (period, current) => safeDivide(getRawMetricValue(current, period.key, ["매도가능증권"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amount: (period, current) => getRawMetricSum(current, period.key, ["매도가능증권"]),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["매도가능증권"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
     },
     {
       label: "단기대여금",
@@ -489,13 +495,13 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "가수금",
-      amount: (period, current) => getRawMetricValue(current, period.key, ["가수금"]),
-      ratio: (period, current) => safeDivide(getRawMetricValue(current, period.key, ["가수금"]), getAdjustedMetricValue(current, period.key, ["부채"]), 100)
+      amount: (period, current) => getRawMetricSum(current, period.key, ["가수금"]),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가수금"]), getAdjustedMetricValue(current, period.key, ["부채"]), 100)
     },
     {
       label: "가지급금",
-      amount: (period, current) => getRawMetricValue(current, period.key, ["가지급금"]),
-      ratio: (period, current) => safeDivide(getRawMetricValue(current, period.key, ["가지급금"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amount: (period, current) => getRawMetricSum(current, period.key, ["가지급금"]),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가지급금"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
     },
     {
       label: "퇴직급여충당부채",
@@ -519,51 +525,61 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const stabilitySpecs: MetricSpec[] = [
     {
       label: "유동비율",
-      ratio: (period, current) => safeDivide(getMetricValue(current, period.key, ["유동자산"]), getMetricValue(current, period.key, ["유동부채"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["유동자산"]), getAdjustedMetricSum(current, period.key, ["유동부채"]), 100)
     },
     {
       label: "당좌비율",
       ratio: (period, current) => {
-        const quickAssets = getAdjustedMetricValue(current, period.key, ["당좌자산"]);
-        const currentLiabilities = getMetricValue(current, period.key, ["유동부채"]);
+        const quickAssets = [
+          getAdjustedMetricSum(current, period.key, ["현금및현금성자산"], "유동자산"),
+          getNetMetricValue({ ...current, adjustedRows: current.adjustedRows.filter((row) => row.sectionKey === "유동자산") }, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]),
+          getAdjustedMetricSum(current, period.key, ["미수금", "미수수익"], "유동자산"),
+          getAdjustedMetricSum(current, period.key, ["매도가능증권"], "유동자산")
+        ].reduce<number | null>((total, value) => {
+          if (value === null) {
+            return total;
+          }
+          return (total ?? 0) + value;
+        }, null);
+        const currentLiabilities = getAdjustedMetricSum(current, period.key, ["유동부채"]);
         return safeDivide(quickAssets, currentLiabilities, 100);
       }
     },
     {
       label: "부채비율",
-      ratio: (period, current) => safeDivide(getMetricValue(current, period.key, ["부채"]), getMetricValue(current, period.key, ["자본"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["부채"]), getAdjustedMetricSum(current, period.key, ["자본"]), 100)
     },
     {
       label: "차입금 의존도",
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getMetricValue(current, period.key, ["자산"]), 100)
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getAdjustedMetricSum(current, period.key, ["자산"]), 100)
     },
     {
       label: "이자보상비율",
-      ratio: (period, current) => safeDivide(getMetricValue(current, period.key, ["영업이익"]), getMetricSum(current, period.key, INTEREST_ALIASES), 1)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getMetricSum(current, period.key, INTEREST_ALIASES), 1)
     }
   ];
 
   const profitabilitySpecs: MetricSpec[] = [
     {
       label: "매출액순이익률",
-      ratio: (period, current) => safeDivide(getMetricValue(current, period.key, ["계속사업당기순이익", "당기순이익"]), getMetricValue(current, period.key, ["매출액"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익", "당기순이익"]), getAdjustedMetricSum(current, period.key, ["매출액"]), 100)
     },
     {
-      label: "총자산이익률",
-      ratio: (period, current) => safeDivide(getMetricValue(current, period.key, ["계속사업당기순이익", "당기순이익"]), getMetricValue(current, period.key, ["자산"]), 100)
+      label: "총자산이익률(ROA)",
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익", "당기순이익"]), getAdjustedMetricSum(current, period.key, ["자산"]), 100)
     },
     {
-      label: "자기자본이익률",
-      ratio: (period, current) => safeDivide(getMetricValue(current, period.key, ["계속사업당기순이익", "당기순이익"]), getMetricValue(current, period.key, ["자본"]), 100)
+      label: "자기자본이익률(ROE)",
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익", "당기순이익"]), getAdjustedMetricSum(current, period.key, ["자본"]), 100)
     },
     {
       label: "영업이익률",
-      ratio: (period, current) => safeDivide(getMetricValue(current, period.key, ["영업이익"]), getMetricValue(current, period.key, ["매출액"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getAdjustedMetricSum(current, period.key, ["매출액"]), 100)
     },
     {
       label: "공헌이익률",
       ratio: (period, current) => {
-        const sales = getMetricValue(current, period.key, ["매출액"]);
+        const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const variableCosts = getMetricSum(current, period.key, VARIABLE_COST_ALIASES);
         return safeDivide(sales !== null ? sales - (variableCosts ?? 0) : null, sales, 100);
       }
@@ -576,9 +592,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageAssets = previous
-          ? averageTwo(getMetricValue(current, period.key, ["자산"]), getMetricValue(current, previous.key, ["자산"]))
+          ? averageTwo(getAdjustedMetricSum(current, period.key, ["자산"]), getAdjustedMetricSum(current, previous.key, ["자산"]))
           : null;
-        return safeDivide(getMetricValue(current, period.key, ["매출액"]), averageAssets, 1);
+        return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageAssets, 1);
       }
     },
     {
@@ -586,9 +602,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageReceivables = previous
-          ? averageTwo(getMetricValue(current, period.key, ["매출채권"]), getMetricValue(current, previous.key, ["매출채권"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]), getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]))
           : null;
-        return safeDivide(getMetricValue(current, period.key, ["매출액"]), averageReceivables, 1);
+        return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
       }
     },
     {
@@ -596,9 +612,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageReceivables = previous
-          ? averageTwo(getMetricValue(current, period.key, ["매출채권"]), getMetricValue(current, previous.key, ["매출채권"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]), getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]))
           : null;
-        const turnover = safeDivide(getMetricValue(current, period.key, ["매출액"]), averageReceivables, 1);
+        const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
         return turnover ? 365 / turnover : null;
       }
     },
@@ -607,9 +623,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageInventory = previous
-          ? averageTwo(getMetricValue(current, period.key, ["재고자산"]), getMetricValue(current, previous.key, ["재고자산"]))
+          ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
           : null;
-        return safeDivide(getMetricValue(current, period.key, ["매출원가"]), averageInventory, 1);
+        return safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
       }
     },
     {
@@ -617,9 +633,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageInventory = previous
-          ? averageTwo(getMetricValue(current, period.key, ["재고자산"]), getMetricValue(current, previous.key, ["재고자산"]))
+          ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
           : null;
-        const turnover = safeDivide(getMetricValue(current, period.key, ["매출원가"]), averageInventory, 1);
+        const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
         return turnover ? 365 / turnover : null;
       }
     },
@@ -628,13 +644,13 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageReceivables = previous
-          ? averageTwo(getMetricValue(current, period.key, ["매출채권"]), getMetricValue(current, previous.key, ["매출채권"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]), getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]))
           : null;
         const averageInventory = previous
-          ? averageTwo(getMetricValue(current, period.key, ["재고자산"]), getMetricValue(current, previous.key, ["재고자산"]))
+          ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
           : null;
-        const receivableTurnover = safeDivide(getMetricValue(current, period.key, ["매출액"]), averageReceivables, 1);
-        const inventoryTurnover = safeDivide(getMetricValue(current, period.key, ["매출원가"]), averageInventory, 1);
+        const receivableTurnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
+        const inventoryTurnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
         const receivableDays = receivableTurnover ? 365 / receivableTurnover : null;
         const inventoryDays = inventoryTurnover ? 365 / inventoryTurnover : null;
         return receivableDays !== null && inventoryDays !== null ? receivableDays + inventoryDays : null;
@@ -650,8 +666,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         if (!previous) {
           return null;
         }
-        const currentSales = getAdjustedMetricValue(current, period.key, ["매출액"]);
-        const previousSales = getAdjustedMetricValue(current, previous.key, ["매출액"]);
+        const currentSales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        const previousSales = getAdjustedMetricSum(current, previous.key, ["매출액"]);
         return currentSales !== null && previousSales !== null && previousSales !== 0
           ? ((currentSales - previousSales) / previousSales) * 100
           : null;
@@ -664,8 +680,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         if (!previous) {
           return null;
         }
-        const currentOperating = getAdjustedMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
-        const previousOperating = getAdjustedMetricValue(current, previous.key, ["영업이익", "영업이익(손실)"]);
+        const currentOperating = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
+        const previousOperating = getAdjustedMetricSum(current, previous.key, ["영업이익", "영업이익(손실)"]);
         return currentOperating !== null && previousOperating !== null && previousOperating !== 0
           ? ((currentOperating - previousOperating) / previousOperating) * 100
           : null;

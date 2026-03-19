@@ -525,7 +525,7 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     const best = candidates[0];
     if (best && (best.nextAbsDiff <= 1 || (absDiff > 0 && (absDiff - best.nextAbsDiff) / absDiff >= 0.85))) {
       actions.push({
-        text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **${signName(currentSign)}** → **${signName(best.candidate)}**로 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(best.nextDiff)}원으로 줄어듭니다. ${buildReason(item, currentSign, best.candidate)} 반복되면 회사 규칙 저장으로 고정하세요.`,
+        text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **${signName(currentSign)}** → **${signName(best.candidate)}**로 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(best.nextDiff)}원으로 줄어듭니다. ${buildReason(item, currentSign, best.candidate)} 반복되면 회사별 로직 추가로 고정하세요.`,
         label: `${signName(best.candidate)}으로 수정: ${item.계정명}`,
         fix: { sect, acct: item.계정명, newSign: best.candidate }
       });
