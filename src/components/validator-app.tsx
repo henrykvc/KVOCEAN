@@ -36,7 +36,7 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "validate" | "data" | "report" | "config" | "classify" | "formulas" | "export";
+type TabKey = "validate" | "data" | "report" | "config" | "classify" | "formulas";
 
 type OverrideRow = {
   section: string;
@@ -428,9 +428,24 @@ export function ValidatorApp() {
     () => Array.from(new Set(savedDatasets.map((item) => item.companyName))),
     [savedDatasets]
   );
+  const rebuiltResultSnapshots = useMemo(
+    () => savedDatasets
+      .filter((item) => item.companyName === selectedResultCompany)
+      .flatMap((item) => buildQuarterSnapshots({
+        pastedText: item.source.pastedText,
+        selectedCompany: item.companyName,
+        tolerance: item.source.tolerance,
+        logicConfig: item.source.logicConfig,
+        companyConfigs: item.source.companyConfigs,
+        classificationGroups,
+        pasteEdits: item.source.pasteEdits,
+        sessionSignFixes: item.source.sessionSignFixes
+      })),
+    [savedDatasets, selectedResultCompany, classificationGroups]
+  );
   const resultReporting = useMemo(
-    () => buildCompanyReport(savedDatasets.filter((item) => item.companyName === selectedResultCompany)),
-    [savedDatasets, selectedResultCompany]
+    () => buildCompanyReport(rebuiltResultSnapshots),
+    [rebuiltResultSnapshots]
   );
 
   function resetAdjustments() {
@@ -575,40 +590,14 @@ export function ValidatorApp() {
     navigator.clipboard.writeText(text).catch(() => undefined);
   }
 
-  function exportWorkbook() {
-    if (!validation.allResults.length) {
+  function exportFinalWorkbook() {
+    if (!resultReporting.rawStatementRows.length) {
       return;
     }
 
     const workbook = XLSX.utils.book_new();
-    const allRows = validation.allResults.map((result) => ({
-      날짜: result.날짜 ?? "",
-      분류: result.분류,
-      규칙: result.rule,
-      부모계정: result.parent,
-      재무제표값: result.parent_val,
-      OCR합산: result.computed,
-      차이: result.diff,
-      통과: result.passed ? "Y" : "N"
-    }));
-    const failRows = allRows.filter((row) => row.통과 === "N");
-    const configRows = [
-      { key: "회사명", value: selectedCompany || "" },
-      { key: "허용오차", value: tolerance },
-      { key: "lastPatch", value: LAST_PATCH },
-      { key: "sessionSignFixes", value: JSON.stringify(sessionSignFixes) }
-    ];
-
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(allRows), "전체결과");
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(failRows), "실패항목");
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(configRows), "설정값");
-    if (reporting.rawStatementRows.length) {
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildStatementSheetRows(reporting.rawStatementRows, reporting.periods)), "재무제표");
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildStatementSheetRows(reporting.adjustedStatementRows, reporting.periods)), "재무제표_음양반영");
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildFinalSheetRows(reporting)), "최종결과물");
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildFormulaGuideRows()), "전체 수식");
-    }
-    XLSX.writeFile(workbook, "ocr-validation-results.xlsx");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildFinalSheetRows(resultReporting)), "최종결과물");
+    XLSX.writeFile(workbook, "ocr-validation-final-report.xlsx");
   }
 
   function resetConfig() {
@@ -691,9 +680,6 @@ export function ValidatorApp() {
               <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>규칙관리</button>
               <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>분류</button>
               <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>수식</button>
-            </div>
-            <div className="side-nav-utils">
-              <button className={`ghost-button ${activeTab === "export" ? "is-selected" : ""}`} onClick={() => setActiveTab("export")}>내보내기</button>
             </div>
           </div>
 
@@ -1119,6 +1105,7 @@ export function ValidatorApp() {
                         <p className="result-meta">엑셀의 `재무제표 → 재무제표_음양반영 → 최종결과물` 흐름을 현재 입력 데이터 기준으로 바로 보여줍니다.</p>
                       </div>
                       <div className="result-actions">
+                        <button className="button" disabled={!resultReporting?.periods.length} onClick={exportFinalWorkbook}>결과물 Excel 다운로드</button>
                         {companyDatasetOptions.length > 1 && (
                           <select className="select report-company-select" value={selectedResultCompany} onChange={(event) => setSelectedResultCompany(event.target.value)}>
                             {companyDatasetOptions.map((company) => <option key={company} value={company}>{company}</option>)}
@@ -1373,39 +1360,6 @@ export function ValidatorApp() {
             </>
           )}
 
-          {activeTab === "export" && (
-            <>
-              <section className="export-card">
-                <div className="section-title">
-                  <h3>검증 결과 내보내기</h3>
-                  <button className="button" disabled={!validation.allResults.length} onClick={exportWorkbook}>Excel 다운로드</button>
-                </div>
-                <p className="muted">전체 결과, 실패 항목, 현재 설정값을 `ocr-validation-results.xlsx`로 저장합니다.</p>
-              </section>
-
-              <section className="export-card">
-                <h3>수정된 OCR 3행 텍스트</h3>
-                <textarea className="textarea" value={validation.copyText} readOnly />
-                <div className="inline-actions" style={{ marginTop: 12 }}>
-                  <button className="secondary-button" onClick={copyModifiedText}>클립보드 복사</button>
-                  <button
-                    className="ghost-button"
-                    onClick={() => {
-                      const blob = new Blob([validation.copyText], { type: "text/plain;charset=utf-8" });
-                      const url = URL.createObjectURL(blob);
-                      const link = document.createElement("a");
-                      link.href = url;
-                      link.download = "modified-ocr.txt";
-                      link.click();
-                      URL.revokeObjectURL(url);
-                    }}
-                  >
-                    TXT 다운로드
-                  </button>
-                </div>
-              </section>
-            </>
-          )}
         </section>
       </section>
     </main>
