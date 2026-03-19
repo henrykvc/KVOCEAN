@@ -638,7 +638,7 @@ export function ValidatorApp() {
       <section className="hero">
         <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
         <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
-        <p>최종 수정: {LAST_PATCH}</p>
+        <p>최종패치: {LAST_PATCH}</p>
         <div className="hero-meta">
           <span className="pill">1. 텍스트 붙여넣기</span>
           <span className="pill">2. 실패 항목 확인</span>
@@ -663,9 +663,9 @@ export function ValidatorApp() {
           <p>값 수정 {editedValueCount}건 / 부호 수정 {sessionFixCount}건</p>
         </article>
         <article className="summary-card">
-          <span className="summary-label">로직 기준</span>
-          <strong>v31</strong>
-          <p>{LAST_PATCH}</p>
+          <span className="summary-label">최종패치</span>
+          <strong>{LAST_PATCH}</strong>
+          <p>현재 적용 중인 마지막 패치 시각</p>
         </article>
       </section>
 
@@ -1159,13 +1159,15 @@ export function ValidatorApp() {
                           <tbody>
                             {section.rows.map((row: FinalMetricRow) => (
                               <Fragment key={`${section.title}-${row.label}`}>
-                                <tr key={`${section.title}-${row.label}-value`} className="final-value-row">
+                                <tr key={`${section.title}-${row.label}-value`} className="final-value-row separated-row">
                                   <td className="final-metric-label">{row.label}</td>
                                   {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
                                         <strong>{row.label === "런웨이(E)" ? "기간" : "금액"} {formatMetricValue(row, row.amounts[period.key])}</strong>
-                                        <span className="ratio-value">비율 {formatMetricRatio(row.ratios[period.key])}</span>
+                                        <span className={`ratio-value ${row.ratios[period.key] === null || row.ratios[period.key] === undefined ? "" : row.ratios[period.key]! < 0 ? "negative" : row.ratios[period.key]! > 0 ? "positive" : ""}`.trim()}>
+                                          비율 {formatMetricRatio(row.ratios[period.key])}
+                                        </span>
                                         <span className="growth-value">
                                           {row.growthRates[period.key] === null || row.growthRates[period.key] === undefined ? "-" : `전분기 ${row.growthRates[period.key]!.toFixed(1)}%`}
                                         </span>
