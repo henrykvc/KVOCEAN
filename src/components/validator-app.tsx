@@ -79,15 +79,35 @@ type PreviewGroup = {
 };
 
 function cloneLogicConfig(config: LogicConfig): LogicConfig {
-  return structuredClone(config);
+  try {
+    return structuredClone(config);
+  } catch {
+    return structuredClone(DEFAULT_LOGIC_CONFIG);
+  }
 }
 
 function cloneCompanyConfigs(configs: CompanyConfigs): CompanyConfigs {
-  return structuredClone(configs);
+  try {
+    return structuredClone(configs);
+  } catch {
+    return structuredClone(DEFAULT_COMPANY_CONFIGS);
+  }
 }
 
 function cloneClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
-  return structuredClone(groups);
+  try {
+    return structuredClone(groups);
+  } catch {
+    return structuredClone(DEFAULT_CLASSIFICATION_GROUPS);
+  }
+}
+
+function cloneSessionSignFixes(fixes: SessionSignFixes): SessionSignFixes {
+  try {
+    return structuredClone(fixes);
+  } catch {
+    return {};
+  }
 }
 
 function parseKeywordList(value: string) {
@@ -303,7 +323,10 @@ function parseSavedDatasets(raw: string | null): SavedQuarterSnapshot[] {
       ...item,
       source: {
         ...item.source,
-        classificationGroups: item.source.classificationGroups ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
+        logicConfig: cloneLogicConfig((item.source as { logicConfig?: LogicConfig }).logicConfig ?? DEFAULT_LOGIC_CONFIG),
+        companyConfigs: cloneCompanyConfigs((item.source as { companyConfigs?: CompanyConfigs }).companyConfigs ?? DEFAULT_COMPANY_CONFIGS),
+        classificationGroups: cloneClassificationGroups((item.source as { classificationGroups?: ClassificationGroups }).classificationGroups ?? DEFAULT_CLASSIFICATION_GROUPS),
+        sessionSignFixes: cloneSessionSignFixes((item.source as { sessionSignFixes?: SessionSignFixes }).sessionSignFixes ?? {})
       }
     }));
   } catch {
@@ -440,14 +463,14 @@ export function ValidatorApp() {
       .flatMap((item) => buildQuarterSnapshots({
         pastedText: item.source.pastedText,
         selectedCompany: item.companyName,
-        tolerance: item.source.tolerance,
-        logicConfig: item.source.logicConfig,
-        companyConfigs: item.source.companyConfigs,
-        classificationGroups: item.source.classificationGroups ?? classificationGroups,
+        tolerance,
+        logicConfig,
+        companyConfigs,
+        classificationGroups,
         pasteEdits: item.source.pasteEdits,
         sessionSignFixes: item.source.sessionSignFixes
       })),
-    [savedDatasets, selectedResultCompany, classificationGroups]
+    [savedDatasets, selectedResultCompany, tolerance, logicConfig, companyConfigs, classificationGroups]
   );
   const resultReporting = useMemo(
     () => buildCompanyReport(rebuiltResultSnapshots),
@@ -497,10 +520,10 @@ export function ValidatorApp() {
     setTolerance(dataset.source.tolerance);
     setSelectedCompany(dataset.companyName);
     setPasteEdits({ ...dataset.source.pasteEdits });
-    setSessionSignFixes(structuredClone(dataset.source.sessionSignFixes));
-    setLogicConfig(structuredClone(dataset.source.logicConfig));
-    setCompanyConfigs(structuredClone(dataset.source.companyConfigs));
-    setClassificationRows(classificationGroupsToRows(dataset.source.classificationGroups ?? classificationGroups));
+    setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
+    setLogicConfig(cloneLogicConfig(dataset.source.logicConfig));
+    setCompanyConfigs(cloneCompanyConfigs(dataset.source.companyConfigs));
+    setClassificationRows(classificationGroupsToRows(classificationGroups));
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
   }
