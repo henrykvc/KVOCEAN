@@ -299,7 +299,13 @@ function parseSavedDatasets(raw: string | null): SavedQuarterSnapshot[] {
     if (!Array.isArray(parsed)) {
       return [];
     }
-    return parsed.filter(isSavedQuarterSnapshot);
+    return parsed.filter(isSavedQuarterSnapshot).map((item) => ({
+      ...item,
+      source: {
+        ...item.source,
+        classificationGroups: item.source.classificationGroups ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
+      }
+    }));
   } catch {
     return [];
   }
