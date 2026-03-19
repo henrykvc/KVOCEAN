@@ -114,13 +114,25 @@ function resolveCanonicalAccountKey(accountName: string, sectionKey: string, cla
   const normalizedName = normalizeText(accountName);
 
   for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
-    if (aliases.some((alias) => normalizedName === normalizeText(alias) || normalizedName.includes(normalizeText(alias)))) {
+    if (aliases.some((alias) => normalizedName === normalizeText(alias))) {
+      return canonicalKey;
+    }
+  }
+
+  for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
+    if (aliases.some((alias) => normalizedName.includes(normalizeText(alias)))) {
       return canonicalKey;
     }
   }
 
   for (const [canonicalKey, aliases] of Object.entries(ACCOUNT_ALIASES)) {
-    if (aliases.some((alias) => normalizedName === normalizeText(alias) || normalizedName.includes(normalizeText(alias)))) {
+    if (aliases.some((alias) => normalizedName === normalizeText(alias))) {
+      return canonicalKey;
+    }
+  }
+
+  for (const [canonicalKey, aliases] of Object.entries(ACCOUNT_ALIASES)) {
+    if (aliases.some((alias) => normalizedName.includes(normalizeText(alias)))) {
       return canonicalKey;
     }
   }
@@ -475,7 +487,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     amount: (period: ReportPeriod, current: MetricContext) => groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]),
     ratio: (period: ReportPeriod, current: MetricContext) => {
       const value = groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]);
-      const expenseTotal = getSectionTotal(current, period.key, ["영업비용", "영업외비용"]);
+      const expenseTotal = (getAdjustedMetricSum(current, period.key, ["매출원가"]) ?? 0)
+        + (getAdjustedMetricSum(current, period.key, ["판매비와관리비", "영업비용"]) ?? 0)
+        + (getAdjustedMetricSum(current, period.key, ["영업외비용"]) ?? 0);
       return safeDivide(value, expenseTotal, 100);
     }
   } satisfies MetricSpec));
