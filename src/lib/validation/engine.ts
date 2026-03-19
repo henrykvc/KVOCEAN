@@ -84,6 +84,21 @@ export function getDefaultPersistedState(): PersistedState {
   };
 }
 
+function sanitizeClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
+  const next = structuredClone(groups);
+
+  if (next.계속사업당기순이익) {
+    next.계속사업당기순이익 = next.계속사업당기순이익.filter(
+      (alias) => !["당기순이익", "당기순이익(손실)", "당기순손익", "당기순손실"].includes(alias.trim())
+    );
+    if (!next.계속사업당기순이익.length) {
+      next.계속사업당기순이익 = ["계속사업당기순이익"];
+    }
+  }
+
+  return next;
+}
+
 export function parsePersistedState(raw: string | null): PersistedState {
   const fallback = getDefaultPersistedState();
   if (!raw) {
@@ -95,7 +110,7 @@ export function parsePersistedState(raw: string | null): PersistedState {
     return {
       logicConfig: { ...fallback.logicConfig, ...(parsed.logicConfig ?? {}) },
       companyConfigs: { ...fallback.companyConfigs, ...(parsed.companyConfigs ?? {}) },
-      classificationGroups: { ...fallback.classificationGroups, ...(parsed.classificationGroups ?? {}) }
+      classificationGroups: sanitizeClassificationGroups({ ...fallback.classificationGroups, ...(parsed.classificationGroups ?? {}) })
     };
   } catch {
     return fallback;

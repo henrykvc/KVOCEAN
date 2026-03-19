@@ -87,6 +87,7 @@ const ASSET_LIABILITY_ITEMS = ["현금및현금성자산", "매도가능증권",
 const VARIABLE_COST_ALIASES = ["매출원가", "외주용역비", "외주비", "지급수수료", "광고선전비", "배송비", "운반비", "수출제비용", "인건비", "복리후생비", "접대비", "연구개발비", "여비교통비", "통신비", "세금과공과금", "도서인쇄비", "소모품비", "대손상각비", "판매촉진비", "대외협력비", "행사비", "기술이전료", "경상기술료", "전산운영비", "반품비용", "기타변동비"];
 const BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
+const QUICK_ASSET_ALIASES = ["현금및현금성자산", "매출채권", "매출채권_양수", "매출채권_음수", "미수금", "미수수익", "매도가능증권"];
 
 function normalizeText(value: string) {
   return value.replace(/\s+/g, "").trim();
@@ -287,7 +288,7 @@ function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates:
   const matches = rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const rowName = normalizeText(row.accountName);
-    const byName = canonicalCandidates.some((candidate) => rowKey === candidate || rowName === candidate || rowName.includes(candidate));
+    const byName = canonicalCandidates.some((candidate) => rowKey === candidate || rowName === candidate);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
     return byName && bySection;
   });
@@ -462,7 +463,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     amount: (period: ReportPeriod, current: MetricContext) => groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]),
     ratio: (period: ReportPeriod, current: MetricContext) => {
       const value = groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]);
-      const expenseTotal = getSectionTotal(current, period.key, ["매출원가", "영업비용", "판매비와관리비", "판관비", "영업외비용"]);
+      const expenseTotal = getSectionTotal(current, period.key, ["영업비용", "영업외비용"]);
       return safeDivide(value, expenseTotal, 100);
     }
   } satisfies MetricSpec));
@@ -530,17 +531,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     {
       label: "당좌비율",
       ratio: (period, current) => {
-        const quickAssets = [
-          getAdjustedMetricSum(current, period.key, ["현금및현금성자산"], "유동자산"),
-          getNetMetricValue({ ...current, adjustedRows: current.adjustedRows.filter((row) => row.sectionKey === "유동자산") }, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]),
-          getAdjustedMetricSum(current, period.key, ["미수금", "미수수익"], "유동자산"),
-          getAdjustedMetricSum(current, period.key, ["매도가능증권"], "유동자산")
-        ].reduce<number | null>((total, value) => {
-          if (value === null) {
-            return total;
-          }
-          return (total ?? 0) + value;
-        }, null);
+        const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
+        const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES);
         const currentLiabilities = getAdjustedMetricSum(current, period.key, ["유동부채"]);
         return safeDivide(quickAssets, currentLiabilities, 100);
       }
@@ -562,15 +554,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const profitabilitySpecs: MetricSpec[] = [
     {
       label: "매출액순이익률",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익", "당기순이익"]), getAdjustedMetricSum(current, period.key, ["매출액"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getAdjustedMetricSum(current, period.key, ["매출액"]), 100)
     },
     {
       label: "총자산이익률(ROA)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익", "당기순이익"]), getAdjustedMetricSum(current, period.key, ["자산"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getAdjustedMetricSum(current, period.key, ["자산"]), 100)
     },
     {
       label: "자기자본이익률(ROE)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익", "당기순이익"]), getAdjustedMetricSum(current, period.key, ["자본"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getAdjustedMetricSum(current, period.key, ["자본"]), 100)
     },
     {
       label: "영업이익률",
@@ -863,6 +855,10 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[]) {
 export function formatMetricValue(row: FinalMetricRow, value: number | null) {
   if (value === null || value === undefined) {
     return "-";
+  }
+
+  if (row.label === "런웨이(E)") {
+    return `${value.toFixed(2)}개월`;
   }
 
   return formatNumber(value);
