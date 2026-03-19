@@ -55,6 +55,7 @@ export type SavedQuarterSnapshot = {
     sessionSignFixes: SessionSignFixes;
     logicConfig: LogicConfig;
     companyConfigs: CompanyConfigs;
+    classificationGroups: ClassificationGroups;
   };
 };
 
@@ -818,7 +819,8 @@ export function buildQuarterSnapshots(args: {
       pasteEdits: { ...args.pasteEdits },
       sessionSignFixes: structuredClone(args.sessionSignFixes),
       logicConfig: structuredClone(args.logicConfig),
-      companyConfigs: structuredClone(args.companyConfigs)
+      companyConfigs: structuredClone(args.companyConfigs),
+      classificationGroups: structuredClone(args.classificationGroups)
     }
   } satisfies SavedQuarterSnapshot));
 }

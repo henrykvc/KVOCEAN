@@ -437,7 +437,7 @@ export function ValidatorApp() {
         tolerance: item.source.tolerance,
         logicConfig: item.source.logicConfig,
         companyConfigs: item.source.companyConfigs,
-        classificationGroups,
+        classificationGroups: item.source.classificationGroups ?? classificationGroups,
         pasteEdits: item.source.pasteEdits,
         sessionSignFixes: item.source.sessionSignFixes
       })),
@@ -494,7 +494,7 @@ export function ValidatorApp() {
     setSessionSignFixes(structuredClone(dataset.source.sessionSignFixes));
     setLogicConfig(structuredClone(dataset.source.logicConfig));
     setCompanyConfigs(structuredClone(dataset.source.companyConfigs));
-    setClassificationRows(classificationGroupsToRows(classificationGroups));
+    setClassificationRows(classificationGroupsToRows(dataset.source.classificationGroups ?? classificationGroups));
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
   }
@@ -638,7 +638,6 @@ export function ValidatorApp() {
       <section className="hero">
         <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
         <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
-        <p>최종패치: {LAST_PATCH}</p>
         <div className="hero-meta">
           <span className="pill">1. 텍스트 붙여넣기</span>
           <span className="pill">2. 실패 항목 확인</span>
