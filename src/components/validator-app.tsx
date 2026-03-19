@@ -1164,9 +1164,9 @@ export function ValidatorApp() {
                                   {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
-                                        <strong>금액 {formatMetricValue(row, row.amounts[period.key])}</strong>
-                                        <span className="muted">비율 {formatMetricRatio(row.ratios[period.key])}</span>
-                                        <span className="muted">
+                                        <strong>{row.label === "런웨이(E)" ? "기간" : "금액"} {formatMetricValue(row, row.amounts[period.key])}</strong>
+                                        <span className="ratio-value">비율 {formatMetricRatio(row.ratios[period.key])}</span>
+                                        <span className="growth-value">
                                           {row.growthRates[period.key] === null || row.growthRates[period.key] === undefined ? "-" : `전분기 ${row.growthRates[period.key]!.toFixed(1)}%`}
                                         </span>
                                       </div>
