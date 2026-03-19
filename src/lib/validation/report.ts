@@ -371,6 +371,14 @@ function getAdjustedMetricSum(context: MetricContext, periodKey: string, names: 
   return sumValues(context.adjustedRows, periodKey, names, sectionName);
 }
 
+function getPreferredAdjustedMetric(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
+  const exact = getAdjustedMetricValue(context, periodKey, names, sectionName);
+  if (exact !== null) {
+    return exact;
+  }
+  return getAdjustedMetricSum(context, periodKey, names, sectionName);
+}
+
 function safeDivide(numerator: number | null, denominator: number | null, multiplier = 1) {
   if (numerator === null || denominator === null || denominator === 0) {
     return null;
@@ -481,15 +489,21 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   };
 
   const groupedRawValue = (period: ReportPeriod, current: MetricContext, names: string[]) => getRawMetricSum(current, period.key, names);
+  const costStructureValue = (period: ReportPeriod, current: MetricContext, label: string) => {
+    if (label === "총이자비용") {
+      return getAdjustedMetricSum(current, period.key, INTEREST_ALIASES, "영업외비용");
+    }
+    return getAdjustedMetricSum(current, period.key, [label], "영업비용");
+  };
 
   const costStructureSpecs = COST_STRUCTURE_ITEMS.map((label) => ({
     label,
-    amount: (period: ReportPeriod, current: MetricContext) => groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]),
+    amount: (period: ReportPeriod, current: MetricContext) => costStructureValue(period, current, label),
     ratio: (period: ReportPeriod, current: MetricContext) => {
-      const value = groupedRawValue(period, current, label === "총이자비용" ? INTEREST_ALIASES : [label]);
-      const expenseTotal = (getAdjustedMetricSum(current, period.key, ["매출원가"]) ?? 0)
-        + (getAdjustedMetricSum(current, period.key, ["판매비와관리비", "영업비용"]) ?? 0)
-        + (getAdjustedMetricSum(current, period.key, ["영업외비용"]) ?? 0);
+      const value = costStructureValue(period, current, label);
+      const expenseTotal = (getPreferredAdjustedMetric(current, period.key, ["매출원가"]) ?? 0)
+        + (getPreferredAdjustedMetric(current, period.key, ["판매비와관리비", "영업비용"]) ?? 0)
+        + (getPreferredAdjustedMetric(current, period.key, ["영업외비용"]) ?? 0);
       return safeDivide(value, expenseTotal, 100);
     }
   } satisfies MetricSpec));
@@ -552,47 +566,47 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const stabilitySpecs: MetricSpec[] = [
     {
       label: "유동비율",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["유동자산"]), getAdjustedMetricSum(current, period.key, ["유동부채"]), 100)
+      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["유동자산"]), getPreferredAdjustedMetric(current, period.key, ["유동부채"]), 100)
     },
     {
       label: "당좌비율",
       ratio: (period, current) => {
         const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
         const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES);
-        const currentLiabilities = getAdjustedMetricSum(current, period.key, ["유동부채"]);
+        const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
         return safeDivide(quickAssets, currentLiabilities, 100);
       }
     },
     {
       label: "부채비율",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["부채"]), getAdjustedMetricSum(current, period.key, ["자본"]), 100)
+      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["부채"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100)
     },
     {
       label: "차입금 의존도",
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getAdjustedMetricSum(current, period.key, ["자산"]), 100)
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100)
     },
     {
       label: "이자보상비율",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getMetricSum(current, period.key, INTEREST_ALIASES), 1)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getMetricSum(current, period.key, INTEREST_ALIASES), 100)
     }
   ];
 
   const profitabilitySpecs: MetricSpec[] = [
     {
       label: "매출액순이익률",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getAdjustedMetricSum(current, period.key, ["매출액"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100)
     },
     {
       label: "총자산이익률(ROA)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getAdjustedMetricSum(current, period.key, ["자산"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100)
     },
     {
       label: "자기자본이익률(ROE)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getAdjustedMetricSum(current, period.key, ["자본"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100)
     },
     {
       label: "영업이익률",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getAdjustedMetricSum(current, period.key, ["매출액"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100)
     },
     {
       label: "공헌이익률",
