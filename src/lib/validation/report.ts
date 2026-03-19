@@ -74,6 +74,7 @@ type MetricContext = {
   rawRows: StatementMatrixRow[];
   adjustedRows: StatementMatrixRow[];
   sectionTotals: Map<string, Record<string, number>>;
+  classificationGroups: ClassificationGroups;
 };
 
 type MetricSpec = {
@@ -98,6 +99,19 @@ const QUICK_ASSET_ALIASES = [
   "미수수익_음수",
   "매도가능증권"
 ];
+
+const BALANCE_SHEET_METRICS = new Set(["자산", "유동자산", "비유동자산", "부채", "유동부채", "비유동부채", "자본"]);
+const INCOME_STATEMENT_METRICS = new Set(["매출액", "매출원가", "판매비와관리비", "영업비용", "영업외수익", "영업외비용", "영업이익", "영업이익(손실)", "계속사업당기순이익", "당기순이익", "당기순손실"]);
+
+function getPreferredSectionKeys(candidates: string[]) {
+  if (candidates.some((candidate) => BALANCE_SHEET_METRICS.has(candidate))) {
+    return ["재무상태표"];
+  }
+  if (candidates.some((candidate) => INCOME_STATEMENT_METRICS.has(candidate))) {
+    return ["손익계산서"];
+  }
+  return [];
+}
 
 function normalizeText(value: string) {
   return value.replace(/\s+/g, "").trim();
@@ -303,13 +317,14 @@ function buildStatementRows(
     });
 }
 
-function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName?: string) {
+function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
   const canonicalCandidates = candidates.flatMap((candidate) => {
     const base = [candidate];
-    const aliases = DEFAULT_CLASSIFICATION_GROUPS[candidate] ?? ACCOUNT_ALIASES[candidate] ?? [];
+    const aliases = classificationGroups[candidate] ?? ACCOUNT_ALIASES[candidate] ?? [];
     return [...base, ...aliases].map(normalizeText);
   });
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
+  const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
   const matches = rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const rowName = normalizeText(row.accountName);
@@ -319,6 +334,16 @@ function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates:
   });
 
   return matches
+    .sort((a, b) => {
+      const aPreferred = preferredSections.includes(a.sectionKey) ? 1 : 0;
+      const bPreferred = preferredSections.includes(b.sectionKey) ? 1 : 0;
+      if (aPreferred !== bPreferred) {
+        return bPreferred - aPreferred;
+      }
+      const aExact = canonicalCandidates.includes(normalizeText(a.canonicalKey || a.accountName)) ? 1 : 0;
+      const bExact = canonicalCandidates.includes(normalizeText(b.canonicalKey || b.accountName)) ? 1 : 0;
+      return bExact - aExact;
+    })
     .map((row) => row.values[periodKey])
     .filter((value): value is number => value !== null && value !== undefined);
 }
@@ -335,13 +360,13 @@ function getSectionTotals(rows: StatementMatrixRow[], periods: ReportPeriod[]) {
   return totals;
 }
 
-function firstAvailableValue(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName?: string) {
-  const values = getRowValues(rows, periodKey, candidates, sectionName);
+function firstAvailableValue(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
+  const values = getRowValues(rows, periodKey, candidates, sectionName, classificationGroups);
   return values[0] ?? null;
 }
 
-function sumValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName?: string) {
-  const values = getRowValues(rows, periodKey, candidates, sectionName);
+function sumValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
+  const values = getRowValues(rows, periodKey, candidates, sectionName, classificationGroups);
   if (!values.length) {
     return null;
   }
@@ -349,27 +374,27 @@ function sumValues(rows: StatementMatrixRow[], periodKey: string, candidates: st
 }
 
 function getMetricValue(context: MetricContext, periodKey: string, names: string[]) {
-  return firstAvailableValue(context.adjustedRows, periodKey, names);
+  return firstAvailableValue(context.adjustedRows, periodKey, names, undefined, context.classificationGroups);
 }
 
 function getMetricSum(context: MetricContext, periodKey: string, names: string[]) {
-  return sumValues(context.adjustedRows, periodKey, names);
+  return sumValues(context.adjustedRows, periodKey, names, undefined, context.classificationGroups);
 }
 
 function getRawMetricValue(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
-  return firstAvailableValue(context.rawRows, periodKey, names, sectionName);
+  return firstAvailableValue(context.rawRows, periodKey, names, sectionName, context.classificationGroups);
 }
 
 function getRawMetricSum(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
-  return sumValues(context.rawRows, periodKey, names, sectionName);
+  return sumValues(context.rawRows, periodKey, names, sectionName, context.classificationGroups);
 }
 
 function getAdjustedMetricValue(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
-  return firstAvailableValue(context.adjustedRows, periodKey, names, sectionName);
+  return firstAvailableValue(context.adjustedRows, periodKey, names, sectionName, context.classificationGroups);
 }
 
 function getAdjustedMetricSum(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
-  return sumValues(context.adjustedRows, periodKey, names, sectionName);
+  return sumValues(context.adjustedRows, periodKey, names, sectionName, context.classificationGroups);
 }
 
 function getPreferredAdjustedMetric(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
@@ -573,7 +598,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       label: "당좌비율",
       ratio: (period, current) => {
         const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
-        const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES);
+        const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
         const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
         return safeDivide(quickAssets, currentLiabilities, 100);
       }
@@ -763,10 +788,11 @@ export function buildReportingModel(args: {
   const adjustedStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, args.pasteEdits, true);
   const context: MetricContext = {
     periods,
-    rawRows: rawStatementRows,
-    adjustedRows: adjustedStatementRows,
-    sectionTotals: getSectionTotals(adjustedStatementRows, periods)
-  };
+      rawRows: rawStatementRows,
+      adjustedRows: adjustedStatementRows,
+      sectionTotals: getSectionTotals(adjustedStatementRows, periods),
+      classificationGroups: args.classificationGroups
+    };
 
   return {
     detectedCompany,
@@ -881,7 +907,8 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[]) {
     periods,
     rawRows: rawStatementRows,
     adjustedRows: adjustedStatementRows,
-    sectionTotals: getSectionTotals(adjustedStatementRows, periods)
+    sectionTotals: getSectionTotals(adjustedStatementRows, periods),
+      classificationGroups: snapshots[0]?.source?.classificationGroups ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
   };
 
   return {
