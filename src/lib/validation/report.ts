@@ -124,11 +124,8 @@ const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
 const QUICK_ASSET_ALIASES = [
   "현금및현금성자산",
   "매출채권",
-  "매출채권_음수",
   "미수금",
-  "미수금_음수",
   "미수수익",
-  "미수수익_음수",
   "매도가능증권"
 ];
 
@@ -658,33 +655,8 @@ function getPreviousPeriod(context: MetricContext, period: ReportPeriod) {
   return index >= 0 ? context.periods[index + 1] ?? null : null;
 }
 
-function metricExistsInRows(rows: StatementMatrixRow[], names: string[]) {
-  const normalized = names.map(normalizeText);
-  return rows.some((row) => {
-    const rowKey = normalizeText(row.canonicalKey || row.accountName);
-    const rowName = normalizeText(row.accountName);
-    return normalized.some((name) => rowKey === name || rowName === name);
-  });
-}
-
-function stripSignSuffix(name: string) {
-  return name.replace(/_(양수|음수)$/u, "");
-}
-
-function getNetMetricValue(context: MetricContext, periodKey: string, positiveNames: string[], negativeNames: string[] = []) {
-  const positiveCandidates = metricExistsInRows(context.adjustedRows, positiveNames)
-    ? positiveNames
-    : Array.from(new Set(positiveNames.map(stripSignSuffix)));
-  const negativeCandidates = metricExistsInRows(context.adjustedRows, negativeNames)
-    ? negativeNames
-    : Array.from(new Set(negativeNames.map(stripSignSuffix))).filter((name) => !positiveCandidates.includes(name));
-
-  const positive = getAdjustedMetricSum(context, periodKey, positiveCandidates);
-  const negative = negativeCandidates.length ? getAdjustedMetricSum(context, periodKey, negativeCandidates) : null;
-  if (positive === null && negative === null) {
-    return null;
-  }
-  return (positive ?? 0) + (negative ?? 0);
+function getNetMetricValue(context: MetricContext, periodKey: string, names: string[]) {
+  return getAdjustedMetricSum(context, periodKey, names);
 }
 
 function buildMetricRows(context: MetricContext, specs: MetricSpec[]) {
@@ -915,18 +887,16 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "단기대여금",
-      amount: (period, current) => getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]),
+      amount: (period, current) => getNetMetricValue(current, period.key, ["단기대여금"]),
       amountDetail: (period, current, result) => {
-        const positive = getAdjustedMetricSum(current, period.key, ["단기대여금_양수", "단기대여금"]);
-        const negative = getAdjustedMetricSum(current, period.key, ["단기대여금_음수"]);
-        return createCalculationDetail("단기대여금 관련 양수 합계 + 음수 조정 합계", result, [
-          { label: "단기대여금 양수", value: positive },
-          { label: "단기대여금 음수 조정", value: negative }
+        const loans = getAdjustedMetricSum(current, period.key, ["단기대여금"]);
+        return createCalculationDetail("단기대여금 계정 합계", result, [
+          { label: "단기대여금", value: loans }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["단기대여금"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const loans = getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]);
+        const loans = getNetMetricValue(current, period.key, ["단기대여금"]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("단기대여금 / 자산 * 100", result, [
           { label: "단기대여금", value: loans },
@@ -936,18 +906,16 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "개발비(자산)",
-      amount: (period, current) => getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]),
+      amount: (period, current) => getNetMetricValue(current, period.key, ["개발비(자산)", "개발비"]),
       amountDetail: (period, current, result) => {
-        const positive = getAdjustedMetricSum(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"]);
-        const negative = getAdjustedMetricSum(current, period.key, ["개발비_음수"]);
-        return createCalculationDetail("개발비 관련 양수 합계 + 음수 조정 합계", result, [
-          { label: "개발비 양수", value: positive },
-          { label: "개발비 음수 조정", value: negative }
+        const developmentAsset = getAdjustedMetricSum(current, period.key, ["개발비(자산)", "개발비"]);
+        return createCalculationDetail("개발비(자산) 계정 합계", result, [
+          { label: "개발비(자산)", value: developmentAsset }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["개발비(자산)", "개발비"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const developmentAsset = getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]);
+        const developmentAsset = getNetMetricValue(current, period.key, ["개발비(자산)", "개발비"]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("개발비(자산) / 자산 * 100", result, [
           { label: "개발비(자산)", value: developmentAsset },
@@ -957,18 +925,16 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "선급금",
-      amount: (period, current) => getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]),
+      amount: (period, current) => getNetMetricValue(current, period.key, ["선급금"]),
       amountDetail: (period, current, result) => {
-        const positive = getAdjustedMetricSum(current, period.key, ["선급금_양수", "선급금"]);
-        const negative = getAdjustedMetricSum(current, period.key, ["선급금_음수"]);
-        return createCalculationDetail("선급금 관련 양수 합계 + 음수 조정 합계", result, [
-          { label: "선급금 양수", value: positive },
-          { label: "선급금 음수 조정", value: negative }
+        const prepaid = getAdjustedMetricSum(current, period.key, ["선급금"]);
+        return createCalculationDetail("선급금 계정 합계", result, [
+          { label: "선급금", value: prepaid }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["선급금"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const prepaid = getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]);
+        const prepaid = getNetMetricValue(current, period.key, ["선급금"]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("선급금 / 자산 * 100", result, [
           { label: "선급금", value: prepaid },
@@ -1015,31 +981,20 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     {
       label: "퇴직급여충당부채",
       amount: (period, current) => {
-        const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
-        const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
-        if (positive === null && negative === null) {
-          return null;
-        }
-        return (positive ?? 0) + (negative ?? 0);
+        return getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채"]);
       },
       amountDetail: (period, current, result) => {
-        const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
-        const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
-        return createCalculationDetail("퇴직급여충당부채 양수 합계 + 음수 조정 합계", result, [
-          { label: "퇴직급여충당부채 양수", value: positive },
-          { label: "퇴직급여충당부채 음수 조정", value: negative }
+        const retirementProvision = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채"]);
+        return createCalculationDetail("퇴직급여충당부채 계정 합계", result, [
+          { label: "퇴직급여충당부채", value: retirementProvision }
         ]);
       },
       ratio: (period, current) => {
-        const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
-        const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
-        const value = (positive ?? 0) + (negative ?? 0);
+        const value = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채"]);
         return safeDivide(value, getPreferredTotalLiabilities(current, period.key), 100);
       },
       ratioDetail: (period, current, result) => {
-        const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
-        const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
-        const value = (positive ?? 0) + (negative ?? 0);
+        const value = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채"]);
         const liabilities = getPreferredTotalLiabilities(current, period.key);
         return createCalculationDetail("퇴직급여충당부채 / 부채 * 100", result, [
           { label: "퇴직급여충당부채", value },
@@ -1100,9 +1055,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "차입금 의존도",
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금", ...BORROWING_ALIASES]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const borrowings = getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]);
+        const borrowings = getNetMetricValue(current, period.key, ["차입금", ...BORROWING_ALIASES]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("순차입금 / 자산 * 100", result, [
           { label: "순차입금", value: borrowings },
@@ -1228,14 +1183,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageReceivables = previous
-          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]), getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권"]), getNetMetricValue(current, previous.key, ["매출채권"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
       },
       ratioDetail: (period, current, result) => {
         const previous = getPreviousPeriod(current, period);
-        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]);
-        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]) : null;
+        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권"]);
+        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권"]) : null;
         const averageReceivables = previous ? averageTwo(currentReceivables, previousReceivables) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         return createCalculationDetail("매출액 / 평균매출채권", result, [
@@ -1251,15 +1206,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageReceivables = previous
-          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]), getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권"]), getNetMetricValue(current, previous.key, ["매출채권"]))
           : null;
         const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
         return turnover ? 365 / turnover : null;
       },
       amountDetail: (period, current, result) => {
         const previous = getPreviousPeriod(current, period);
-        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]);
-        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]) : null;
+        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권"]);
+        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권"]) : null;
         const averageReceivables = previous ? averageTwo(currentReceivables, previousReceivables) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const turnover = safeDivide(sales, averageReceivables, 1);
@@ -1326,7 +1281,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageReceivables = previous
-          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]), getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권"]), getNetMetricValue(current, previous.key, ["매출채권"]))
           : null;
         const averageInventory = previous
           ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
@@ -1339,8 +1294,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       },
       amountDetail: (period, current, result) => {
         const previous = getPreviousPeriod(current, period);
-        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]);
-        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]) : null;
+        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권"]);
+        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권"]) : null;
         const averageReceivables = previous ? averageTwo(currentReceivables, previousReceivables) : null;
         const currentInventory = getAdjustedMetricSum(current, period.key, ["재고자산"]);
         const previousInventory = previous ? getAdjustedMetricSum(current, previous.key, ["재고자산"]) : null;
