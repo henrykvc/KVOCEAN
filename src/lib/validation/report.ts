@@ -395,6 +395,16 @@ function applyCanonicalBucketPrecedence(rows: StatementMatrixRow[]) {
   });
 
   return Array.from(buckets.values()).flatMap((bucket) => {
+    const exactNameRows = bucket.filter((row) => {
+      const activeKey = normalizeText(row.canonicalKey || row.accountName);
+      const rowName = normalizeText(row.accountName);
+      return activeKey === rowName;
+    });
+
+    if (exactNameRows.length) {
+      return exactNameRows;
+    }
+
     const nativeRows = bucket.filter((row) => {
       const activeKey = normalizeText(row.canonicalKey || row.accountName);
       const sourceKey = normalizeText(row.sourceCanonicalKey || row.canonicalKey || row.accountName);
