@@ -395,6 +395,20 @@ function firstAvailableValue(rows: StatementMatrixRow[], periodKey: string, cand
   return values[0] ?? null;
 }
 
+function firstExactAccountValue(rows: StatementMatrixRow[], periodKey: string, accountNames: string[], sectionName?: string) {
+  const normalizedCandidates = accountNames.map(normalizeText);
+  const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
+  const match = rows.find((row) => {
+    const rowName = normalizeText(row.accountName);
+    const rowKey = normalizeText(row.canonicalKey || row.accountName);
+    const byName = normalizedCandidates.includes(rowName) || normalizedCandidates.includes(rowKey);
+    const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
+    return byName && bySection;
+  });
+
+  return match?.values[periodKey] ?? null;
+}
+
 function sumValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
   const values = getRowValues(rows, periodKey, candidates, sectionName, classificationGroups);
   if (!values.length) {
@@ -423,6 +437,10 @@ function getAdjustedMetricValue(context: MetricContext, periodKey: string, names
   return firstAvailableValue(context.adjustedRows, periodKey, names, sectionName, context.classificationGroups);
 }
 
+function getAdjustedExactAccountValue(context: MetricContext, periodKey: string, accountNames: string[], sectionName?: string) {
+  return firstExactAccountValue(context.adjustedRows, periodKey, accountNames, sectionName);
+}
+
 function getAdjustedMetricSum(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
   return sumValues(context.adjustedRows, periodKey, names, sectionName, context.classificationGroups);
 }
@@ -433,6 +451,15 @@ function getPreferredAdjustedMetric(context: MetricContext, periodKey: string, n
     return exact;
   }
   return getAdjustedMetricSum(context, periodKey, names, sectionName);
+}
+
+function getPreferredTotalEquity(context: MetricContext, periodKey: string) {
+  const exactTotal = getAdjustedExactAccountValue(context, periodKey, ["자본총계", "총자본"], "재무상태표");
+  if (exactTotal !== null) {
+    return exactTotal;
+  }
+
+  return getPreferredAdjustedMetric(context, periodKey, ["자본"], "재무상태표");
 }
 
 function safeDivide(numerator: number | null, denominator: number | null, multiplier = 1) {
@@ -870,13 +897,13 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "부채비율",
-      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["부채"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100),
+      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["부채"]), getPreferredTotalEquity(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const liabilities = getPreferredAdjustedMetric(current, period.key, ["부채"]);
-        const equity = getPreferredAdjustedMetric(current, period.key, ["자본"]);
+        const equity = getPreferredTotalEquity(current, period.key);
         return createCalculationDetail("부채 / 자본 * 100", result, [
           { label: "부채", value: liabilities },
-          { label: "자본", value: equity }
+          { label: "자본총계", value: equity }
         ], equity === 0 ? "자본이 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     },
