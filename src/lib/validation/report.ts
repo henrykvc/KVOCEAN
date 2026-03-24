@@ -449,6 +449,37 @@ function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, cand
   return values.reduce((total, value) => total + value, 0);
 }
 
+function getClassifiedRows(rows: StatementMatrixRow[], candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
+  const canonicalCandidates = candidates
+    .filter((candidate) => Boolean(classificationGroups[candidate]))
+    .map(normalizeText);
+  const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
+
+  return rows.filter((row) => {
+    const rowKey = normalizeText(row.canonicalKey || row.accountName);
+    const byName = canonicalCandidates.includes(rowKey);
+    const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
+    return byName && bySection;
+  });
+}
+
+function getClassifiedMetricBreakdown(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
+  return getClassifiedRows(context.adjustedRows, names, sectionName, context.classificationGroups)
+    .map<MetricCalculationInput | null>((row) => {
+      const value = row.values[periodKey];
+      if (value === null || value === undefined) {
+        return null;
+      }
+
+      const label = row.accountName === row.canonicalKey
+        ? row.accountName
+        : `${row.canonicalKey} ← ${row.accountName}`;
+
+      return { label, value } satisfies MetricCalculationInput;
+    })
+    .filter((item): item is MetricCalculationInput => item !== null);
+}
+
 function getMetricValue(context: MetricContext, periodKey: string, names: string[]) {
   return firstAvailableValue(context.adjustedRows, periodKey, names, undefined, context.classificationGroups);
 }
@@ -1049,11 +1080,17 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const variableCosts = getClassifiedMetricSum(current, period.key, VARIABLE_COST_ALIASES);
         const contribution = sales !== null ? sales - (variableCosts ?? 0) : null;
+        const variableCostBreakdown = getClassifiedMetricBreakdown(current, period.key, VARIABLE_COST_ALIASES);
         return createCalculationDetail("(매출액 - 변동비) / 매출액 * 100", result, [
           { label: "매출액", value: sales },
-          { label: "변동비", value: variableCosts },
+          { label: "변동비 합계", value: variableCosts },
+          ...variableCostBreakdown,
           { label: "공헌이익", value: contribution }
-        ], sales === 0 ? "매출액이 0이라 비율을 계산하지 않았습니다." : undefined);
+        ], sales === 0
+          ? "매출액이 0이라 비율을 계산하지 않았습니다."
+          : !variableCostBreakdown.length
+            ? "현재 분류 기준으로 변동비에 포함된 하위 계정이 없습니다."
+            : undefined);
       }
     }
   ];
