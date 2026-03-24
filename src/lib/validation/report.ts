@@ -415,6 +415,50 @@ function applyCanonicalBucketPrecedence(rows: StatementMatrixRow[]) {
   });
 }
 
+function pickPreferredRow(rows: StatementMatrixRow[], preferredSections: string[]) {
+  const sorted = [...rows].sort((a, b) => {
+    const aPreferred = preferredSections.includes(a.sectionKey) ? 1 : 0;
+    const bPreferred = preferredSections.includes(b.sectionKey) ? 1 : 0;
+    if (aPreferred !== bPreferred) {
+      return bPreferred - aPreferred;
+    }
+    return a.sectionKey.localeCompare(b.sectionKey);
+  });
+  return sorted[0] ?? null;
+}
+
+function applyClassifiedBucketPrecedence(rows: StatementMatrixRow[], preferredSections: string[]) {
+  const buckets = new Map<string, StatementMatrixRow[]>();
+
+  rows.forEach((row) => {
+    const bucketKey = normalizeText(row.canonicalKey || row.accountName);
+    const bucket = buckets.get(bucketKey) ?? [];
+    bucket.push(row);
+    buckets.set(bucketKey, bucket);
+  });
+
+  return Array.from(buckets.values()).flatMap((bucket) => {
+    const exactNameRows = bucket.filter((row) => normalizeText(row.accountName) === normalizeText(row.canonicalKey || row.accountName));
+    if (exactNameRows.length) {
+      const picked = pickPreferredRow(exactNameRows, preferredSections);
+      return picked ? [picked] : [];
+    }
+
+    const nativeRows = bucket.filter((row) => {
+      const activeKey = normalizeText(row.canonicalKey || row.accountName);
+      const sourceKey = normalizeText(row.sourceCanonicalKey || row.canonicalKey || row.accountName);
+      return activeKey === sourceKey;
+    });
+
+    if (nativeRows.length) {
+      const picked = pickPreferredRow(nativeRows, preferredSections);
+      return picked ? [picked] : [];
+    }
+
+    return bucket;
+  });
+}
+
 function getSectionTotals(rows: StatementMatrixRow[], periods: ReportPeriod[]) {
   const totals = new Map<string, Record<string, number>>();
   rows.forEach((row) => {
@@ -460,14 +504,14 @@ function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, cand
     .map(normalizeText);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
-  const values = applyCanonicalBucketPrecedence(rows
+  const values = applyClassifiedBucketPrecedence(rows
     .filter((row) => {
       const rowKey = normalizeText(row.canonicalKey || row.accountName);
       const byName = canonicalCandidates.includes(rowKey);
       const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
       return byName && bySection;
     })
-    ).sort((a, b) => {
+    , preferredSections).sort((a, b) => {
       const aPreferred = preferredSections.includes(a.sectionKey) ? 1 : 0;
       const bPreferred = preferredSections.includes(b.sectionKey) ? 1 : 0;
       return bPreferred - aPreferred;
@@ -488,12 +532,12 @@ function getClassifiedRows(rows: StatementMatrixRow[], candidates: string[], sec
     .map(normalizeText);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
 
-  return applyCanonicalBucketPrecedence(rows.filter((row) => {
+  return applyClassifiedBucketPrecedence(rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const byName = canonicalCandidates.includes(rowKey);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
     return byName && bySection;
-  }));
+  }), getPreferredSectionKeys(candidates));
 }
 
 function getClassifiedMetricBreakdown(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
