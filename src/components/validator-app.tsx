@@ -195,41 +195,6 @@ function sortSavedDatasets(items: SavedQuarterSnapshot[]) {
     : a.companyName.localeCompare(b.companyName, "ko")));
 }
 
-function buildDatasetSourceKey(dataset: SavedQuarterSnapshot) {
-  return JSON.stringify({
-    companyName: dataset.companyName,
-    pastedText: dataset.source.pastedText,
-    tolerance: dataset.source.tolerance,
-    pasteEdits: dataset.source.pasteEdits,
-    sessionSignFixes: dataset.source.sessionSignFixes,
-    logicConfig: dataset.source.logicConfig,
-    companyConfigs: dataset.source.companyConfigs
-  });
-}
-
-function rebuildDatasetsWithClassification(datasets: SavedQuarterSnapshot[], groups: ClassificationGroups) {
-  const uniqueSources = new Map<string, SavedQuarterSnapshot>();
-  datasets.forEach((dataset) => {
-    const key = buildDatasetSourceKey(dataset);
-    if (!uniqueSources.has(key)) {
-      uniqueSources.set(key, dataset);
-    }
-  });
-
-  const rebuilt = Array.from(uniqueSources.values()).flatMap((dataset) => buildQuarterSnapshots({
-    pastedText: dataset.source.pastedText,
-    selectedCompany: dataset.companyName,
-    tolerance: dataset.source.tolerance,
-    logicConfig: cloneLogicConfig(dataset.source.logicConfig),
-    companyConfigs: cloneCompanyConfigs(dataset.source.companyConfigs),
-    classificationGroups: cloneClassificationGroups(groups),
-    pasteEdits: { ...dataset.source.pasteEdits },
-    sessionSignFixes: cloneSessionSignFixes(dataset.source.sessionSignFixes)
-  }));
-
-  return sortSavedDatasets(rebuilt);
-}
-
 function signLabel(sign: SignCode) {
   return sign === 0 ? "가산(+)" : sign === 1 ? "차감(−)" : "제외";
 }
@@ -531,8 +496,8 @@ export function ValidatorApp() {
     [savedDatasets, selectedResultCompany]
   );
   const resultReporting = useMemo(
-    () => buildCompanyReport(resultSnapshots),
-    [resultSnapshots]
+    () => buildCompanyReport(resultSnapshots, classificationGroups),
+    [resultSnapshots, classificationGroups]
   );
 
   function resetAdjustments() {
@@ -650,7 +615,6 @@ export function ValidatorApp() {
     const clonedGroups = cloneClassificationGroups(nextGroups);
     setClassificationGroups(clonedGroups);
     setClassificationRows(classificationGroupsToRows(clonedGroups));
-    setSavedDatasets((prev) => (prev.length ? rebuildDatasetsWithClassification(prev, clonedGroups) : prev));
 
     if (showFeedback) {
       setClassificationSaveState("saved");

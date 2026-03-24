@@ -1408,7 +1408,7 @@ export function buildQuarterSnapshots(args: {
   } satisfies SavedQuarterSnapshot));
 }
 
-export function buildCompanyReport(snapshots: SavedQuarterSnapshot[]) {
+export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClassificationGroups?: ClassificationGroups) {
   if (!snapshots.length) {
     return {
       detectedCompany: null,
@@ -1465,7 +1465,9 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[]) {
     rawRows: rawStatementRows,
     adjustedRows: adjustedStatementRows,
     sectionTotals: getSectionTotals(adjustedStatementRows, periods),
-      classificationGroups: snapshots[0]?.source?.classificationGroups ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
+      classificationGroups: activeClassificationGroups
+        ?? snapshots[0]?.source?.classificationGroups
+        ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
   };
 
   return {
