@@ -31,6 +31,7 @@ import {
   formatMetricRatio,
   formatMetricValue,
   type FinalMetricRow,
+  type MetricCalculationDetail,
   type ReportingModel,
   type SavedQuarterSnapshot,
   type StatementMatrixRow
@@ -54,6 +55,30 @@ function renderDiagnosisText(text: string) {
   return parts.map((part, index) =>
     index % 2 === 1 ? <strong key={`${part}-${index}`}>{part}</strong> : <span key={`${part}-${index}`}>{part}</span>
   );
+}
+
+function buildReportMetricKey(sectionTitle: string, rowLabel: string) {
+  return `${sectionTitle}::${rowLabel}`;
+}
+
+function formatCalculationInputValue(value: number | null) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+
+  return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }).format(value);
+}
+
+function formatCalculationResult(kind: "amount" | "ratio" | "growthRate", row: FinalMetricRow, detail: MetricCalculationDetail) {
+  if (detail.result === null || detail.result === undefined) {
+    return "-";
+  }
+
+  if (kind === "amount") {
+    return formatMetricValue(row, detail.result);
+  }
+
+  return `${detail.result.toFixed(1)}%`;
 }
 
 function upsertOverrideRow(rows: OverrideRow[], nextRow: OverrideRow) {
@@ -353,6 +378,8 @@ export function ValidatorApp() {
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [selectedResultCompany, setSelectedResultCompany] = useState<string>("");
+  const [showReportValidation, setShowReportValidation] = useState(false);
+  const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -629,6 +656,13 @@ export function ValidatorApp() {
     XLSX.writeFile(workbook, "ocr-validation-final-report.xlsx");
   }
 
+  function toggleReportMetric(metricKey: string) {
+    setExpandedReportMetrics((prev) => ({
+      ...prev,
+      [metricKey]: !prev[metricKey]
+    }));
+  }
+
   function resetConfig() {
     const defaults = getDefaultPersistedState();
     setLogicConfig(cloneLogicConfig(defaults.logicConfig));
@@ -661,6 +695,38 @@ export function ValidatorApp() {
   }
 
   const configPayload = JSON.stringify({ logicConfig, companyConfigs, classificationGroups }, null, 2);
+
+  function renderMetricCalculationCard(
+    label: string,
+    kind: "amount" | "ratio" | "growthRate",
+    row: FinalMetricRow,
+    detail?: MetricCalculationDetail
+  ) {
+    if (!detail) {
+      return null;
+    }
+
+    return (
+      <div className="metric-detail-block" key={`${row.label}-${kind}`}>
+        <div className="metric-detail-head">
+          <span>{label}</span>
+          <strong>{formatCalculationResult(kind, row, detail)}</strong>
+        </div>
+        <p className="metric-detail-formula">{detail.formula}</p>
+        {!!detail.inputs.length && (
+          <div className="metric-detail-inputs">
+            {detail.inputs.map((input) => (
+              <div className="metric-detail-input" key={`${kind}-${input.label}`}>
+                <span>{input.label}</span>
+                <strong>{formatCalculationInputValue(input.value)}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+        {detail.note ? <p className="metric-detail-note">{detail.note}</p> : null}
+      </div>
+    );
+  }
 
   return (
     <main className="page-shell">
@@ -1158,6 +1224,11 @@ export function ValidatorApp() {
                         <h3>최종결과물</h3>
                         <p className="result-meta">엑셀 최종결과물처럼 지표 블록을 위에서 아래로 이어서 보여줍니다.</p>
                       </div>
+                      <div className="inline-actions">
+                        <button className="ghost-button" onClick={() => setShowReportValidation((prev) => !prev)}>
+                          {showReportValidation ? "계산 검증 숨기기" : "계산 검증 보기"}
+                        </button>
+                      </div>
                     </div>
                   </section>
 
@@ -1184,11 +1255,25 @@ export function ValidatorApp() {
                               ))}
                             </tr>
                           </thead>
-                          <tbody>
-                            {section.rows.map((row: FinalMetricRow) => (
-                              <Fragment key={`${section.title}-${row.label}`}>
+                            <tbody>
+                              {section.rows.map((row: FinalMetricRow) => (
+                                <Fragment key={`${section.title}-${row.label}`}>
+                                  {(() => {
+                                    const metricKey = buildReportMetricKey(section.title, row.label);
+                                    const metricExpanded = expandedReportMetrics[metricKey] ?? false;
+                                    return (
+                                      <>
                                 <tr key={`${section.title}-${row.label}-value`} className="final-value-row separated-row">
-                                  <td className="final-metric-label">{row.label}</td>
+                                  <td className="final-metric-label">
+                                    <div className="final-metric-heading">
+                                      <span>{row.label}</span>
+                                      {showReportValidation && (
+                                        <button className="tiny-button final-detail-toggle" onClick={() => toggleReportMetric(metricKey)}>
+                                          {metricExpanded ? "계산 접기" : "계산 보기"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
                                   {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
@@ -1203,9 +1288,34 @@ export function ValidatorApp() {
                                     </td>
                                   ))}
                                 </tr>
-                              </Fragment>
-                            ))}
-                          </tbody>
+                                {showReportValidation && metricExpanded && (
+                                  <tr className="final-detail-row">
+                                    <td colSpan={resultReporting.periods.length + 1}>
+                                      <div className="final-detail-grid">
+                                        {resultReporting.periods.map((period) => {
+                                          const detail = row.details[period.key] ?? {};
+                                          return (
+                                            <article className="final-detail-card" key={`${metricKey}-${period.key}`}>
+                                              <div className="final-detail-card-head">
+                                                <strong>{period.label}</strong>
+                                                <span className="soft-badge">계산 근거</span>
+                                              </div>
+                                              {renderMetricCalculationCard("금액", "amount", row, detail.amount)}
+                                              {renderMetricCalculationCard("비율", "ratio", row, detail.ratio)}
+                                              {renderMetricCalculationCard("전분기 증감율", "growthRate", row, detail.growthRate)}
+                                            </article>
+                                          );
+                                        })}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                                      </>
+                                    );
+                                  })()}
+                                </Fragment>
+                              ))}
+                            </tbody>
                         </table>
                       </div>
                     </section>

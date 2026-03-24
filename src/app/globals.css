@@ -749,6 +749,17 @@ a {
   font-weight: 700;
 }
 
+.final-metric-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.final-detail-toggle {
+  white-space: nowrap;
+}
+
 .final-metric-cell {
   display: flex;
   flex-direction: column;
@@ -779,6 +790,93 @@ a {
   color: var(--muted);
   font-size: 13px;
   font-weight: 600;
+}
+
+.final-detail-row td {
+  background: linear-gradient(180deg, #f7fbff 0%, #fdfefe 100%);
+  border-top: 0;
+}
+
+.final-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.final-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d8e5f2;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.final-detail-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.metric-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.metric-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.metric-detail-head strong {
+  color: #0f172a;
+}
+
+.metric-detail-formula {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.metric-detail-inputs {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.metric-detail-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  font-size: 13px;
+}
+
+.metric-detail-input span {
+  color: var(--muted);
+}
+
+.metric-detail-note {
+  margin: 0;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .formula-table .formula-label-cell {
@@ -954,6 +1052,19 @@ a {
 
   .mini-input {
     width: 100%;
+  }
+
+  .final-detail-card-head,
+  .metric-detail-head,
+  .metric-detail-input,
+  .final-metric-heading {
+    align-items: flex-start;
+  }
+
+  .final-detail-card-head,
+  .metric-detail-head,
+  .metric-detail-input {
+    flex-direction: column;
   }
 
   .sign-editor {
