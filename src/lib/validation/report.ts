@@ -16,6 +16,7 @@ export type StatementMatrixRow = {
   sectionKey: string;
   accountName: string;
   canonicalKey: string;
+  sourceCanonicalKey?: string;
   values: Record<string, number | null>;
 };
 
@@ -346,6 +347,7 @@ function buildStatementRows(
         sectionKey: meta.sectionKey,
         accountName: meta.accountName,
         canonicalKey: meta.canonicalKey,
+        sourceCanonicalKey: meta.canonicalKey,
         values
       } satisfies StatementMatrixRow;
     });
@@ -367,7 +369,7 @@ function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates:
     return byName && bySection;
   });
 
-  return matches
+  return applyCanonicalBucketPrecedence(matches)
     .sort((a, b) => {
       const aPreferred = preferredSections.includes(a.sectionKey) ? 1 : 0;
       const bPreferred = preferredSections.includes(b.sectionKey) ? 1 : 0;
@@ -380,6 +382,27 @@ function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates:
     })
     .map((row) => row.values[periodKey])
     .filter((value): value is number => value !== null && value !== undefined);
+}
+
+function applyCanonicalBucketPrecedence(rows: StatementMatrixRow[]) {
+  const buckets = new Map<string, StatementMatrixRow[]>();
+
+  rows.forEach((row) => {
+    const bucketKey = `${normalizeText(row.sectionKey)}__${normalizeText(row.canonicalKey || row.accountName)}`;
+    const bucket = buckets.get(bucketKey) ?? [];
+    bucket.push(row);
+    buckets.set(bucketKey, bucket);
+  });
+
+  return Array.from(buckets.values()).flatMap((bucket) => {
+    const nativeRows = bucket.filter((row) => {
+      const activeKey = normalizeText(row.canonicalKey || row.accountName);
+      const sourceKey = normalizeText(row.sourceCanonicalKey || row.canonicalKey || row.accountName);
+      return activeKey === sourceKey;
+    });
+
+    return nativeRows.length ? nativeRows : bucket;
+  });
 }
 
 function getSectionTotals(rows: StatementMatrixRow[], periods: ReportPeriod[]) {
@@ -427,14 +450,14 @@ function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, cand
     .map(normalizeText);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
-  const values = rows
+  const values = applyCanonicalBucketPrecedence(rows
     .filter((row) => {
       const rowKey = normalizeText(row.canonicalKey || row.accountName);
       const byName = canonicalCandidates.includes(rowKey);
       const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
       return byName && bySection;
     })
-    .sort((a, b) => {
+    ).sort((a, b) => {
       const aPreferred = preferredSections.includes(a.sectionKey) ? 1 : 0;
       const bPreferred = preferredSections.includes(b.sectionKey) ? 1 : 0;
       return bPreferred - aPreferred;
@@ -455,12 +478,12 @@ function getClassifiedRows(rows: StatementMatrixRow[], candidates: string[], sec
     .map(normalizeText);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
 
-  return rows.filter((row) => {
+  return applyCanonicalBucketPrecedence(rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const byName = canonicalCandidates.includes(rowKey);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
     return byName && bySection;
-  });
+  }));
 }
 
 function getClassifiedMetricBreakdown(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
@@ -1453,6 +1476,7 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
             sectionKey: row.sectionKey,
             accountName: row.accountName,
             canonicalKey,
+            sourceCanonicalKey: row.canonicalKey,
             values: Object.fromEntries(periods.map((period) => [period.key, null]))
           });
         }
