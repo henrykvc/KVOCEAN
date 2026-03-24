@@ -1476,22 +1476,37 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
   const buildMatrix = (kind: "rawStatementRows" | "adjustedStatementRows") => {
     const rowMap = new Map<string, StatementMatrixRow>();
     snapshots.forEach((snapshot) => {
+      const bucketMap = new Map<string, Array<typeof snapshot[typeof kind][number] & { activeCanonicalKey: string }>>();
+
       snapshot[kind].forEach((row) => {
         const canonicalKey = resolveCanonicalAccountKey(row.accountName, row.sectionKey, reportClassificationGroups);
-        const key = buildRowIdentityKey(row.sectionKey, canonicalKey, row.accountName);
+        const bucketKey = `${normalizeText(row.sectionKey)}__${normalizeText(canonicalKey)}`;
+        const bucket = bucketMap.get(bucketKey) ?? [];
+        bucket.push({ ...row, activeCanonicalKey: canonicalKey });
+        bucketMap.set(bucketKey, bucket);
+      });
+
+      bucketMap.forEach((bucketRows) => {
+        const canonicalKey = bucketRows[0].activeCanonicalKey;
+        const exactNameRows = bucketRows.filter((row) => normalizeText(row.accountName) === normalizeText(canonicalKey));
+        const selectedRows = exactNameRows.length ? exactNameRows : bucketRows;
+        const key = buildRowIdentityKey(bucketRows[0].sectionKey, canonicalKey, canonicalKey);
+
         if (!rowMap.has(key)) {
           rowMap.set(key, {
-            signFlag: row.signFlag,
-            section: row.section,
-            sectionKey: row.sectionKey,
-            accountName: row.accountName,
+            signFlag: selectedRows[0].signFlag,
+            section: bucketRows[0].section,
+            sectionKey: bucketRows[0].sectionKey,
+            accountName: canonicalKey,
             canonicalKey,
-            sourceCanonicalKey: row.canonicalKey,
+            sourceCanonicalKey: selectedRows[0].canonicalKey,
             values: Object.fromEntries(periods.map((period) => [period.key, null]))
           });
         }
+
+        const bucketValue = selectedRows.reduce((total, row) => total + (row.value ?? 0), 0);
         const current = rowMap.get(key)!;
-        current.values[snapshot.quarterKey] = (current.values[snapshot.quarterKey] ?? 0) + (row.value ?? 0);
+        current.values[snapshot.quarterKey] = bucketValue;
       });
     });
     return Array.from(rowMap.values());
