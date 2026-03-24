@@ -658,9 +658,29 @@ function getPreviousPeriod(context: MetricContext, period: ReportPeriod) {
   return index >= 0 ? context.periods[index + 1] ?? null : null;
 }
 
+function metricExistsInRows(rows: StatementMatrixRow[], names: string[]) {
+  const normalized = names.map(normalizeText);
+  return rows.some((row) => {
+    const rowKey = normalizeText(row.canonicalKey || row.accountName);
+    const rowName = normalizeText(row.accountName);
+    return normalized.some((name) => rowKey === name || rowName === name);
+  });
+}
+
+function stripSignSuffix(name: string) {
+  return name.replace(/_(양수|음수)$/u, "");
+}
+
 function getNetMetricValue(context: MetricContext, periodKey: string, positiveNames: string[], negativeNames: string[] = []) {
-  const positive = getAdjustedMetricSum(context, periodKey, positiveNames);
-  const negative = negativeNames.length ? getAdjustedMetricSum(context, periodKey, negativeNames) : null;
+  const positiveCandidates = metricExistsInRows(context.adjustedRows, positiveNames)
+    ? positiveNames
+    : Array.from(new Set(positiveNames.map(stripSignSuffix)));
+  const negativeCandidates = metricExistsInRows(context.adjustedRows, negativeNames)
+    ? negativeNames
+    : Array.from(new Set(negativeNames.map(stripSignSuffix))).filter((name) => !positiveCandidates.includes(name));
+
+  const positive = getAdjustedMetricSum(context, periodKey, positiveCandidates);
+  const negative = negativeCandidates.length ? getAdjustedMetricSum(context, periodKey, negativeCandidates) : null;
   if (positive === null && negative === null) {
     return null;
   }
@@ -1047,16 +1067,18 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     {
       label: "당좌비율",
       ratio: (period, current) => {
+        const quickAssetByGroup = getClassifiedMetricSum(current, period.key, ["당좌자산"], "유동자산");
         const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
-        const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
+        const quickAssets = quickAssetByGroup ?? sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
         const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
         return safeDivide(quickAssets, currentLiabilities, 100);
       },
       ratioDetail: (period, current, result) => {
+        const quickAssetByGroup = getClassifiedMetricSum(current, period.key, ["당좌자산"], "유동자산");
         const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
-        const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
+        const quickAssets = quickAssetByGroup ?? sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
         const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
-        const quickAssetBreakdown = getClassifiedMetricBreakdown(current, period.key, QUICK_ASSET_ALIASES, "유동자산");
+        const quickAssetBreakdown = getClassifiedMetricBreakdown(current, period.key, ["당좌자산"], "유동자산");
         const currentLiabilityBreakdown = getClassifiedMetricBreakdown(current, period.key, ["유동부채"], "재무상태표");
         return createCalculationDetail("당좌자산 / 유동부채 * 100", result, [
           { label: "당좌자산", value: quickAssets, components: quickAssetBreakdown },
