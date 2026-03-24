@@ -31,6 +31,7 @@ export type FinalMetricRow = {
 export type MetricCalculationInput = {
   label: string;
   value: number | null;
+  components?: MetricCalculationInput[];
 };
 
 export type MetricCalculationDetail = {
@@ -1035,9 +1036,11 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratioDetail: (period, current, result) => {
         const currentAssets = getPreferredCurrentAssets(current, period.key);
         const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
+        const currentAssetBreakdown = getClassifiedMetricBreakdown(current, period.key, ["유동자산"], "재무상태표");
+        const currentLiabilityBreakdown = getClassifiedMetricBreakdown(current, period.key, ["유동부채"], "재무상태표");
         return createCalculationDetail("유동자산 / 유동부채 * 100", result, [
-          { label: "유동자산", value: currentAssets },
-          { label: "유동부채", value: currentLiabilities }
+          { label: "유동자산", value: currentAssets, components: currentAssetBreakdown },
+          { label: "유동부채", value: currentLiabilities, components: currentLiabilityBreakdown }
         ], currentLiabilities === 0 ? "유동부채가 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     },
@@ -1053,9 +1056,11 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
         const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
         const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
+        const quickAssetBreakdown = getClassifiedMetricBreakdown(current, period.key, QUICK_ASSET_ALIASES, "유동자산");
+        const currentLiabilityBreakdown = getClassifiedMetricBreakdown(current, period.key, ["유동부채"], "재무상태표");
         return createCalculationDetail("당좌자산 / 유동부채 * 100", result, [
-          { label: "당좌자산", value: quickAssets },
-          { label: "유동부채", value: currentLiabilities }
+          { label: "당좌자산", value: quickAssets, components: quickAssetBreakdown },
+          { label: "유동부채", value: currentLiabilities, components: currentLiabilityBreakdown }
         ], currentLiabilities === 0 ? "유동부채가 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     },

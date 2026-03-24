@@ -30,6 +30,7 @@ import {
   buildReportingModel,
   formatMetricRatio,
   formatMetricValue,
+  type MetricCalculationInput,
   type FinalMetricRow,
   type MetricCalculationDetail,
   type ReportingModel,
@@ -79,6 +80,10 @@ function formatCalculationResult(kind: "amount" | "ratio" | "growthRate", row: F
   }
 
   return `${detail.result.toFixed(1)}%`;
+}
+
+function normalizeMetricLabel(value: string) {
+  return value.replace(/\s+/g, "").trim();
 }
 
 function upsertOverrideRow(rows: OverrideRow[], nextRow: OverrideRow) {
@@ -703,10 +708,42 @@ export function ValidatorApp() {
 
   const configPayload = JSON.stringify({ logicConfig, companyConfigs, classificationGroups }, null, 2);
 
+  function buildInputBreakdown(periodKey: string, input: MetricCalculationInput) {
+    if (input.components && input.components.length) {
+      return input.components;
+    }
+
+    const aliases = [
+      normalizeMetricLabel(input.label),
+      ...(input.label === "자본총계" ? ["자본", "총자본"] : []),
+      ...(input.label === "자산" ? ["자산총계", "총자산"] : []),
+      ...(input.label === "부채" ? ["부채총계", "총부채"] : [])
+    ];
+
+    const breakdown = resultReporting.adjustedStatementRows
+      .filter((row) => {
+        const rowKey = normalizeMetricLabel(row.canonicalKey || row.accountName);
+        const rowName = normalizeMetricLabel(row.accountName);
+        return aliases.includes(rowKey) || aliases.includes(rowName);
+      })
+      .map<MetricCalculationInput | null>((row) => {
+        const value = row.values[periodKey];
+        if (value === null || value === undefined) {
+          return null;
+        }
+        const label = row.accountName === row.canonicalKey ? row.accountName : `${row.canonicalKey} ← ${row.accountName}`;
+        return { label, value } satisfies MetricCalculationInput;
+      })
+      .filter((item): item is MetricCalculationInput => item !== null);
+
+    return breakdown.length > 1 ? breakdown : [];
+  }
+
   function renderMetricCalculationCard(
     label: string,
     kind: "amount" | "ratio" | "growthRate",
     row: FinalMetricRow,
+    periodKey: string,
     detail?: MetricCalculationDetail
   ) {
     if (!detail) {
@@ -722,12 +759,27 @@ export function ValidatorApp() {
         <p className="metric-detail-formula">{detail.formula}</p>
         {!!detail.inputs.length && (
           <div className="metric-detail-inputs">
-            {detail.inputs.map((input) => (
-              <div className="metric-detail-input" key={`${kind}-${input.label}`}>
-                <span>{input.label}</span>
-                <strong>{formatCalculationInputValue(input.value)}</strong>
-              </div>
-            ))}
+            {detail.inputs.map((input) => {
+              const breakdown = buildInputBreakdown(periodKey, input);
+              return (
+                <div className="metric-detail-input-wrap" key={`${kind}-${input.label}`}>
+                  <div className="metric-detail-input">
+                    <span>{input.label}</span>
+                    <strong>{formatCalculationInputValue(input.value)}</strong>
+                  </div>
+                  {!!breakdown.length && (
+                    <div className="metric-detail-subinputs">
+                      {breakdown.map((item) => (
+                        <div className="metric-detail-subinput" key={`${kind}-${input.label}-${item.label}`}>
+                          <span>{item.label}</span>
+                          <strong>{formatCalculationInputValue(item.value)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         {detail.note ? <p className="metric-detail-note">{detail.note}</p> : null}
@@ -1307,9 +1359,9 @@ export function ValidatorApp() {
                                                 <strong>{period.label}</strong>
                                                 <span className="soft-badge">계산 근거</span>
                                               </div>
-                                              {renderMetricCalculationCard("금액", "amount", row, detail.amount)}
-                                              {renderMetricCalculationCard("비율", "ratio", row, detail.ratio)}
-                                              {renderMetricCalculationCard("전분기 증감율", "growthRate", row, detail.growthRate)}
+                                              {renderMetricCalculationCard("금액", "amount", row, period.key, detail.amount)}
+                                              {renderMetricCalculationCard("비율", "ratio", row, period.key, detail.ratio)}
+                                              {renderMetricCalculationCard("전분기 증감율", "growthRate", row, period.key, detail.growthRate)}
                                             </article>
                                           );
                                         })}

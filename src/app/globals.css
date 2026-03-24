@@ -870,6 +870,12 @@ a {
   gap: 8px;
 }
 
+.metric-detail-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .metric-detail-input {
   display: flex;
   align-items: center;
@@ -880,6 +886,24 @@ a {
   background: #fff;
   border: 1px solid rgba(148, 163, 184, 0.18);
   font-size: 13px;
+}
+
+.metric-detail-subinputs {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(148, 163, 184, 0.35);
+}
+
+.metric-detail-subinput {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: #475569;
 }
 
 .metric-detail-input span {
