@@ -1436,18 +1436,23 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
       return a.label.localeCompare(b.label);
     });
 
+  const reportClassificationGroups = activeClassificationGroups
+    ?? snapshots[0]?.source?.classificationGroups
+    ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS);
+
   const buildMatrix = (kind: "rawStatementRows" | "adjustedStatementRows") => {
     const rowMap = new Map<string, StatementMatrixRow>();
     snapshots.forEach((snapshot) => {
       snapshot[kind].forEach((row) => {
-        const key = buildRowIdentityKey(row.sectionKey, row.canonicalKey, row.accountName);
+        const canonicalKey = resolveCanonicalAccountKey(row.accountName, row.sectionKey, reportClassificationGroups);
+        const key = buildRowIdentityKey(row.sectionKey, canonicalKey, row.accountName);
         if (!rowMap.has(key)) {
           rowMap.set(key, {
             signFlag: row.signFlag,
             section: row.section,
             sectionKey: row.sectionKey,
             accountName: row.accountName,
-            canonicalKey: row.canonicalKey,
+            canonicalKey,
             values: Object.fromEntries(periods.map((period) => [period.key, null]))
           });
         }
@@ -1465,9 +1470,7 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
     rawRows: rawStatementRows,
     adjustedRows: adjustedStatementRows,
     sectionTotals: getSectionTotals(adjustedStatementRows, periods),
-      classificationGroups: activeClassificationGroups
-        ?? snapshots[0]?.source?.classificationGroups
-        ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
+    classificationGroups: reportClassificationGroups
   };
 
   return {
