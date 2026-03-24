@@ -422,11 +422,9 @@ function sumValues(rows: StatementMatrixRow[], periodKey: string, candidates: st
 }
 
 function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
-  const canonicalCandidates = candidates.flatMap((candidate) => {
-    const base = [candidate];
-    const aliases = classificationGroups[candidate] ?? [];
-    return [...base, ...aliases].map(normalizeText);
-  });
+  const canonicalCandidates = candidates
+    .filter((candidate) => Boolean(classificationGroups[candidate]))
+    .map(normalizeText);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
   const values = rows
