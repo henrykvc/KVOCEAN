@@ -24,6 +24,25 @@ export type FinalMetricRow = {
   amounts: Record<string, number | null>;
   ratios: Record<string, number | null>;
   growthRates: Record<string, number | null>;
+  details: Record<string, FinalMetricPeriodDetails>;
+};
+
+export type MetricCalculationInput = {
+  label: string;
+  value: number | null;
+};
+
+export type MetricCalculationDetail = {
+  formula: string;
+  result: number | null;
+  inputs: MetricCalculationInput[];
+  note?: string;
+};
+
+export type FinalMetricPeriodDetails = {
+  amount?: MetricCalculationDetail;
+  ratio?: MetricCalculationDetail;
+  growthRate?: MetricCalculationDetail;
 };
 
 export type FinalMetricSection = {
@@ -81,7 +100,18 @@ type MetricSpec = {
   label: string;
   amount?: (period: ReportPeriod, context: MetricContext) => number | null;
   ratio?: (period: ReportPeriod, context: MetricContext) => number | null;
+  amountDetail?: (period: ReportPeriod, context: MetricContext, result: number | null) => MetricCalculationDetail | undefined;
+  ratioDetail?: (period: ReportPeriod, context: MetricContext, result: number | null) => MetricCalculationDetail | undefined;
 };
+
+function createCalculationDetail(
+  formula: string,
+  result: number | null,
+  inputs: MetricCalculationInput[],
+  note?: string
+): MetricCalculationDetail {
+  return { formula, result, inputs, note };
+}
 
 const DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
 const COST_STRUCTURE_ITEMS = ["인건비", "광고선전비", "연구개발비", "접대비", "복리후생비", "지급수수료", "외주용역비", "임차료", "총이자비용"];
@@ -450,25 +480,52 @@ function buildMetricRows(context: MetricContext, specs: MetricSpec[]) {
     const amounts: Record<string, number | null> = {};
     const ratios: Record<string, number | null> = {};
     const growthRates: Record<string, number | null> = {};
+    const details: Record<string, FinalMetricPeriodDetails> = {};
 
     context.periods.forEach((period, index) => {
       const currentAmount = spec.amount ? spec.amount(period, context) : null;
       const currentRatio = spec.ratio ? spec.ratio(period, context) : null;
       amounts[period.key] = currentAmount;
       ratios[period.key] = currentRatio;
+      details[period.key] = {};
+
+      if (spec.amountDetail) {
+        details[period.key].amount = spec.amountDetail(period, context, currentAmount);
+      }
+
+      if (spec.ratioDetail) {
+        details[period.key].ratio = spec.ratioDetail(period, context, currentRatio);
+      }
 
       const previous = context.periods[index + 1];
       const previousAmount = previous && spec.amount ? spec.amount(previous, context) : null;
       growthRates[period.key] = currentAmount !== null && previousAmount !== null && previousAmount !== 0
         ? ((currentAmount - previousAmount) / Math.abs(previousAmount)) * 100
         : null;
+
+      if (spec.amount) {
+        details[period.key].growthRate = createCalculationDetail(
+          "(당기 금액 - 전분기 금액) / |전분기 금액| * 100",
+          growthRates[period.key],
+          [
+            { label: "당기 금액", value: currentAmount },
+            { label: previous ? "전분기 금액" : "비교 전분기 금액", value: previousAmount }
+          ],
+          !previous
+            ? "이전 분기가 없어 증감율을 계산하지 않았습니다."
+            : previousAmount === 0
+              ? "전분기 금액이 0이라 증감율을 계산하지 않았습니다."
+              : undefined
+        );
+      }
     });
 
     return {
       label: spec.label,
       amounts,
       ratios,
-      growthRates
+      growthRates,
+      details
     } satisfies FinalMetricRow;
   });
 }
@@ -486,6 +543,25 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       }
       const burnBase = (sales ?? 0) - (operatingIncome ?? 0) - (depreciation ?? 0);
       return burnBase > 0 ? (cash ?? 0) * 6 / burnBase : null;
+    },
+    amountDetail: (period, current, result) => {
+      const cash = getAdjustedMetricSum(current, period.key, ["현금및현금성자산"]);
+      const sales = getMetricValue(current, period.key, ["매출액"]);
+      const operatingIncome = getMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
+      const depreciation = getMetricSum(current, period.key, DEPRECIATION_ALIASES);
+      const burnBase = cash === null && sales === null && operatingIncome === null ? null : (sales ?? 0) - (operatingIncome ?? 0) - (depreciation ?? 0);
+      return createCalculationDetail(
+        "현금및현금성자산 * 6 / (매출액 - 영업이익 - 감가상각계)",
+        result,
+        [
+          { label: "현금및현금성자산", value: cash },
+          { label: "매출액", value: sales },
+          { label: "영업이익", value: operatingIncome },
+          { label: "감가상각계", value: depreciation },
+          { label: "월환산 소진기준", value: burnBase }
+        ],
+        burnBase !== null && burnBase <= 0 ? "소진 기준값이 0 이하라 런웨이를 계산하지 않았습니다." : undefined
+      );
     }
   };
 
@@ -498,6 +574,18 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return null;
       }
       return (operatingIncome ?? 0) + (depreciation ?? 0);
+    },
+    amountDetail: (period, current, result) => {
+      const operatingIncome = getMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
+      const depreciation = getMetricSum(current, period.key, DEPRECIATION_ALIASES);
+      return createCalculationDetail(
+        "영업이익 + 감가상각계",
+        result,
+        [
+          { label: "영업이익", value: operatingIncome },
+          { label: "감가상각계", value: depreciation }
+        ]
+      );
     }
   };
 
@@ -511,6 +599,22 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return null;
       }
       return ((sales ?? 0) - (operatingIncome ?? 0) + (depreciation ?? 0)) / 3;
+    },
+    amountDetail: (period, current, result) => {
+      const sales = getAdjustedMetricValue(current, period.key, ["매출액"]);
+      const operatingIncome = getAdjustedMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
+      const depreciation = getAdjustedMetricSum(current, period.key, DEPRECIATION_ALIASES);
+      const quarterlySpend = sales === null && operatingIncome === null ? null : (sales ?? 0) - (operatingIncome ?? 0) + (depreciation ?? 0);
+      return createCalculationDetail(
+        "(매출액 - 영업이익 + 감가상각계) / 3",
+        result,
+        [
+          { label: "매출액", value: sales },
+          { label: "영업이익", value: operatingIncome },
+          { label: "감가상각계", value: depreciation },
+          { label: "분기 총지출 추정", value: quarterlySpend }
+        ]
+      );
     }
   };
 
@@ -525,12 +629,38 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const costStructureSpecs = COST_STRUCTURE_ITEMS.map((label) => ({
     label,
     amount: (period: ReportPeriod, current: MetricContext) => costStructureValue(period, current, label),
+    amountDetail: (period: ReportPeriod, current: MetricContext, result: number | null) => createCalculationDetail(
+      label === "총이자비용" ? "영업외비용 섹션 내 이자비용 관련 계정 합계" : `${label} 계정 합계`,
+      result,
+      [
+        { label, value: costStructureValue(period, current, label) }
+      ]
+    ),
     ratio: (period: ReportPeriod, current: MetricContext) => {
       const value = costStructureValue(period, current, label);
       const expenseTotal = (getPreferredAdjustedMetric(current, period.key, ["매출원가"]) ?? 0)
         + (getPreferredAdjustedMetric(current, period.key, ["판매비와관리비", "영업비용"]) ?? 0)
         + (getPreferredAdjustedMetric(current, period.key, ["영업외비용"]) ?? 0);
       return safeDivide(value, expenseTotal, 100);
+    },
+    ratioDetail: (period: ReportPeriod, current: MetricContext, result: number | null) => {
+      const value = costStructureValue(period, current, label);
+      const costOfSales = getPreferredAdjustedMetric(current, period.key, ["매출원가"]);
+      const operatingExpense = getPreferredAdjustedMetric(current, period.key, ["판매비와관리비", "영업비용"]);
+      const nonOperatingExpense = getPreferredAdjustedMetric(current, period.key, ["영업외비용"]);
+      const expenseTotal = (costOfSales ?? 0) + (operatingExpense ?? 0) + (nonOperatingExpense ?? 0);
+      return createCalculationDetail(
+        `${label} / (매출원가 + 영업비용 + 영업외비용) * 100`,
+        result,
+        [
+          { label, value },
+          { label: "매출원가", value: costOfSales },
+          { label: "영업비용", value: operatingExpense },
+          { label: "영업외비용", value: nonOperatingExpense },
+          { label: "총비용", value: expenseTotal }
+        ],
+        expenseTotal === 0 ? "총비용이 0이라 비율을 계산하지 않았습니다." : undefined
+      );
     }
   } satisfies MetricSpec));
 
@@ -538,37 +668,137 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     {
       label: "현금및현금성자산",
       amount: (period, current) => getRawMetricSum(current, period.key, ["현금및현금성자산"]),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["현금및현금성자산"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amountDetail: (period, current, result) => createCalculationDetail(
+        "현금및현금성자산 계정 합계",
+        result,
+        [{ label: "현금및현금성자산", value: getRawMetricSum(current, period.key, ["현금및현금성자산"]) }]
+      ),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["현금및현금성자산"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const cash = getRawMetricSum(current, period.key, ["현금및현금성자산"]);
+        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        return createCalculationDetail("현금및현금성자산 / 자산 * 100", result, [
+          { label: "현금및현금성자산", value: cash },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "매도가능증권",
       amount: (period, current) => getRawMetricSum(current, period.key, ["매도가능증권"]),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["매도가능증권"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amountDetail: (period, current, result) => createCalculationDetail(
+        "매도가능증권 계정 합계",
+        result,
+        [{ label: "매도가능증권", value: getRawMetricSum(current, period.key, ["매도가능증권"]) }]
+      ),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["매도가능증권"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const availableForSale = getRawMetricSum(current, period.key, ["매도가능증권"]);
+        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        return createCalculationDetail("매도가능증권 / 자산 * 100", result, [
+          { label: "매도가능증권", value: availableForSale },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "단기대여금",
       amount: (period, current) => getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]),
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amountDetail: (period, current, result) => {
+        const positive = getAdjustedMetricSum(current, period.key, ["단기대여금_양수", "단기대여금"]);
+        const negative = getAdjustedMetricSum(current, period.key, ["단기대여금_음수"]);
+        return createCalculationDetail("단기대여금 관련 양수 합계 + 음수 조정 합계", result, [
+          { label: "단기대여금 양수", value: positive },
+          { label: "단기대여금 음수 조정", value: negative }
+        ]);
+      },
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const loans = getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]);
+        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        return createCalculationDetail("단기대여금 / 자산 * 100", result, [
+          { label: "단기대여금", value: loans },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "개발비(자산)",
       amount: (period, current) => getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]),
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amountDetail: (period, current, result) => {
+        const positive = getAdjustedMetricSum(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"]);
+        const negative = getAdjustedMetricSum(current, period.key, ["개발비_음수"]);
+        return createCalculationDetail("개발비 관련 양수 합계 + 음수 조정 합계", result, [
+          { label: "개발비 양수", value: positive },
+          { label: "개발비 음수 조정", value: negative }
+        ]);
+      },
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const developmentAsset = getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]);
+        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        return createCalculationDetail("개발비(자산) / 자산 * 100", result, [
+          { label: "개발비(자산)", value: developmentAsset },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "선급금",
       amount: (period, current) => getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]),
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amountDetail: (period, current, result) => {
+        const positive = getAdjustedMetricSum(current, period.key, ["선급금_양수", "선급금"]);
+        const negative = getAdjustedMetricSum(current, period.key, ["선급금_음수"]);
+        return createCalculationDetail("선급금 관련 양수 합계 + 음수 조정 합계", result, [
+          { label: "선급금 양수", value: positive },
+          { label: "선급금 음수 조정", value: negative }
+        ]);
+      },
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const prepaid = getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]);
+        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        return createCalculationDetail("선급금 / 자산 * 100", result, [
+          { label: "선급금", value: prepaid },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "가수금",
       amount: (period, current) => getRawMetricSum(current, period.key, ["가수금"]),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가수금"]), getAdjustedMetricValue(current, period.key, ["부채"]), 100)
+      amountDetail: (period, current, result) => createCalculationDetail(
+        "가수금 계정 합계",
+        result,
+        [{ label: "가수금", value: getRawMetricSum(current, period.key, ["가수금"]) }]
+      ),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가수금"]), getAdjustedMetricValue(current, period.key, ["부채"]), 100),
+      ratioDetail: (period, current, result) => {
+        const suspense = getRawMetricSum(current, period.key, ["가수금"]);
+        const liabilities = getAdjustedMetricValue(current, period.key, ["부채"]);
+        return createCalculationDetail("가수금 / 부채 * 100", result, [
+          { label: "가수금", value: suspense },
+          { label: "부채", value: liabilities }
+        ], liabilities === 0 ? "부채가 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "가지급금",
       amount: (period, current) => getRawMetricSum(current, period.key, ["가지급금"]),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가지급금"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100)
+      amountDetail: (period, current, result) => createCalculationDetail(
+        "가지급금 계정 합계",
+        result,
+        [{ label: "가지급금", value: getRawMetricSum(current, period.key, ["가지급금"]) }]
+      ),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가지급금"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const advances = getRawMetricSum(current, period.key, ["가지급금"]);
+        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        return createCalculationDetail("가지급금 / 자산 * 100", result, [
+          { label: "가지급금", value: advances },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "퇴직급여충당부채",
@@ -580,11 +810,29 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         }
         return (positive ?? 0) + (negative ?? 0);
       },
+      amountDetail: (period, current, result) => {
+        const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
+        const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
+        return createCalculationDetail("퇴직급여충당부채 양수 합계 + 음수 조정 합계", result, [
+          { label: "퇴직급여충당부채 양수", value: positive },
+          { label: "퇴직급여충당부채 음수 조정", value: negative }
+        ]);
+      },
       ratio: (period, current) => {
         const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
         const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
         const value = (positive ?? 0) + (negative ?? 0);
         return safeDivide(value, getAdjustedMetricValue(current, period.key, ["부채"]), 100);
+      },
+      ratioDetail: (period, current, result) => {
+        const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
+        const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
+        const value = (positive ?? 0) + (negative ?? 0);
+        const liabilities = getAdjustedMetricValue(current, period.key, ["부채"]);
+        return createCalculationDetail("퇴직급여충당부채 / 부채 * 100", result, [
+          { label: "퇴직급여충당부채", value },
+          { label: "부채", value: liabilities }
+        ], liabilities === 0 ? "부채가 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     }
   ];
@@ -592,7 +840,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const stabilitySpecs: MetricSpec[] = [
     {
       label: "유동비율",
-      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["유동자산"]), getPreferredAdjustedMetric(current, period.key, ["유동부채"]), 100)
+      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["유동자산"]), getPreferredAdjustedMetric(current, period.key, ["유동부채"]), 100),
+      ratioDetail: (period, current, result) => {
+        const currentAssets = getPreferredAdjustedMetric(current, period.key, ["유동자산"]);
+        const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
+        return createCalculationDetail("유동자산 / 유동부채 * 100", result, [
+          { label: "유동자산", value: currentAssets },
+          { label: "유동부채", value: currentLiabilities }
+        ], currentLiabilities === 0 ? "유동부채가 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "당좌비율",
@@ -601,38 +857,103 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
         const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
         return safeDivide(quickAssets, currentLiabilities, 100);
+      },
+      ratioDetail: (period, current, result) => {
+        const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
+        const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
+        const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
+        return createCalculationDetail("당좌자산 / 유동부채 * 100", result, [
+          { label: "당좌자산", value: quickAssets },
+          { label: "유동부채", value: currentLiabilities }
+        ], currentLiabilities === 0 ? "유동부채가 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "부채비율",
-      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["부채"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100)
+      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["부채"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100),
+      ratioDetail: (period, current, result) => {
+        const liabilities = getPreferredAdjustedMetric(current, period.key, ["부채"]);
+        const equity = getPreferredAdjustedMetric(current, period.key, ["자본"]);
+        return createCalculationDetail("부채 / 자본 * 100", result, [
+          { label: "부채", value: liabilities },
+          { label: "자본", value: equity }
+        ], equity === 0 ? "자본이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "차입금 의존도",
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100)
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const borrowings = getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]);
+        const assets = getPreferredAdjustedMetric(current, period.key, ["자산"]);
+        return createCalculationDetail("순차입금 / 자산 * 100", result, [
+          { label: "순차입금", value: borrowings },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "이자보상비율",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getMetricSum(current, period.key, INTEREST_ALIASES), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getMetricSum(current, period.key, INTEREST_ALIASES), 100),
+      ratioDetail: (period, current, result) => {
+        const operatingIncome = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
+        const interestExpense = getMetricSum(current, period.key, INTEREST_ALIASES);
+        return createCalculationDetail("영업이익 / 이자비용 * 100", result, [
+          { label: "영업이익", value: operatingIncome },
+          { label: "이자비용", value: interestExpense }
+        ], interestExpense === 0 ? "이자비용이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     }
   ];
 
   const profitabilitySpecs: MetricSpec[] = [
     {
       label: "매출액순이익률",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100),
+      ratioDetail: (period, current, result) => {
+        const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
+        const sales = getPreferredAdjustedMetric(current, period.key, ["매출액"]);
+        return createCalculationDetail("계속사업당기순이익 / 매출액 * 100", result, [
+          { label: "계속사업당기순이익", value: netIncome },
+          { label: "매출액", value: sales }
+        ], sales === 0 ? "매출액이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "총자산이익률(ROA)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100),
+      ratioDetail: (period, current, result) => {
+        const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
+        const assets = getPreferredAdjustedMetric(current, period.key, ["자산"]);
+        return createCalculationDetail("계속사업당기순이익 / 자산 * 100", result, [
+          { label: "계속사업당기순이익", value: netIncome },
+          { label: "자산", value: assets }
+        ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "자기자본이익률(ROE)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100),
+      ratioDetail: (period, current, result) => {
+        const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
+        const equity = getPreferredAdjustedMetric(current, period.key, ["자본"]);
+        return createCalculationDetail("계속사업당기순이익 / 자본 * 100", result, [
+          { label: "계속사업당기순이익", value: netIncome },
+          { label: "자본", value: equity }
+        ], equity === 0 ? "자본이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "영업이익률",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100)
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100),
+      ratioDetail: (period, current, result) => {
+        const operatingIncome = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
+        const sales = getPreferredAdjustedMetric(current, period.key, ["매출액"]);
+        return createCalculationDetail("영업이익 / 매출액 * 100", result, [
+          { label: "영업이익", value: operatingIncome },
+          { label: "매출액", value: sales }
+        ], sales === 0 ? "매출액이 0이라 비율을 계산하지 않았습니다." : undefined);
+      }
     },
     {
       label: "공헌이익률",
@@ -640,6 +961,16 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const variableCosts = getMetricSum(current, period.key, VARIABLE_COST_ALIASES);
         return safeDivide(sales !== null ? sales - (variableCosts ?? 0) : null, sales, 100);
+      },
+      ratioDetail: (period, current, result) => {
+        const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        const variableCosts = getMetricSum(current, period.key, VARIABLE_COST_ALIASES);
+        const contribution = sales !== null ? sales - (variableCosts ?? 0) : null;
+        return createCalculationDetail("(매출액 - 변동비) / 매출액 * 100", result, [
+          { label: "매출액", value: sales },
+          { label: "변동비", value: variableCosts },
+          { label: "공헌이익", value: contribution }
+        ], sales === 0 ? "매출액이 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     }
   ];
@@ -653,6 +984,19 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           ? averageTwo(getAdjustedMetricSum(current, period.key, ["자산"]), getAdjustedMetricSum(current, previous.key, ["자산"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageAssets, 1);
+      },
+      ratioDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentAssets = getAdjustedMetricSum(current, period.key, ["자산"]);
+        const previousAssets = previous ? getAdjustedMetricSum(current, previous.key, ["자산"]) : null;
+        const averageAssets = previous ? averageTwo(currentAssets, previousAssets) : null;
+        const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        return createCalculationDetail("매출액 / 평균총자산", result, [
+          { label: "매출액", value: sales },
+          { label: "당기 자산", value: currentAssets },
+          { label: "전기 자산", value: previousAssets },
+          { label: "평균총자산", value: averageAssets }
+        ], !previous ? "직전 분기가 없어 평균총자산을 계산하지 않았습니다." : averageAssets === 0 ? "평균총자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
     },
     {
@@ -663,6 +1007,19 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           ? averageTwo(getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]), getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
+      },
+      ratioDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]);
+        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]) : null;
+        const averageReceivables = previous ? averageTwo(currentReceivables, previousReceivables) : null;
+        const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        return createCalculationDetail("매출액 / 평균매출채권", result, [
+          { label: "매출액", value: sales },
+          { label: "당기 매출채권", value: currentReceivables },
+          { label: "전기 매출채권", value: previousReceivables },
+          { label: "평균매출채권", value: averageReceivables }
+        ], !previous ? "직전 분기가 없어 평균매출채권을 계산하지 않았습니다." : averageReceivables === 0 ? "평균매출채권이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
     },
     {
@@ -674,6 +1031,21 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           : null;
         const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
         return turnover ? 365 / turnover : null;
+      },
+      amountDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]);
+        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]) : null;
+        const averageReceivables = previous ? averageTwo(currentReceivables, previousReceivables) : null;
+        const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        const turnover = safeDivide(sales, averageReceivables, 1);
+        return createCalculationDetail("365 / 매출채권회전율", result, [
+          { label: "매출액", value: sales },
+          { label: "당기 매출채권", value: currentReceivables },
+          { label: "전기 매출채권", value: previousReceivables },
+          { label: "평균매출채권", value: averageReceivables },
+          { label: "매출채권회전율", value: turnover }
+        ], !previous ? "직전 분기가 없어 회전기간을 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);
       }
     },
     {
@@ -684,6 +1056,19 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
+      },
+      ratioDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentInventory = getAdjustedMetricSum(current, period.key, ["재고자산"]);
+        const previousInventory = previous ? getAdjustedMetricSum(current, previous.key, ["재고자산"]) : null;
+        const averageInventory = previous ? averageTwo(currentInventory, previousInventory) : null;
+        const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
+        return createCalculationDetail("매출원가 / 평균재고자산", result, [
+          { label: "매출원가", value: costOfSales },
+          { label: "당기 재고자산", value: currentInventory },
+          { label: "전기 재고자산", value: previousInventory },
+          { label: "평균재고자산", value: averageInventory }
+        ], !previous ? "직전 분기가 없어 평균재고자산을 계산하지 않았습니다." : averageInventory === 0 ? "평균재고자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
     },
     {
@@ -695,6 +1080,21 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           : null;
         const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
         return turnover ? 365 / turnover : null;
+      },
+      amountDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentInventory = getAdjustedMetricSum(current, period.key, ["재고자산"]);
+        const previousInventory = previous ? getAdjustedMetricSum(current, previous.key, ["재고자산"]) : null;
+        const averageInventory = previous ? averageTwo(currentInventory, previousInventory) : null;
+        const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
+        const turnover = safeDivide(costOfSales, averageInventory, 1);
+        return createCalculationDetail("365 / 재고자산회전율", result, [
+          { label: "매출원가", value: costOfSales },
+          { label: "당기 재고자산", value: currentInventory },
+          { label: "전기 재고자산", value: previousInventory },
+          { label: "평균재고자산", value: averageInventory },
+          { label: "재고자산회전율", value: turnover }
+        ], !previous ? "직전 분기가 없어 회전기간을 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);
       }
     },
     {
@@ -712,6 +1112,25 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const receivableDays = receivableTurnover ? 365 / receivableTurnover : null;
         const inventoryDays = inventoryTurnover ? 365 / inventoryTurnover : null;
         return receivableDays !== null && inventoryDays !== null ? receivableDays + inventoryDays : null;
+      },
+      amountDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]);
+        const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권", "매출채권_양수"], ["매출채권_음수"]) : null;
+        const averageReceivables = previous ? averageTwo(currentReceivables, previousReceivables) : null;
+        const currentInventory = getAdjustedMetricSum(current, period.key, ["재고자산"]);
+        const previousInventory = previous ? getAdjustedMetricSum(current, previous.key, ["재고자산"]) : null;
+        const averageInventory = previous ? averageTwo(currentInventory, previousInventory) : null;
+        const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
+        const receivableTurnover = safeDivide(sales, averageReceivables, 1);
+        const inventoryTurnover = safeDivide(costOfSales, averageInventory, 1);
+        const receivableDays = receivableTurnover ? 365 / receivableTurnover : null;
+        const inventoryDays = inventoryTurnover ? 365 / inventoryTurnover : null;
+        return createCalculationDetail("매출채권회전기간 + 재고자산회전기간", result, [
+          { label: "매출채권회전기간", value: receivableDays },
+          { label: "재고자산회전기간", value: inventoryDays }
+        ], !previous ? "직전 분기가 없어 영업순환주기를 계산하지 않았습니다." : undefined);
       }
     }
   ];
@@ -729,6 +1148,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return currentSales !== null && previousSales !== null && previousSales !== 0
           ? ((currentSales - previousSales) / previousSales) * 100
           : null;
+      },
+      ratioDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentSales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        const previousSales = previous ? getAdjustedMetricSum(current, previous.key, ["매출액"]) : null;
+        return createCalculationDetail("(당기 매출액 - 전기 매출액) / 전기 매출액 * 100", result, [
+          { label: "당기 매출액", value: currentSales },
+          { label: "전기 매출액", value: previousSales }
+        ], !previous ? "직전 분기가 없어 증가율을 계산하지 않았습니다." : previousSales === 0 ? "전기 매출액이 0이라 증가율을 계산하지 않았습니다." : undefined);
       }
     },
     {
@@ -743,6 +1171,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return currentOperating !== null && previousOperating !== null && previousOperating !== 0
           ? ((currentOperating - previousOperating) / previousOperating) * 100
           : null;
+      },
+      ratioDetail: (period, current, result) => {
+        const previous = getPreviousPeriod(current, period);
+        const currentOperating = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
+        const previousOperating = previous ? getAdjustedMetricSum(current, previous.key, ["영업이익", "영업이익(손실)"]) : null;
+        return createCalculationDetail("(당기 영업이익 - 전기 영업이익) / 전기 영업이익 * 100", result, [
+          { label: "당기 영업이익", value: currentOperating },
+          { label: "전기 영업이익", value: previousOperating }
+        ], !previous ? "직전 분기가 없어 증가율을 계산하지 않았습니다." : previousOperating === 0 ? "전기 영업이익이 0이라 증가율을 계산하지 않았습니다." : undefined);
       }
     }
   ];
