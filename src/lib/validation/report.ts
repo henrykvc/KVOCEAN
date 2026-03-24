@@ -421,12 +421,46 @@ function sumValues(rows: StatementMatrixRow[], periodKey: string, candidates: st
   return values.reduce((total, value) => total + value, 0);
 }
 
+function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
+  const canonicalCandidates = candidates.flatMap((candidate) => {
+    const base = [candidate];
+    const aliases = classificationGroups[candidate] ?? [];
+    return [...base, ...aliases].map(normalizeText);
+  });
+  const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
+  const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
+  const values = rows
+    .filter((row) => {
+      const rowKey = normalizeText(row.canonicalKey || row.accountName);
+      const byName = canonicalCandidates.includes(rowKey);
+      const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
+      return byName && bySection;
+    })
+    .sort((a, b) => {
+      const aPreferred = preferredSections.includes(a.sectionKey) ? 1 : 0;
+      const bPreferred = preferredSections.includes(b.sectionKey) ? 1 : 0;
+      return bPreferred - aPreferred;
+    })
+    .map((row) => row.values[periodKey])
+    .filter((value): value is number => value !== null && value !== undefined);
+
+  if (!values.length) {
+    return null;
+  }
+
+  return values.reduce((total, value) => total + value, 0);
+}
+
 function getMetricValue(context: MetricContext, periodKey: string, names: string[]) {
   return firstAvailableValue(context.adjustedRows, periodKey, names, undefined, context.classificationGroups);
 }
 
 function getMetricSum(context: MetricContext, periodKey: string, names: string[]) {
   return sumValues(context.adjustedRows, periodKey, names, undefined, context.classificationGroups);
+}
+
+function getClassifiedMetricSum(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
+  return sumClassifiedValues(context.adjustedRows, periodKey, names, sectionName, context.classificationGroups);
 }
 
 function getRawMetricValue(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
@@ -1010,12 +1044,12 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       label: "공헌이익률",
       ratio: (period, current) => {
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
-        const variableCosts = getMetricSum(current, period.key, VARIABLE_COST_ALIASES);
+        const variableCosts = getClassifiedMetricSum(current, period.key, VARIABLE_COST_ALIASES);
         return safeDivide(sales !== null ? sales - (variableCosts ?? 0) : null, sales, 100);
       },
       ratioDetail: (period, current, result) => {
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
-        const variableCosts = getMetricSum(current, period.key, VARIABLE_COST_ALIASES);
+        const variableCosts = getClassifiedMetricSum(current, period.key, VARIABLE_COST_ALIASES);
         const contribution = sales !== null ? sales - (variableCosts ?? 0) : null;
         return createCalculationDetail("(매출액 - 변동비) / 매출액 * 100", result, [
           { label: "매출액", value: sales },
