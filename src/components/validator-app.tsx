@@ -484,24 +484,13 @@ export function ValidatorApp() {
     () => Array.from(new Set(savedDatasets.map((item) => item.companyName))),
     [savedDatasets]
   );
-  const rebuiltResultSnapshots = useMemo(
-    () => savedDatasets
-      .filter((item) => item.companyName === selectedResultCompany)
-      .flatMap((item) => buildQuarterSnapshots({
-        pastedText: item.source.pastedText,
-        selectedCompany: item.companyName,
-        tolerance,
-        logicConfig,
-        companyConfigs,
-        classificationGroups,
-        pasteEdits: item.source.pasteEdits,
-        sessionSignFixes: item.source.sessionSignFixes
-      })),
-    [savedDatasets, selectedResultCompany, tolerance, logicConfig, companyConfigs, classificationGroups]
+  const resultSnapshots = useMemo(
+    () => savedDatasets.filter((item) => item.companyName === selectedResultCompany),
+    [savedDatasets, selectedResultCompany]
   );
   const resultReporting = useMemo(
-    () => buildCompanyReport(rebuiltResultSnapshots),
-    [rebuiltResultSnapshots]
+    () => buildCompanyReport(resultSnapshots),
+    [resultSnapshots]
   );
 
   function resetAdjustments() {

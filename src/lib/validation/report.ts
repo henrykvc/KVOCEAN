@@ -155,6 +155,10 @@ function normalizeSectionKey(section: string) {
   return normalized || "기타";
 }
 
+function buildRowIdentityKey(sectionKey: string, canonicalKey: string, accountName: string) {
+  return `${normalizeText(sectionKey)}__${normalizeText(canonicalKey)}__${normalizeText(accountName)}`;
+}
+
 function resolveCanonicalAccountKey(accountName: string, sectionKey: string, classificationGroups: ClassificationGroups) {
   const normalizedName = normalizeText(accountName);
 
@@ -441,6 +445,15 @@ function getAdjustedExactAccountValue(context: MetricContext, periodKey: string,
   return firstExactAccountValue(context.adjustedRows, periodKey, accountNames, sectionName);
 }
 
+function getAdjustedExactMetricValue(context: MetricContext, periodKey: string, exactNames: string[], fallbackNames: string[], sectionName?: string) {
+  const exact = getAdjustedExactAccountValue(context, periodKey, exactNames, sectionName);
+  if (exact !== null) {
+    return exact;
+  }
+
+  return getPreferredAdjustedMetric(context, periodKey, fallbackNames, sectionName);
+}
+
 function getAdjustedMetricSum(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
   return sumValues(context.adjustedRows, periodKey, names, sectionName, context.classificationGroups);
 }
@@ -454,12 +467,23 @@ function getPreferredAdjustedMetric(context: MetricContext, periodKey: string, n
 }
 
 function getPreferredTotalEquity(context: MetricContext, periodKey: string) {
-  const exactTotal = getAdjustedExactAccountValue(context, periodKey, ["자본총계", "총자본"], "재무상태표");
-  if (exactTotal !== null) {
-    return exactTotal;
-  }
+  return getAdjustedExactMetricValue(context, periodKey, ["자본총계", "총자본"], ["자본"], "재무상태표");
+}
 
-  return getPreferredAdjustedMetric(context, periodKey, ["자본"], "재무상태표");
+function getPreferredTotalAssets(context: MetricContext, periodKey: string) {
+  return getAdjustedExactMetricValue(context, periodKey, ["자산총계", "총자산", "자산"], ["자산"], "재무상태표");
+}
+
+function getPreferredTotalLiabilities(context: MetricContext, periodKey: string) {
+  return getAdjustedExactMetricValue(context, periodKey, ["부채총계", "총부채", "부채"], ["부채"], "재무상태표");
+}
+
+function getPreferredCurrentAssets(context: MetricContext, periodKey: string) {
+  return getAdjustedExactMetricValue(context, periodKey, ["유동자산"], ["유동자산"], "재무상태표");
+}
+
+function getPreferredCurrentLiabilities(context: MetricContext, periodKey: string) {
+  return getAdjustedExactMetricValue(context, periodKey, ["유동부채"], ["유동부채"], "재무상태표");
 }
 
 function safeDivide(numerator: number | null, denominator: number | null, multiplier = 1) {
@@ -700,10 +724,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         result,
         [{ label: "현금및현금성자산", value: getRawMetricSum(current, period.key, ["현금및현금성자산"]) }]
       ),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["현금및현금성자산"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["현금및현금성자산"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const cash = getRawMetricSum(current, period.key, ["현금및현금성자산"]);
-        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("현금및현금성자산 / 자산 * 100", result, [
           { label: "현금및현금성자산", value: cash },
           { label: "자산", value: assets }
@@ -718,10 +742,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         result,
         [{ label: "매도가능증권", value: getRawMetricSum(current, period.key, ["매도가능증권"]) }]
       ),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["매도가능증권"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["매도가능증권"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const availableForSale = getRawMetricSum(current, period.key, ["매도가능증권"]);
-        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("매도가능증권 / 자산 * 100", result, [
           { label: "매도가능증권", value: availableForSale },
           { label: "자산", value: assets }
@@ -739,10 +763,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           { label: "단기대여금 음수 조정", value: negative }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const loans = getNetMetricValue(current, period.key, ["단기대여금_양수", "단기대여금"], ["단기대여금_음수"]);
-        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("단기대여금 / 자산 * 100", result, [
           { label: "단기대여금", value: loans },
           { label: "자산", value: assets }
@@ -760,10 +784,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           { label: "개발비 음수 조정", value: negative }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const developmentAsset = getNetMetricValue(current, period.key, ["개발비_양수", "개발비(자산)", "개발비"], ["개발비_음수"]);
-        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("개발비(자산) / 자산 * 100", result, [
           { label: "개발비(자산)", value: developmentAsset },
           { label: "자산", value: assets }
@@ -781,10 +805,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           { label: "선급금 음수 조정", value: negative }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const prepaid = getNetMetricValue(current, period.key, ["선급금_양수", "선급금"], ["선급금_음수"]);
-        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("선급금 / 자산 * 100", result, [
           { label: "선급금", value: prepaid },
           { label: "자산", value: assets }
@@ -799,10 +823,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         result,
         [{ label: "가수금", value: getRawMetricSum(current, period.key, ["가수금"]) }]
       ),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가수금"]), getAdjustedMetricValue(current, period.key, ["부채"]), 100),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가수금"]), getPreferredTotalLiabilities(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const suspense = getRawMetricSum(current, period.key, ["가수금"]);
-        const liabilities = getAdjustedMetricValue(current, period.key, ["부채"]);
+        const liabilities = getPreferredTotalLiabilities(current, period.key);
         return createCalculationDetail("가수금 / 부채 * 100", result, [
           { label: "가수금", value: suspense },
           { label: "부채", value: liabilities }
@@ -817,10 +841,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         result,
         [{ label: "가지급금", value: getRawMetricSum(current, period.key, ["가지급금"]) }]
       ),
-      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가지급금"]), getAdjustedMetricValue(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getRawMetricSum(current, period.key, ["가지급금"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const advances = getRawMetricSum(current, period.key, ["가지급금"]);
-        const assets = getAdjustedMetricValue(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("가지급금 / 자산 * 100", result, [
           { label: "가지급금", value: advances },
           { label: "자산", value: assets }
@@ -849,13 +873,13 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
         const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
         const value = (positive ?? 0) + (negative ?? 0);
-        return safeDivide(value, getAdjustedMetricValue(current, period.key, ["부채"]), 100);
+        return safeDivide(value, getPreferredTotalLiabilities(current, period.key), 100);
       },
       ratioDetail: (period, current, result) => {
         const positive = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_양수", "퇴직급여충당부채"]);
         const negative = getAdjustedMetricSum(current, period.key, ["퇴직급여충당부채_음수"]);
         const value = (positive ?? 0) + (negative ?? 0);
-        const liabilities = getAdjustedMetricValue(current, period.key, ["부채"]);
+        const liabilities = getPreferredTotalLiabilities(current, period.key);
         return createCalculationDetail("퇴직급여충당부채 / 부채 * 100", result, [
           { label: "퇴직급여충당부채", value },
           { label: "부채", value: liabilities }
@@ -867,10 +891,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const stabilitySpecs: MetricSpec[] = [
     {
       label: "유동비율",
-      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["유동자산"]), getPreferredAdjustedMetric(current, period.key, ["유동부채"]), 100),
+      ratio: (period, current) => safeDivide(getPreferredCurrentAssets(current, period.key), getPreferredCurrentLiabilities(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const currentAssets = getPreferredAdjustedMetric(current, period.key, ["유동자산"]);
-        const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
+        const currentAssets = getPreferredCurrentAssets(current, period.key);
+        const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
         return createCalculationDetail("유동자산 / 유동부채 * 100", result, [
           { label: "유동자산", value: currentAssets },
           { label: "유동부채", value: currentLiabilities }
@@ -882,13 +906,13 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
         const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
-        const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
+        const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
         return safeDivide(quickAssets, currentLiabilities, 100);
       },
       ratioDetail: (period, current, result) => {
         const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
         const quickAssets = sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
-        const currentLiabilities = getPreferredAdjustedMetric(current, period.key, ["유동부채"]);
+        const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
         return createCalculationDetail("당좌자산 / 유동부채 * 100", result, [
           { label: "당좌자산", value: quickAssets },
           { label: "유동부채", value: currentLiabilities }
@@ -897,9 +921,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "부채비율",
-      ratio: (period, current) => safeDivide(getPreferredAdjustedMetric(current, period.key, ["부채"]), getPreferredTotalEquity(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getPreferredTotalLiabilities(current, period.key), getPreferredTotalEquity(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const liabilities = getPreferredAdjustedMetric(current, period.key, ["부채"]);
+        const liabilities = getPreferredTotalLiabilities(current, period.key);
         const equity = getPreferredTotalEquity(current, period.key);
         return createCalculationDetail("부채 / 자본 * 100", result, [
           { label: "부채", value: liabilities },
@@ -909,10 +933,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "차입금 의존도",
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const borrowings = getNetMetricValue(current, period.key, ["차입금_양수", ...BORROWING_ALIASES], ["차입금_음수"]);
-        const assets = getPreferredAdjustedMetric(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("순차입금 / 자산 * 100", result, [
           { label: "순차입금", value: borrowings },
           { label: "자산", value: assets }
@@ -948,10 +972,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "총자산이익률(ROA)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자산"]), 100),
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
-        const assets = getPreferredAdjustedMetric(current, period.key, ["자산"]);
+        const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("계속사업당기순이익 / 자산 * 100", result, [
           { label: "계속사업당기순이익", value: netIncome },
           { label: "자산", value: assets }
@@ -960,10 +984,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "자기자본이익률(ROE)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["자본"]), 100),
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredTotalEquity(current, period.key), 100),
       ratioDetail: (period, current, result) => {
         const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
-        const equity = getPreferredAdjustedMetric(current, period.key, ["자본"]);
+        const equity = getPreferredTotalEquity(current, period.key);
         return createCalculationDetail("계속사업당기순이익 / 자본 * 100", result, [
           { label: "계속사업당기순이익", value: netIncome },
           { label: "자본", value: equity }
@@ -1008,14 +1032,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageAssets = previous
-          ? averageTwo(getAdjustedMetricSum(current, period.key, ["자산"]), getAdjustedMetricSum(current, previous.key, ["자산"]))
+          ? averageTwo(getPreferredTotalAssets(current, period.key), getPreferredTotalAssets(current, previous.key))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageAssets, 1);
       },
       ratioDetail: (period, current, result) => {
         const previous = getPreviousPeriod(current, period);
-        const currentAssets = getAdjustedMetricSum(current, period.key, ["자산"]);
-        const previousAssets = previous ? getAdjustedMetricSum(current, previous.key, ["자산"]) : null;
+        const currentAssets = getPreferredTotalAssets(current, period.key);
+        const previousAssets = previous ? getPreferredTotalAssets(current, previous.key) : null;
         const averageAssets = previous ? averageTwo(currentAssets, previousAssets) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         return createCalculationDetail("매출액 / 평균총자산", result, [
@@ -1347,7 +1371,7 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[]) {
     const rowMap = new Map<string, StatementMatrixRow>();
     snapshots.forEach((snapshot) => {
       snapshot[kind].forEach((row) => {
-        const key = `${row.sectionKey}__${row.canonicalKey}`;
+        const key = buildRowIdentityKey(row.sectionKey, row.canonicalKey, row.accountName);
         if (!rowMap.has(key)) {
           rowMap.set(key, {
             signFlag: row.signFlag,
