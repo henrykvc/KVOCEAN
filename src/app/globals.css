@@ -294,6 +294,10 @@ a {
   color: white;
 }
 
+.button.is-saved {
+  background: linear-gradient(135deg, #03b26c, #0f9f61);
+}
+
 .secondary-button {
   background: var(--blue-soft);
   color: var(--blue);
@@ -368,6 +372,16 @@ a {
 
 .notice {
   padding: 16px 18px;
+}
+
+.save-feedback {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.save-feedback.success {
+  color: var(--green);
 }
 
 .metric-grid {

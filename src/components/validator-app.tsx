@@ -189,6 +189,47 @@ function rowsToClassificationGroups(rows: ClassificationRow[]) {
   }, {});
 }
 
+function sortSavedDatasets(items: SavedQuarterSnapshot[]) {
+  return [...items].sort((a, b) => (a.companyName === b.companyName
+    ? b.quarterLabel.localeCompare(a.quarterLabel)
+    : a.companyName.localeCompare(b.companyName, "ko")));
+}
+
+function buildDatasetSourceKey(dataset: SavedQuarterSnapshot) {
+  return JSON.stringify({
+    companyName: dataset.companyName,
+    pastedText: dataset.source.pastedText,
+    tolerance: dataset.source.tolerance,
+    pasteEdits: dataset.source.pasteEdits,
+    sessionSignFixes: dataset.source.sessionSignFixes,
+    logicConfig: dataset.source.logicConfig,
+    companyConfigs: dataset.source.companyConfigs
+  });
+}
+
+function rebuildDatasetsWithClassification(datasets: SavedQuarterSnapshot[], groups: ClassificationGroups) {
+  const uniqueSources = new Map<string, SavedQuarterSnapshot>();
+  datasets.forEach((dataset) => {
+    const key = buildDatasetSourceKey(dataset);
+    if (!uniqueSources.has(key)) {
+      uniqueSources.set(key, dataset);
+    }
+  });
+
+  const rebuilt = Array.from(uniqueSources.values()).flatMap((dataset) => buildQuarterSnapshots({
+    pastedText: dataset.source.pastedText,
+    selectedCompany: dataset.companyName,
+    tolerance: dataset.source.tolerance,
+    logicConfig: cloneLogicConfig(dataset.source.logicConfig),
+    companyConfigs: cloneCompanyConfigs(dataset.source.companyConfigs),
+    classificationGroups: cloneClassificationGroups(groups),
+    pasteEdits: { ...dataset.source.pasteEdits },
+    sessionSignFixes: cloneSessionSignFixes(dataset.source.sessionSignFixes)
+  }));
+
+  return sortSavedDatasets(rebuilt);
+}
+
 function signLabel(sign: SignCode) {
   return sign === 0 ? "가산(+)" : sign === 1 ? "차감(−)" : "제외";
 }
@@ -380,6 +421,7 @@ export function ValidatorApp() {
   const [selectedResultCompany, setSelectedResultCompany] = useState<string>("");
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
+  const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
 
   useEffect(() => {
     setMounted(true);
@@ -524,7 +566,7 @@ export function ValidatorApp() {
           next.push(snapshot);
         }
       });
-      return next.sort((a, b) => (a.companyName === b.companyName ? b.quarterLabel.localeCompare(a.quarterLabel) : a.companyName.localeCompare(b.companyName, "ko")));
+      return sortSavedDatasets(next);
     });
     setSelectedDatasetId(snapshots[0]?.id ?? "");
     setSelectedResultCompany(snapshots[0]?.companyName ?? "");
@@ -604,6 +646,18 @@ export function ValidatorApp() {
     applySessionFix(sect, acct, nextSign);
   }
 
+  function applyClassificationGroups(nextGroups: ClassificationGroups, showFeedback = false) {
+    const clonedGroups = cloneClassificationGroups(nextGroups);
+    setClassificationGroups(clonedGroups);
+    setClassificationRows(classificationGroupsToRows(clonedGroups));
+    setSavedDatasets((prev) => (prev.length ? rebuildDatasetsWithClassification(prev, clonedGroups) : prev));
+
+    if (showFeedback) {
+      setClassificationSaveState("saved");
+      window.setTimeout(() => setClassificationSaveState("idle"), 1800);
+    }
+  }
+
   function toggleResultCard(cardKey: string, defaultOpen: boolean) {
     setResultOpenState((prev) => ({
       ...prev,
@@ -680,7 +734,7 @@ export function ValidatorApp() {
       }));
     }
 
-    setClassificationGroups(rowsToClassificationGroups(classificationRows));
+    applyClassificationGroups(rowsToClassificationGroups(classificationRows));
   }
 
   const configPayload = JSON.stringify({ logicConfig, companyConfigs, classificationGroups }, null, 2);
@@ -1415,10 +1469,15 @@ export function ValidatorApp() {
                     <span className="section-kicker">분류 기준</span>
                     <h3>표준 항목 분류</h3>
                     <p className="result-meta">인건비 아래에 급여, 상여, 퇴직급여 같은 하위 계정을 묶어 관리할 수 있게 정리했습니다. 여기서 추가/삭제하면 이후 결과물 계산에 반영됩니다.</p>
+                    {classificationSaveState === "saved" && (
+                      <p className="save-feedback success">분류를 저장했고, 저장된 결과물도 현재 분류 기준으로 다시 계산했습니다.</p>
+                    )}
                   </div>
                   <div className="inline-actions">
                     <button className="ghost-button" onClick={() => setClassificationRows(classificationGroupsToRows(DEFAULT_CLASSIFICATION_GROUPS))}>초안 복원</button>
-                    <button className="button" onClick={() => setClassificationGroups(rowsToClassificationGroups(classificationRows))}>분류 저장</button>
+                    <button className={`button ${classificationSaveState === "saved" ? "is-saved" : ""}`.trim()} onClick={() => applyClassificationGroups(rowsToClassificationGroups(classificationRows), true)}>
+                      {classificationSaveState === "saved" ? "분류 저장됨" : "분류 저장"}
+                    </button>
                   </div>
                 </div>
               </section>
