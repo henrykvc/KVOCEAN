@@ -121,13 +121,6 @@ const ASSET_LIABILITY_ITEMS = ["현금및현금성자산", "매도가능증권",
 const VARIABLE_COST_ALIASES = ["매출원가", "외주용역비", "외주비", "지급수수료", "광고선전비", "배송비", "운반비", "수출제비용", "인건비", "복리후생비", "접대비", "연구개발비", "여비교통비", "통신비", "세금과공과금", "도서인쇄비", "소모품비", "대손상각비", "판매촉진비", "대외협력비", "행사비", "기술이전료", "경상기술료", "전산운영비", "반품비용", "기타변동비"];
 const BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
-const QUICK_ASSET_ALIASES = [
-  "현금및현금성자산",
-  "매출채권",
-  "미수금",
-  "미수수익",
-  "매도가능증권"
-];
 const DERIVED_ACCOUNT_SUFFIXES = [
   "양수",
   "음수",
@@ -686,6 +679,40 @@ function getPreferredCurrentLiabilities(context: MetricContext, periodKey: strin
   return getAdjustedExactMetricValue(context, periodKey, ["유동부채"], ["유동부채"], "재무상태표");
 }
 
+function getPreferredQuickAssets(context: MetricContext, periodKey: string) {
+  const classifiedQuickAssets = getClassifiedMetricSum(context, periodKey, ["당좌자산"], "유동자산");
+  if (classifiedQuickAssets !== null) {
+    return classifiedQuickAssets;
+  }
+
+  const currentAssets = getPreferredCurrentAssets(context, periodKey);
+  const inventory = getAdjustedMetricSum(context, periodKey, ["재고자산"], "유동자산");
+  if (currentAssets === null) {
+    return null;
+  }
+
+  return currentAssets - (inventory ?? 0);
+}
+
+function getQuickAssetBreakdown(context: MetricContext, periodKey: string) {
+  const classifiedBreakdown = getClassifiedMetricBreakdown(context, periodKey, ["당좌자산"], "유동자산");
+  if (classifiedBreakdown.length) {
+    return classifiedBreakdown;
+  }
+
+  return [
+    {
+      label: "유동자산",
+      value: getPreferredCurrentAssets(context, periodKey),
+      components: getClassifiedMetricBreakdown(context, periodKey, ["유동자산"], "재무상태표")
+    },
+    {
+      label: "차감: 재고자산",
+      value: getAdjustedMetricSum(context, periodKey, ["재고자산"], "유동자산")
+    }
+  ];
+}
+
 function safeDivide(numerator: number | null, denominator: number | null, multiplier = 1) {
   if (numerator === null || denominator === null || denominator === 0) {
     return null;
@@ -1084,18 +1111,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     {
       label: "당좌비율",
       ratio: (period, current) => {
-        const quickAssetByGroup = getClassifiedMetricSum(current, period.key, ["당좌자산"], "유동자산");
-        const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
-        const quickAssets = quickAssetByGroup ?? sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
+        const quickAssets = getPreferredQuickAssets(current, period.key);
         const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
         return safeDivide(quickAssets, currentLiabilities, 100);
       },
       ratioDetail: (period, current, result) => {
-        const quickAssetByGroup = getClassifiedMetricSum(current, period.key, ["당좌자산"], "유동자산");
-        const currentAssetRows = current.adjustedRows.filter((row) => row.sectionKey === "유동자산");
-        const quickAssets = quickAssetByGroup ?? sumValues(currentAssetRows, period.key, QUICK_ASSET_ALIASES, undefined, current.classificationGroups);
+        const quickAssets = getPreferredQuickAssets(current, period.key);
         const currentLiabilities = getPreferredCurrentLiabilities(current, period.key);
-        const quickAssetBreakdown = getClassifiedMetricBreakdown(current, period.key, ["당좌자산"], "유동자산");
+        const quickAssetBreakdown = getQuickAssetBreakdown(current, period.key);
         const currentLiabilityBreakdown = getClassifiedMetricBreakdown(current, period.key, ["유동부채"], "재무상태표");
         return createCalculationDetail("당좌자산 / 유동부채 * 100", result, [
           { label: "당좌자산", value: quickAssets, components: quickAssetBreakdown },
