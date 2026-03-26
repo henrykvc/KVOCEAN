@@ -231,6 +231,12 @@ export function applySign(value: number | null | undefined, signCode: SignCode |
 }
 
 export function inferSignFromName(name: string, logicConfig: LogicConfig): SignCode | null {
+  if (name.includes("_양수") || name.endsWith("양수")) {
+    return 0;
+  }
+  if (name.includes("_음수") || name.endsWith("음수")) {
+    return 1;
+  }
   if (logicConfig.plusOverrideKeywords.some((keyword) => name.includes(keyword))) {
     return 0;
   }

@@ -128,6 +128,20 @@ const QUICK_ASSET_ALIASES = [
   "미수수익",
   "매도가능증권"
 ];
+const DERIVED_ACCOUNT_SUFFIXES = [
+  "양수",
+  "음수",
+  "대손충당금",
+  "현할차",
+  "할인차금",
+  "할증차금",
+  "전환권조정",
+  "신주인수권조정",
+  "손상차손누계",
+  "감가상각누계",
+  "상환할증금",
+  "누계액"
+] as const;
 
 const BALANCE_SHEET_METRICS = new Set(["자산", "유동자산", "비유동자산", "부채", "유동부채", "비유동부채", "자본"]);
 const INCOME_STATEMENT_METRICS = new Set(["매출액", "매출원가", "판매비와관리비", "영업비용", "영업외수익", "영업외비용", "영업이익", "영업이익(손실)", "계속사업당기순이익", "당기순이익", "당기순손실"]);
@@ -158,7 +172,29 @@ function buildRowIdentityKey(sectionKey: string, canonicalKey: string, accountNa
   return `${normalizeText(sectionKey)}__${normalizeText(canonicalKey)}__${normalizeText(accountName)}`;
 }
 
-function resolveCanonicalAccountKey(accountName: string, sectionKey: string, classificationGroups: ClassificationGroups) {
+function stripDerivedSuffix(accountName: string) {
+  const trimmed = accountName.trim();
+
+  for (const suffix of DERIVED_ACCOUNT_SUFFIXES) {
+    if (trimmed.endsWith(`_${suffix}`)) {
+      return {
+        baseName: trimmed.slice(0, -(suffix.length + 1)).trim(),
+        suffix
+      };
+    }
+
+    if (trimmed.endsWith(suffix) && trimmed.length > suffix.length) {
+      return {
+        baseName: trimmed.slice(0, -suffix.length).trim(),
+        suffix
+      };
+    }
+  }
+
+  return null;
+}
+
+function resolveBaseCanonicalAccountKey(accountName: string, sectionKey: string, classificationGroups: ClassificationGroups) {
   const normalizedName = normalizeText(accountName);
 
   for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
@@ -196,6 +232,32 @@ function resolveCanonicalAccountKey(accountName: string, sectionKey: string, cla
   }
 
   return normalizedName;
+}
+
+function resolveCanonicalAccountKey(accountName: string, sectionKey: string, classificationGroups: ClassificationGroups) {
+  const derived = stripDerivedSuffix(accountName);
+  if (derived?.baseName) {
+    const baseCanonicalKey = resolveBaseCanonicalAccountKey(derived.baseName, sectionKey, classificationGroups);
+    return `${baseCanonicalKey}_${derived.suffix}`;
+  }
+
+  return resolveBaseCanonicalAccountKey(accountName, sectionKey, classificationGroups);
+}
+
+function buildDerivedMetricCandidates(names: string[]) {
+  const candidates = new Set<string>();
+
+  names.forEach((name) => {
+    candidates.add(name);
+    if (DERIVED_ACCOUNT_SUFFIXES.some((suffix) => name.endsWith(`_${suffix}`) || name.endsWith(suffix))) {
+      return;
+    }
+    DERIVED_ACCOUNT_SUFFIXES.forEach((suffix) => {
+      candidates.add(`${name}_${suffix}`);
+    });
+  });
+
+  return Array.from(candidates);
 }
 
 function dateLabelFromValue(value: string | number | Date | null | undefined) {
@@ -656,7 +718,7 @@ function getPreviousPeriod(context: MetricContext, period: ReportPeriod) {
 }
 
 function getNetMetricValue(context: MetricContext, periodKey: string, names: string[]) {
-  return getAdjustedMetricSum(context, periodKey, names);
+  return getAdjustedMetricSum(context, periodKey, buildDerivedMetricCandidates(names));
 }
 
 function buildMetricRows(context: MetricContext, specs: MetricSpec[]) {
