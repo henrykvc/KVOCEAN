@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
 import {
   DEFAULT_CLASSIFICATION_GROUPS,
   DEFAULT_COMPANY_CONFIGS,
@@ -269,26 +268,6 @@ function buildStatementSheetRows(rows: StatementMatrixRow[], periods: ReportingM
   }));
 }
 
-function buildFinalSheetRows(reporting: ReportingModel) {
-  const rows: Array<Record<string, string | number | null>> = [];
-  for (const section of reporting.finalSections) {
-    rows.push({ 구분: section.title, 항목: null });
-    for (const metric of section.rows) {
-      rows.push({
-        구분: section.title,
-        항목: metric.label,
-        ...Object.fromEntries(reporting.periods.flatMap((period) => ([
-          [`${period.label} 금액`, metric.amounts[period.key]],
-          [`${period.label} 비율`, metric.ratios[period.key]],
-          [`${period.label} 증감율`, metric.growthRates[period.key]]
-        ])))
-      });
-    }
-    rows.push({ 구분: null, 항목: null });
-  }
-  return rows;
-}
-
 function buildFormulaGuideRows() {
   return [
     { 항목: "런웨이(E)", 계산식: "현금및현금성자산 * 경과월수 / (매출원가 + 판관비 - 감가/상각비)" },
@@ -412,6 +391,7 @@ export function ValidatorApp() {
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
   const [classificationRows, setClassificationRows] = useState<ClassificationRow[]>(classificationGroupsToRows(DEFAULT_CLASSIFICATION_GROUPS));
+  const [classificationHistory, setClassificationHistory] = useState<ClassificationRow[][]>([]);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
@@ -740,11 +720,30 @@ export function ValidatorApp() {
     const clonedGroups = cloneClassificationGroups(nextGroups);
     setClassificationGroups(clonedGroups);
     setClassificationRows(classificationGroupsToRows(clonedGroups));
+    setClassificationHistory([]);
 
     if (showFeedback) {
       setClassificationSaveState("saved");
       window.setTimeout(() => setClassificationSaveState("idle"), 1800);
     }
+  }
+
+  function updateClassificationRows(updater: (prev: ClassificationRow[]) => ClassificationRow[]) {
+    setClassificationRows((prev) => {
+      setClassificationHistory((history) => [...history, prev]);
+      return updater(prev);
+    });
+  }
+
+  function undoClassificationEdit() {
+    setClassificationHistory((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last) {
+        return prev;
+      }
+      setClassificationRows(last);
+      return prev.slice(0, -1);
+    });
   }
 
   function toggleResultCard(cardKey: string, defaultOpen: boolean) {
@@ -776,16 +775,6 @@ export function ValidatorApp() {
       pasteEdits
     );
     navigator.clipboard.writeText(text).catch(() => undefined);
-  }
-
-  function exportFinalWorkbook() {
-    if (!resultReporting.rawStatementRows.length) {
-      return;
-    }
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(buildFinalSheetRows(resultReporting)), "최종결과물");
-    XLSX.writeFile(workbook, "ocr-validation-final-report.xlsx");
   }
 
   function toggleReportMetric(metricKey: string) {
@@ -931,7 +920,6 @@ export function ValidatorApp() {
             </div>
             <span className="soft-badge">6개 단계</span>
           </div>
-          <p>누르면 아래 영역에서 기존처럼 `OCR검증`, `검증규칙관리`, `데이터`, `결과물`, `분류`, `수식` 메뉴를 볼 수 있습니다.</p>
         </button>
         <button
           className={`summary-card summary-switch-card ${topView === "final-output" ? "active" : ""}`}
@@ -944,7 +932,6 @@ export function ValidatorApp() {
             </div>
             <span className="soft-badge">항목 + 4개 결과물</span>
           </div>
-          <p>누르면 아래 영역이 5열 비교표로 바뀌고, 각 결과물 열에서 기업명과 분기를 골라 데이터를 채울 수 있습니다.</p>
         </button>
       </section>
 
@@ -1384,7 +1371,6 @@ export function ValidatorApp() {
                         <p className="result-meta">엑셀의 `재무제표 → 재무제표_음양반영 → 최종결과물` 흐름을 현재 입력 데이터 기준으로 바로 보여줍니다.</p>
                       </div>
                       <div className="result-actions">
-                        <button className="button" disabled={!resultReporting?.periods.length} onClick={exportFinalWorkbook}>결과물 Excel 다운로드</button>
                         {companyDatasetOptions.length > 1 && (
                           <select className="select report-company-select" value={selectedResultCompany} onChange={(event) => setSelectedResultCompany(event.target.value)}>
                             {companyDatasetOptions.map((company) => <option key={company} value={company}>{company}</option>)}
@@ -1394,12 +1380,6 @@ export function ValidatorApp() {
                           <span className="soft-badge" key={period.key}>{period.label}</span>
                         ))}
                       </div>
-                    </div>
-                    <div className="metric-grid compact-metrics">
-                      <article className="metric-card"><span className="muted">기간 수</span><strong>{resultReporting.periods.length}</strong></article>
-                      <article className="metric-card"><span className="muted">원본 계정</span><strong>{resultReporting.rawStatementRows.length}</strong></article>
-                      <article className="metric-card"><span className="muted">지표 섹션</span><strong>{resultReporting.finalSections.length}</strong></article>
-                      <article className="metric-card"><span className="muted">저장 데이터</span><strong>{selectedDataset?.companyName ?? "-"}</strong></article>
                     </div>
                   </section>
 
@@ -1616,7 +1596,7 @@ export function ValidatorApp() {
                     )}
                   </div>
                   <div className="inline-actions">
-                    <button className="ghost-button" onClick={() => setClassificationRows(classificationGroupsToRows(DEFAULT_CLASSIFICATION_GROUPS))}>초안 복원</button>
+                    <button className="ghost-button" disabled={!classificationHistory.length} onClick={undoClassificationEdit}>되돌리기</button>
                     <button className={`button ${classificationSaveState === "saved" ? "is-saved" : ""}`.trim()} onClick={() => applyClassificationGroups(rowsToClassificationGroups(classificationRows), true)}>
                       {classificationSaveState === "saved" ? "분류 저장됨" : "분류 저장"}
                     </button>
@@ -1628,30 +1608,30 @@ export function ValidatorApp() {
                 {classificationRows.map((row, index) => (
                   <article className="config-card classification-card" key={`classification-${index}`}>
                     <div className="section-title">
-                      <input
-                        className="input"
-                        value={row.canonicalKey}
-                        placeholder="표준 항목명"
-                        onChange={(event) => setClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))}
-                      />
-                      <button className="danger-button" onClick={() => setClassificationRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
-                    </div>
-                    <label className="field">
-                      <span>하위 계정 목록</span>
-                      <textarea
-                        className="textarea classification-textarea"
-                        value={row.aliases}
-                        placeholder="급여&#10;상여금&#10;퇴직급여"
-                        onChange={(event) => setClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: event.target.value } : item))}
-                      />
-                    </label>
-                  </article>
-                ))}
-              </section>
+                        <input
+                          className="input"
+                          value={row.canonicalKey}
+                          placeholder="표준 항목명"
+                          onChange={(event) => updateClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))}
+                        />
+                       <button className="danger-button" onClick={() => updateClassificationRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                     </div>
+                     <label className="field">
+                       <span>하위 계정 목록</span>
+                       <textarea
+                         className="textarea classification-textarea"
+                         value={row.aliases}
+                         placeholder="급여&#10;상여금&#10;퇴직급여"
+                         onChange={(event) => updateClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: event.target.value } : item))}
+                       />
+                     </label>
+                   </article>
+                 ))}
+               </section>
 
-              <div className="inline-actions">
-                <button className="ghost-button" onClick={() => setClassificationRows((prev) => [...prev, { canonicalKey: "", aliases: "" }])}>분류 항목 추가</button>
-              </div>
+               <div className="inline-actions">
+                 <button className="ghost-button" onClick={() => updateClassificationRows((prev) => [...prev, { canonicalKey: "", aliases: "" }])}>분류 항목 추가</button>
+                </div>
             </>
           )}
 
