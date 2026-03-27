@@ -194,6 +194,18 @@ function stripDerivedSuffix(accountName: string) {
 function resolveBaseCanonicalAccountKey(accountName: string, sectionKey: string, classificationGroups: ClassificationGroups) {
   const normalizedName = normalizeText(accountName);
 
+  for (const canonicalKey of Object.keys(classificationGroups)) {
+    if (normalizedName === normalizeText(canonicalKey)) {
+      return canonicalKey;
+    }
+  }
+
+  for (const canonicalKey of Object.keys(ACCOUNT_ALIASES)) {
+    if (normalizedName === normalizeText(canonicalKey)) {
+      return canonicalKey;
+    }
+  }
+
   for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
     if (aliases.some((alias) => normalizedName === normalizeText(alias))) {
       return canonicalKey;
