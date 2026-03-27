@@ -802,7 +802,7 @@ function getPreferredQuickAssets(context: MetricContext, periodKey: string) {
   }
 
   const currentAssets = getPreferredCurrentAssets(context, periodKey);
-  const inventory = getAdjustedMetricSum(context, periodKey, ["재고자산"], "유동자산");
+  const inventory = getNetMetricValue(context, periodKey, ["재고자산"]);
   if (currentAssets === null) {
     return null;
   }
@@ -851,7 +851,8 @@ function getQuickAssetBreakdown(context: MetricContext, periodKey: string) {
     },
     {
       label: "차감: 재고자산",
-      value: getAdjustedMetricSum(context, periodKey, ["재고자산"], "유동자산")
+      value: getNetMetricValue(context, periodKey, ["재고자산"]),
+      components: getNetMetricBreakdown(context, periodKey, ["재고자산"])
     }
   ];
 }
@@ -1479,14 +1480,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageInventory = previous
-          ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["재고자산"]), getNetMetricValue(current, previous.key, ["재고자산"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
       },
       ratioDetail: (period, current, result) => {
         const previous = getPreviousPeriod(current, period);
-        const currentInventory = getAdjustedMetricSum(current, period.key, ["재고자산"]);
-        const previousInventory = previous ? getAdjustedMetricSum(current, previous.key, ["재고자산"]) : null;
+        const currentInventory = getNetMetricValue(current, period.key, ["재고자산"]);
+        const previousInventory = previous ? getNetMetricValue(current, previous.key, ["재고자산"]) : null;
         const averageInventory = previous ? averageTwo(currentInventory, previousInventory) : null;
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
         return createCalculationDetail("매출원가 / 평균재고자산", result, [
@@ -1502,15 +1503,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         const averageInventory = previous
-          ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["재고자산"]), getNetMetricValue(current, previous.key, ["재고자산"]))
           : null;
         const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
         return turnover ? 365 / turnover : null;
       },
       amountDetail: (period, current, result) => {
         const previous = getPreviousPeriod(current, period);
-        const currentInventory = getAdjustedMetricSum(current, period.key, ["재고자산"]);
-        const previousInventory = previous ? getAdjustedMetricSum(current, previous.key, ["재고자산"]) : null;
+        const currentInventory = getNetMetricValue(current, period.key, ["재고자산"]);
+        const previousInventory = previous ? getNetMetricValue(current, previous.key, ["재고자산"]) : null;
         const averageInventory = previous ? averageTwo(currentInventory, previousInventory) : null;
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
         const turnover = safeDivide(costOfSales, averageInventory, 1);
@@ -1531,7 +1532,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
           ? averageTwo(getNetMetricValue(current, period.key, ["매출채권"]), getNetMetricValue(current, previous.key, ["매출채권"]))
           : null;
         const averageInventory = previous
-          ? averageTwo(getAdjustedMetricSum(current, period.key, ["재고자산"]), getAdjustedMetricSum(current, previous.key, ["재고자산"]))
+          ? averageTwo(getNetMetricValue(current, period.key, ["재고자산"]), getNetMetricValue(current, previous.key, ["재고자산"]))
           : null;
         const receivableTurnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
         const inventoryTurnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
@@ -1544,8 +1545,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const currentReceivables = getNetMetricValue(current, period.key, ["매출채권"]);
         const previousReceivables = previous ? getNetMetricValue(current, previous.key, ["매출채권"]) : null;
         const averageReceivables = previous ? averageTwo(currentReceivables, previousReceivables) : null;
-        const currentInventory = getAdjustedMetricSum(current, period.key, ["재고자산"]);
-        const previousInventory = previous ? getAdjustedMetricSum(current, previous.key, ["재고자산"]) : null;
+        const currentInventory = getNetMetricValue(current, period.key, ["재고자산"]);
+        const previousInventory = previous ? getNetMetricValue(current, previous.key, ["재고자산"]) : null;
         const averageInventory = previous ? averageTwo(currentInventory, previousInventory) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
