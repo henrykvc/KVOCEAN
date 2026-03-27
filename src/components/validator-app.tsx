@@ -570,6 +570,15 @@ export function ValidatorApp() {
     () => savedDatasets.find((item) => item.id === selectedDatasetId) ?? null,
     [savedDatasets, selectedDatasetId]
   );
+  const groupedSavedDatasets = useMemo(
+    () => Array.from(savedDatasets.reduce((acc, dataset) => {
+      const bucket = acc.get(dataset.companyName) ?? [];
+      bucket.push(dataset);
+      acc.set(dataset.companyName, bucket);
+      return acc;
+    }, new Map<string, SavedQuarterSnapshot[]>()).entries()),
+    [savedDatasets]
+  );
   const resultReporting = useMemo(
     () => buildCompanyReport(selectedDataset ? [selectedDataset] : [], classificationGroups),
     [selectedDataset, classificationGroups]
@@ -695,6 +704,24 @@ export function ValidatorApp() {
           datasetId
         }
       : selection));
+  }
+
+  function autofillSameCompanyComparisons() {
+    const firstSelection = comparisonSelections[0];
+    const selectedCompany = firstSelection?.companyName
+      || savedDatasets.find((item) => item.id === firstSelection?.datasetId)?.companyName
+      || "";
+
+    if (!selectedCompany) {
+      return;
+    }
+
+    const sameCompanyDatasets = savedDatasets.filter((item) => item.companyName === selectedCompany).slice(0, 4);
+    setComparisonSelections((prev) => prev.map((selection, index) => ({
+      ...selection,
+      companyName: sameCompanyDatasets[index]?.companyName ?? selectedCompany,
+      datasetId: sameCompanyDatasets[index]?.id ?? ""
+    })));
   }
 
   function findComparisonMetric(sectionTitle: string, rowLabel: string, slotId: string) {
@@ -1004,12 +1031,12 @@ export function ValidatorApp() {
           <div className="side-nav-card">
             <span className="section-kicker">메뉴</span>
             <div className="side-nav-list">
-              <button className={`side-nav-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>OCR검증</button>
-              <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>검증규칙관리</button>
-              <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>데이터</button>
-              <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>결과물</button>
-              <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>분류</button>
-              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>수식</button>
+              <button className={`side-nav-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>1. OCR검증</button>
+              <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>1-1. 검증 규칙관리</button>
+              <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
+              <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
+              <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>3-1. 분류</button>
+              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>3-2. 수식</button>
             </div>
           </div>
 
@@ -1329,22 +1356,36 @@ export function ValidatorApp() {
                         <p className="result-meta">같은 회사와 같은 분기는 새로 추가되지 않고 최신 검증 결과로 갱신됩니다.</p>
                       </div>
                     </div>
-                    <div className="data-list">
-                      {savedDatasets.map((dataset) => (
-                        <article className={`data-row-card ${selectedDatasetId === dataset.id ? "selected" : ""}`} key={dataset.id}>
-                          <button className="data-row-trigger" onClick={() => setSelectedDatasetId((prev) => prev === dataset.id ? "" : dataset.id)}>
-                            <strong>{dataset.companyName}</strong>
-                            <span className="soft-badge">{dataset.quarterLabel}</span>
-                          </button>
-                          {selectedDatasetId === dataset.id && (
-                            <div className="data-row-actions">
-                              <button className="secondary-button" onClick={() => { setSelectedDatasetId(dataset.id); setActiveTab("report"); }}>결과물 보기</button>
-                              <button className="ghost-button" onClick={() => loadDatasetIntoValidator(dataset)}>검증기로 불러오기</button>
-                              <button className="danger-button" onClick={() => deleteDataset(dataset.id)}>삭제</button>
+                    <div className="data-list grouped-data-list">
+                      {groupedSavedDatasets.map(([companyName, datasets]) => {
+                        const activeDataset = datasets.find((dataset) => dataset.id === selectedDatasetId) ?? null;
+                        return (
+                          <article className={`data-company-card ${activeDataset ? "selected" : ""}`} key={`company-group-${companyName}`}>
+                            <div className="data-company-row">
+                              <strong>{companyName}</strong>
+                              <div className="data-quarter-chip-list">
+                                {datasets.map((dataset) => (
+                                  <button
+                                    key={dataset.id}
+                                    className={`data-quarter-chip ${selectedDatasetId === dataset.id ? "active" : ""}`}
+                                    onClick={() => setSelectedDatasetId((prev) => prev === dataset.id ? "" : dataset.id)}
+                                  >
+                                    {dataset.quarterLabel}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                          )}
-                        </article>
-                      ))}
+                            {activeDataset && (
+                              <div className="data-row-actions">
+                                <span className="soft-badge">선택 분기 {activeDataset.quarterLabel}</span>
+                                <button className="secondary-button" onClick={() => { setSelectedDatasetId(activeDataset.id); setActiveTab("report"); }}>결과물 보기</button>
+                                <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeDataset)}>검증기로 불러오기</button>
+                                <button className="danger-button" onClick={() => deleteDataset(activeDataset.id)}>삭제</button>
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })}
                     </div>
                   </section>
                 </>
@@ -1692,6 +1733,9 @@ export function ValidatorApp() {
               <span className="section-kicker">최종결과물 비교</span>
               <h2>기업별 · 분기별 4개 결과물 비교</h2>
               <p className="panel-desc">왼쪽은 항목, 오른쪽 4개 열은 각각 다른 기업과 분기를 선택해 채우는 구조입니다.</p>
+            </div>
+            <div className="inline-actions">
+              <button className="ghost-button" onClick={autofillSameCompanyComparisons}>동일 회사</button>
             </div>
           </div>
 

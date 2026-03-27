@@ -1088,6 +1088,53 @@ a {
   gap: 8px;
 }
 
+.grouped-data-list {
+  gap: 10px;
+}
+
+.data-company-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.data-company-card.selected {
+  border-color: rgba(49, 130, 246, 0.4);
+  box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.08);
+}
+
+.data-company-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.data-quarter-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.data-quarter-chip {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.data-quarter-chip.active {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: rgba(49, 130, 246, 0.24);
+}
+
 .data-row-card {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1117,6 +1164,8 @@ a {
 
 .data-row-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   padding: 0 14px 12px;
   border-top: 1px solid #eef2f6;
