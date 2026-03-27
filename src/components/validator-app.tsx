@@ -65,6 +65,38 @@ type ComparisonSelection = {
 
 type TopViewKey = "menu" | "final-output";
 
+const DETAIL_DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
+const DETAIL_VARIABLE_COST_ALIASES = [
+  "매출원가",
+  "외주용역비",
+  "외주비",
+  "지급수수료",
+  "광고선전비",
+  "배송비",
+  "운반비",
+  "수출제비용",
+  "인건비",
+  "복리후생비",
+  "접대비",
+  "연구개발비",
+  "여비교통비",
+  "통신비",
+  "세금과공과금",
+  "도서인쇄비",
+  "소모품비",
+  "대손상각비",
+  "판매촉진비",
+  "대외협력비",
+  "행사비",
+  "기술이전료",
+  "경상기술료",
+  "전산운영비",
+  "반품비용",
+  "기타변동비"
+];
+const DETAIL_BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
+const DETAIL_INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
+
 function renderDiagnosisText(text: string) {
   const parts = text.split("**");
   return parts.map((part, index) =>
@@ -98,6 +130,34 @@ function formatCalculationResult(kind: "amount" | "ratio" | "growthRate", row: F
 
 function normalizeMetricLabel(value: string) {
   return value.replace(/\s+/g, "").trim();
+}
+
+function stripMetricPrefix(value: string) {
+  return value.replace(/^(당기|전기|전분기|비교전분기|차감:)\s*/g, "").trim();
+}
+
+function getInputAliasCandidates(label: string) {
+  const normalized = normalizeMetricLabel(stripMetricPrefix(label));
+
+  const aliasMap: Record<string, string[]> = {
+    "자본총계": ["자본총계", "자본", "총자본"],
+    "자산": ["자산", "자산총계", "총자산"],
+    "부채": ["부채", "부채총계", "총부채"],
+    "유동자산": ["유동자산"],
+    "유동부채": ["유동부채"],
+    "영업이익": ["영업이익", "영업이익(손실)"],
+    "계속사업당기순이익": ["계속사업당기순이익", "당기순이익", "당기순손실"],
+    "감가상각계": DETAIL_DEPRECIATION_ALIASES,
+    "변동비합계": DETAIL_VARIABLE_COST_ALIASES,
+    "순차입금": DETAIL_BORROWING_ALIASES,
+    "이자비용": DETAIL_INTEREST_ALIASES,
+    "총이자비용": DETAIL_INTEREST_ALIASES,
+    "당좌자산": ["당좌자산"],
+    "매출채권": ["매출채권"],
+    "재고자산": ["재고자산"]
+  };
+
+  return (aliasMap[normalized] ?? [stripMetricPrefix(label)]).map(normalizeMetricLabel);
 }
 
 function upsertOverrideRow(rows: OverrideRow[], nextRow: OverrideRow) {
@@ -822,18 +882,13 @@ export function ValidatorApp() {
       return input.components;
     }
 
-    const aliases = [
-      normalizeMetricLabel(input.label),
-      ...(input.label === "자본총계" ? ["자본", "총자본"] : []),
-      ...(input.label === "자산" ? ["자산총계", "총자산"] : []),
-      ...(input.label === "부채" ? ["부채총계", "총부채"] : [])
-    ];
+    const aliases = getInputAliasCandidates(input.label);
 
     const breakdown = resultReporting.adjustedStatementRows
       .filter((row) => {
         const rowKey = normalizeMetricLabel(row.canonicalKey || row.accountName);
         const rowName = normalizeMetricLabel(row.accountName);
-        return aliases.includes(rowKey) || aliases.includes(rowName);
+        return aliases.some((alias) => rowKey.includes(alias) || rowName.includes(alias) || alias.includes(rowKey) || alias.includes(rowName));
       })
       .map<MetricCalculationInput | null>((row) => {
         const value = row.values[periodKey];
@@ -845,7 +900,15 @@ export function ValidatorApp() {
       })
       .filter((item): item is MetricCalculationInput => item !== null);
 
-    return breakdown.length > 1 ? breakdown : [];
+    if (!breakdown.length) {
+      return [];
+    }
+
+    if (breakdown.length === 1 && normalizeMetricLabel(breakdown[0].label) === normalizeMetricLabel(input.label)) {
+      return [];
+    }
+
+    return breakdown;
   }
 
   function renderMetricCalculationCard(
@@ -1467,7 +1530,6 @@ export function ValidatorApp() {
                                               </div>
                                               {renderMetricCalculationCard("금액", "amount", row, period.key, detail.amount)}
                                               {renderMetricCalculationCard("비율", "ratio", row, period.key, detail.ratio)}
-                                              {renderMetricCalculationCard("전분기 증감율", "growthRate", row, period.key, detail.growthRate)}
                                             </article>
                                           );
                                         })}
