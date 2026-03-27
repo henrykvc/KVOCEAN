@@ -452,6 +452,7 @@ export function ValidatorApp() {
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [comparisonSelections, setComparisonSelections] = useState<ComparisonSelection[]>(buildInitialComparisonSelections([]));
+  const [sameCompanyMode, setSameCompanyMode] = useState(false);
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
@@ -716,6 +717,12 @@ export function ValidatorApp() {
   }
 
   function updateComparisonCompany(slotId: string, companyName: string) {
+    if (sameCompanyMode && slotId === "slot-1") {
+      const firstDataset = savedDatasets.find((item) => item.companyName === companyName) ?? null;
+      applySameCompanySelections(companyName, firstDataset?.id ?? "");
+      return;
+    }
+
     const nextDataset = savedDatasets.find((item) => item.companyName === companyName) ?? null;
     setComparisonSelections((prev) => prev.map((selection) => selection.slotId === slotId
       ? {
@@ -727,6 +734,12 @@ export function ValidatorApp() {
   }
 
   function updateComparisonQuarter(slotId: string, datasetId: string) {
+    if (sameCompanyMode && slotId === "slot-1") {
+      const firstDataset = savedDatasets.find((item) => item.id === datasetId) ?? null;
+      applySameCompanySelections(firstDataset?.companyName ?? "", datasetId);
+      return;
+    }
+
     setComparisonSelections((prev) => prev.map((selection) => selection.slotId === slotId
       ? {
           ...selection,
@@ -735,22 +748,36 @@ export function ValidatorApp() {
       : selection));
   }
 
-  function autofillSameCompanyComparisons() {
-    const firstSelection = comparisonSelections[0];
-    const selectedCompany = firstSelection?.companyName
-      || savedDatasets.find((item) => item.id === firstSelection?.datasetId)?.companyName
-      || "";
-
-    if (!selectedCompany) {
+  function applySameCompanySelections(companyName: string, startDatasetId: string) {
+    if (!companyName) {
       return;
     }
 
-    const sameCompanyDatasets = savedDatasets.filter((item) => item.companyName === selectedCompany).slice(0, 4);
+    const sameCompanyDatasets = savedDatasets.filter((item) => item.companyName === companyName);
+    const startIndex = Math.max(0, sameCompanyDatasets.findIndex((item) => item.id === startDatasetId));
+    const orderedDatasets = (startIndex >= 0 ? sameCompanyDatasets.slice(startIndex, startIndex + 4) : sameCompanyDatasets.slice(0, 4));
+
     setComparisonSelections((prev) => prev.map((selection, index) => ({
       ...selection,
-      companyName: sameCompanyDatasets[index]?.companyName ?? selectedCompany,
-      datasetId: sameCompanyDatasets[index]?.id ?? ""
+      companyName: orderedDatasets[index]?.companyName ?? companyName,
+      datasetId: orderedDatasets[index]?.id ?? ""
     })));
+  }
+
+  function toggleSameCompanyMode() {
+    setSameCompanyMode((prev) => {
+      const next = !prev;
+      if (!prev) {
+        const firstSelection = comparisonSelections[0];
+        const firstDataset = savedDatasets.find((item) => item.id === firstSelection?.datasetId) ?? null;
+        const companyName = firstSelection?.companyName || firstDataset?.companyName || "";
+        const datasetId = firstSelection?.datasetId || firstDataset?.id || "";
+        if (companyName) {
+          applySameCompanySelections(companyName, datasetId);
+        }
+      }
+      return next;
+    });
   }
 
   function findComparisonMetric(sectionTitle: string, rowLabel: string, slotId: string) {
@@ -1765,7 +1792,9 @@ export function ValidatorApp() {
               <p className="panel-desc">왼쪽은 항목, 오른쪽 4개 열은 각각 다른 기업과 분기를 선택해 채우는 구조입니다.</p>
             </div>
             <div className="inline-actions">
-              <button className="ghost-button" onClick={autofillSameCompanyComparisons}>동일 회사</button>
+              <button className={`ghost-button ${sameCompanyMode ? "is-selected" : ""}`.trim()} onClick={toggleSameCompanyMode}>
+                동일 회사 {sameCompanyMode ? "켜짐" : "꺼짐"}
+              </button>
             </div>
           </div>
 
@@ -1787,6 +1816,7 @@ export function ValidatorApp() {
                               className="select"
                               value={selection.companyName}
                               onChange={(event) => updateComparisonCompany(selection.slotId, event.target.value)}
+                              disabled={sameCompanyMode && index > 0}
                             >
                               <option value="">기업 선택</option>
                               {comparisonCompanyOptions.map((company) => (
@@ -1797,7 +1827,7 @@ export function ValidatorApp() {
                               className="select"
                               value={selection.datasetId}
                               onChange={(event) => updateComparisonQuarter(selection.slotId, event.target.value)}
-                              disabled={!selection.companyName}
+                              disabled={!selection.companyName || (sameCompanyMode && index > 0)}
                             >
                               <option value="">분기 선택</option>
                               {quarterOptions.map((dataset) => (
