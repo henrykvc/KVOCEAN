@@ -555,16 +555,32 @@ function sumValues(rows: StatementMatrixRow[], periodKey: string, candidates: st
   return values.reduce((total, value) => total + value, 0);
 }
 
-function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
-  const canonicalCandidates = candidates
+function buildClassifiedCandidateSet(candidates: string[], classificationGroups: ClassificationGroups, sectionName?: string) {
+  const sectionKey = normalizeSectionKey(sectionName ?? "기타");
+  const values = new Set<string>();
+
+  candidates
     .filter((candidate) => Boolean(classificationGroups[candidate]))
-    .map(normalizeText);
+    .forEach((candidate) => {
+      values.add(normalizeText(candidate));
+      for (const alias of classificationGroups[candidate] ?? []) {
+        values.add(normalizeText(alias));
+        values.add(normalizeText(resolveCanonicalAccountKey(alias, sectionKey, classificationGroups)));
+      }
+    });
+
+  return values;
+}
+
+function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
+  const canonicalCandidates = buildClassifiedCandidateSet(candidates, classificationGroups, sectionName);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
   const values = applyClassifiedBucketPrecedence(rows
     .filter((row) => {
       const rowKey = normalizeText(row.canonicalKey || row.accountName);
-      const byName = canonicalCandidates.includes(rowKey);
+      const rowName = normalizeText(row.accountName);
+      const byName = canonicalCandidates.has(rowKey) || canonicalCandidates.has(rowName);
       const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
       return byName && bySection;
     })
@@ -584,14 +600,13 @@ function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, cand
 }
 
 function getClassifiedRows(rows: StatementMatrixRow[], candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
-  const canonicalCandidates = candidates
-    .filter((candidate) => Boolean(classificationGroups[candidate]))
-    .map(normalizeText);
+  const canonicalCandidates = buildClassifiedCandidateSet(candidates, classificationGroups, sectionName);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
 
   return applyClassifiedBucketPrecedence(rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
-    const byName = canonicalCandidates.includes(rowKey);
+    const rowName = normalizeText(row.accountName);
+    const byName = canonicalCandidates.has(rowKey) || canonicalCandidates.has(rowName);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
     return byName && bySection;
   }), getPreferredSectionKeys(candidates));
