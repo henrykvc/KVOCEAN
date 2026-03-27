@@ -258,7 +258,18 @@ export function applySign(value: number | null | undefined, signCode: SignCode |
   return signCode === 1 ? -numeric : numeric;
 }
 
-export function inferSignFromName(name: string, logicConfig: LogicConfig): SignCode | null {
+function normalizeSectionForSign(sectionName?: string) {
+  const normalized = (sectionName ?? "").replace(/\s+/g, "").trim();
+  if (["판매비와관리비", "판관비", "영업비용"].includes(normalized)) {
+    return "영업비용";
+  }
+  return normalized;
+}
+
+const EXPENSE_CONTRA_KEYWORDS = ["국고보조금", "정부보조금", "국가보조금", "지원금", "환입", "충당금환입", "매출차감", "현할차", "할인차금"];
+
+export function inferSignFromName(name: string, logicConfig: LogicConfig, sectionName?: string): SignCode | null {
+  const normalizedSection = normalizeSectionForSign(sectionName);
   if (name.includes("_양수") || name.endsWith("양수")) {
     return 0;
   }
@@ -267,6 +278,12 @@ export function inferSignFromName(name: string, logicConfig: LogicConfig): SignC
   }
   if (logicConfig.plusOverrideKeywords.some((keyword) => name.includes(keyword))) {
     return 0;
+  }
+  if (normalizedSection === "영업비용" && logicConfig.plusCostKeywords.some((keyword) => name.includes(keyword))) {
+    const hasContraKeyword = EXPENSE_CONTRA_KEYWORDS.some((keyword) => name.includes(keyword));
+    if (!hasContraKeyword) {
+      return 0;
+    }
   }
   if (logicConfig.minusKeywords.some((keyword) => name.includes(keyword))) {
     return 1;
@@ -349,7 +366,7 @@ export function validatePasteSections(
         continue;
       }
 
-      let sign = inferSignFromName(child.name, logicConfig);
+      let sign = inferSignFromName(child.name, logicConfig, sect);
       const sectOverride = sectionOverrides[sect] ?? {};
       for (const [keyword, override] of Object.entries(sectOverride)) {
         if (child.name.includes(keyword)) {

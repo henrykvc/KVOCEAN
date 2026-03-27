@@ -414,7 +414,7 @@ function resolveRowMeta(
 
     const section = prevSect || "기타";
     const sectionKey = normalizeSectionKey(section);
-    let signCode = inferSignFromName(accountName, logicConfig) ?? 0;
+    let signCode = inferSignFromName(accountName, logicConfig, section) ?? 0;
     if (LOSS_ACCOUNTS.has(accountName.trim())) {
       signCode = 1;
     }
