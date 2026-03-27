@@ -281,7 +281,7 @@ function parseClassificationCatalogText(text: string) {
       const smallCategory = columns[2] ?? "";
       const sign = columns[3] ?? "";
       const canonicalCandidate = columns[4] ?? "";
-      const aliasCandidate = columns.slice(4, -1).filter(Boolean).at(-1) ?? "";
+      const aliasCandidate = columns[6] ?? "";
       const current = grouped.get(groupId) ?? {
         groupId,
         majorCategory,
@@ -298,14 +298,10 @@ function parseClassificationCatalogText(text: string) {
       current.sign ||= sign;
       current.canonicalKey ||= canonicalCandidate || aliasCandidate;
 
-      [sign, canonicalCandidate, aliasCandidate]
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .forEach((item) => {
-          if (item !== current.canonicalKey) {
-            current.aliases.push(item);
-          }
-        });
+      const alias = aliasCandidate.trim();
+      if (alias && alias !== current.canonicalKey) {
+        current.aliases.push(alias);
+      }
 
       current.aliases = Array.from(new Set(current.aliases));
       grouped.set(groupId, current);
