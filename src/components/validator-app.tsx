@@ -53,6 +53,7 @@ type ComparisonColumn = {
   datasetId: string;
   companyName: string;
   quarterLabel: string;
+  periodKey: string;
   finalSections: ReportingModel["finalSections"];
 };
 
@@ -580,8 +581,19 @@ export function ValidatorApp() {
     [savedDatasets]
   );
   const resultReporting = useMemo(
-    () => buildCompanyReport(selectedDataset ? [selectedDataset] : [], classificationGroups),
-    [selectedDataset, classificationGroups]
+    () => buildCompanyReport(
+      selectedDataset
+        ? savedDatasets.filter((item) => item.companyName === selectedDataset.companyName)
+        : [],
+      classificationGroups
+    ),
+    [selectedDataset, savedDatasets, classificationGroups]
+  );
+  const selectedReportPeriod = useMemo(
+    () => selectedDataset
+      ? resultReporting.periods.find((period) => period.key === selectedDataset.quarterKey) ?? null
+      : null,
+    [selectedDataset, resultReporting.periods]
   );
   const comparisonColumns = useMemo<ComparisonColumn[]>(
     () => comparisonSelections
@@ -590,12 +602,16 @@ export function ValidatorApp() {
         if (!dataset) {
           return null;
         }
-        const model = buildCompanyReport([dataset], classificationGroups);
+        const model = buildCompanyReport(
+          savedDatasets.filter((item) => item.companyName === dataset.companyName),
+          classificationGroups
+        );
         return {
           slotId: selection.slotId,
           datasetId: dataset.id,
           companyName: dataset.companyName,
           quarterLabel: dataset.quarterLabel,
+          periodKey: dataset.quarterKey,
           finalSections: model.finalSections
         } satisfies ComparisonColumn;
       })
@@ -732,14 +748,15 @@ export function ValidatorApp() {
       return null;
     }
     const periodKey = Object.keys(row.amounts)[0] ?? "";
-    if (!periodKey) {
+    const targetPeriodKey = column?.periodKey ?? periodKey;
+    if (!targetPeriodKey) {
       return null;
     }
     return {
       row,
-      amount: row.amounts[periodKey],
-      ratio: row.ratios[periodKey],
-      growthRate: row.growthRates[periodKey]
+      amount: row.amounts[targetPeriodKey],
+      ratio: row.ratios[targetPeriodKey],
+      growthRate: row.growthRates[targetPeriodKey]
     };
   }
 
@@ -1407,9 +1424,7 @@ export function ValidatorApp() {
                         <p className="result-meta">엑셀의 `재무제표 → 재무제표_음양반영 → 최종결과물` 흐름을 현재 입력 데이터 기준으로 바로 보여줍니다.</p>
                       </div>
                       <div className="result-actions">
-                        {resultReporting.periods.map((period) => (
-                          <span className="soft-badge" key={period.key}>{period.label}</span>
-                        ))}
+                        {selectedReportPeriod && <span className="soft-badge">{selectedReportPeriod.label}</span>}
                       </div>
                     </div>
                   </section>
@@ -1441,7 +1456,7 @@ export function ValidatorApp() {
                           <thead>
                             <tr>
                               <th>항목</th>
-                              {resultReporting.periods.map((period) => (
+                              {(selectedReportPeriod ? [selectedReportPeriod] : []).map((period) => (
                                 <th key={`${section.title}-${period.key}`}>
                                   <div className="final-period-head">
                                     <span>{period.label}</span>
@@ -1471,7 +1486,7 @@ export function ValidatorApp() {
                                       )}
                                     </div>
                                   </td>
-                                  {resultReporting.periods.map((period) => (
+                                  {(selectedReportPeriod ? [selectedReportPeriod] : []).map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
                                         {!ratioOnlySection && (
@@ -1489,9 +1504,9 @@ export function ValidatorApp() {
                                 </tr>
                                 {showReportValidation && metricExpanded && (
                                   <tr className="final-detail-row">
-                                    <td colSpan={resultReporting.periods.length + 1}>
+                                    <td colSpan={(selectedReportPeriod ? 1 : 0) + 1}>
                                       <div className="final-detail-grid">
-                                        {resultReporting.periods.map((period) => {
+                                        {(selectedReportPeriod ? [selectedReportPeriod] : []).map((period) => {
                                           const detail = row.details[period.key] ?? {};
                                           return (
                                             <article className="final-detail-card" key={`${metricKey}-${period.key}`}>
