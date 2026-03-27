@@ -1720,12 +1720,24 @@ export function formatMetricValue(row: FinalMetricRow, value: number | null) {
     return `${value.toFixed(2)}개월`;
   }
 
+  if (row.label.includes("기간") || row.label === "정상영업순환주기") {
+    return `${value.toFixed(1)}일`;
+  }
+
   return formatNumber(value);
 }
 
-export function formatMetricRatio(value: number | null) {
+export function isTurnoverMetricLabel(label: string) {
+  return label.includes("회전율") || label === "총자산회전율";
+}
+
+export function formatMetricRatio(value: number | null, label?: string) {
   if (value === null || value === undefined) {
     return "-";
+  }
+
+  if (label && isTurnoverMetricLabel(label)) {
+    return `${value.toFixed(2)}회`;
   }
 
   return `${value.toFixed(1)}%`;

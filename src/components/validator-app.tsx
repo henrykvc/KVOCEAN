@@ -32,6 +32,7 @@ import {
   buildReportingModel,
   formatMetricRatio,
   formatMetricValue,
+  isTurnoverMetricLabel,
   type MetricCalculationInput,
   type FinalMetricRow,
   type MetricCalculationDetail,
@@ -65,7 +66,7 @@ type ComparisonSelection = {
 
 type TopViewKey = "menu" | "final-output";
 
-const RATIO_ONLY_SECTION_TITLES = new Set(["안정성 비율", "수익성 비율", "활동성 비율", "성장성 비율"]);
+const RATIO_ONLY_SECTION_TITLES = new Set(["안정성 비율", "수익성 비율", "성장성 비율"]);
 
 const DETAIL_DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
 const DETAIL_VARIABLE_COST_ALIASES = [
@@ -662,6 +663,18 @@ export function ValidatorApp() {
 
   function isRatioOnlySection(title: string) {
     return RATIO_ONLY_SECTION_TITLES.has(title);
+  }
+
+  function isPeriodMetricLabel(label: string) {
+    return label.includes("기간") || label === "정상영업순환주기" || label === "런웨이(E)";
+  }
+
+  function hasMetricAmount(row: FinalMetricRow, periodKey: string) {
+    return row.amounts[periodKey] !== null && row.amounts[periodKey] !== undefined;
+  }
+
+  function hasMetricRatio(row: FinalMetricRow, periodKey: string) {
+    return row.ratios[periodKey] !== null && row.ratios[periodKey] !== undefined;
   }
 
   function loadDatasetIntoValidator(dataset: SavedQuarterSnapshot) {
@@ -1489,12 +1502,14 @@ export function ValidatorApp() {
                                   {(selectedReportPeriod ? [selectedReportPeriod] : []).map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
-                                        {!ratioOnlySection && (
-                                          <strong>{row.label === "런웨이(E)" ? "기간" : "금액"} {formatMetricValue(row, row.amounts[period.key])}</strong>
+                                        {(!ratioOnlySection && !isTurnoverMetricLabel(row.label) || isPeriodMetricLabel(row.label)) && (
+                                          <strong>{isPeriodMetricLabel(row.label) ? "기간" : "금액"} {formatMetricValue(row, row.amounts[period.key])}</strong>
                                         )}
-                                        <span className={`ratio-value ${ratioOnlySection ? "ratio-only" : ""} ${row.ratios[period.key] === null || row.ratios[period.key] === undefined ? "" : row.ratios[period.key]! < 0 ? "negative" : row.ratios[period.key]! > 0 ? "positive" : ""}`.trim()}>
-                                          비율 {formatMetricRatio(row.ratios[period.key])}
-                                        </span>
+                                        {(ratioOnlySection || isTurnoverMetricLabel(row.label) || hasMetricRatio(row, period.key)) && !isPeriodMetricLabel(row.label) && (
+                                          <span className={`ratio-value ${(ratioOnlySection || isTurnoverMetricLabel(row.label)) ? "ratio-only" : ""} ${row.ratios[period.key] === null || row.ratios[period.key] === undefined ? "" : row.ratios[period.key]! < 0 ? "negative" : row.ratios[period.key]! > 0 ? "positive" : ""}`.trim()}>
+                                            {isTurnoverMetricLabel(row.label) ? "회전율" : "비율"} {formatMetricRatio(row.ratios[period.key], row.label)}
+                                          </span>
+                                        )}
                                         <span className="growth-value">
                                           {row.growthRates[period.key] === null || row.growthRates[period.key] === undefined ? "-" : `전분기 ${row.growthRates[period.key]!.toFixed(1)}%`}
                                         </span>
@@ -1810,12 +1825,14 @@ export function ValidatorApp() {
                             return (
                               <td key={`summary-value-${selection.slotId}-${section.title}-${row.label}`}>
                                 <div className="comparison-value-cell">
-                                  {!ratioOnlySection && (
+                                  {((!ratioOnlySection && !isTurnoverMetricLabel(row.label)) || isPeriodMetricLabel(row.label)) && (
                                     <strong>{metric ? formatMetricValue(metric.row, metric.amount) : "-"}</strong>
                                   )}
-                                  <span className={`ratio-value ${ratioOnlySection ? "ratio-only" : ""} ${metric?.ratio === null || metric?.ratio === undefined ? "" : metric.ratio < 0 ? "negative" : metric.ratio > 0 ? "positive" : ""}`.trim()}>
-                                    비율 {metric ? formatMetricRatio(metric.ratio) : "-"}
-                                  </span>
+                                  {(ratioOnlySection || isTurnoverMetricLabel(row.label) || metric?.ratio !== null && metric?.ratio !== undefined) && !isPeriodMetricLabel(row.label) && (
+                                    <span className={`ratio-value ${(ratioOnlySection || isTurnoverMetricLabel(row.label)) ? "ratio-only" : ""} ${metric?.ratio === null || metric?.ratio === undefined ? "" : metric.ratio < 0 ? "negative" : metric.ratio > 0 ? "positive" : ""}`.trim()}>
+                                      {isTurnoverMetricLabel(row.label) ? "회전율" : "비율"} {metric ? formatMetricRatio(metric.ratio, row.label) : "-"}
+                                    </span>
+                                  )}
                                   <span className="growth-value">전분기 {metric?.growthRate === null || metric?.growthRate === undefined ? "-" : `${metric.growthRate.toFixed(1)}%`}</span>
                                 </div>
                               </td>
