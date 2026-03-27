@@ -6,7 +6,6 @@ import {
   DEFAULT_CLASSIFICATION_GROUPS,
   DEFAULT_COMPANY_CONFIGS,
   DEFAULT_LOGIC_CONFIG,
-  LAST_PATCH,
   type ClassificationGroups,
   type CompanyConfigs,
   type LogicConfig,
@@ -51,6 +50,14 @@ type ClassificationRow = {
   aliases: string;
 };
 
+type ComparisonColumn = {
+  datasetId: string;
+  companyName: string;
+  quarterLabel: string;
+  periodLabel: string;
+  finalSections: ReportingModel["finalSections"];
+};
+
 function renderDiagnosisText(text: string) {
   const parts = text.split("**");
   return parts.map((part, index) =>
@@ -60,6 +67,10 @@ function renderDiagnosisText(text: string) {
 
 function buildReportMetricKey(sectionTitle: string, rowLabel: string) {
   return `${sectionTitle}::${rowLabel}`;
+}
+
+function buildDatasetOptionLabel(dataset: SavedQuarterSnapshot) {
+  return `${dataset.companyName} · ${dataset.quarterLabel}`;
 }
 
 function formatCalculationInputValue(value: number | null) {
@@ -329,6 +340,10 @@ function buildRequestedFormulaRows() {
   ];
 }
 
+function pickInitialComparisonIds(items: SavedQuarterSnapshot[]) {
+  return items.slice(0, 4).map((item) => item.id);
+}
+
 function isSavedQuarterSnapshot(value: unknown): value is SavedQuarterSnapshot {
   if (!value || typeof value !== "object") {
     return false;
@@ -389,6 +404,7 @@ export function ValidatorApp() {
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [selectedResultCompany, setSelectedResultCompany] = useState<string>("");
+  const [comparisonDatasetIds, setComparisonDatasetIds] = useState<string[]>([]);
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
@@ -408,6 +424,7 @@ export function ValidatorApp() {
       setSelectedDatasetId(saved[0].id);
       setSelectedResultCompany(saved[0].companyName);
     }
+    setComparisonDatasetIds(pickInitialComparisonIds(saved));
   }, []);
 
   useEffect(() => {
@@ -426,6 +443,16 @@ export function ValidatorApp() {
     }
     window.localStorage.setItem(STORAGE_KEYS.datasets, JSON.stringify(savedDatasets));
   }, [mounted, savedDatasets]);
+
+  useEffect(() => {
+    setComparisonDatasetIds((prev) => {
+      const validIds = prev.filter((id) => savedDatasets.some((item) => item.id === id)).slice(0, 4);
+      if (validIds.length) {
+        return validIds;
+      }
+      return pickInitialComparisonIds(savedDatasets);
+    });
+  }, [savedDatasets]);
 
   useEffect(() => {
     const autoCompany = runValidation({
@@ -480,8 +507,6 @@ export function ValidatorApp() {
   );
 
   const companyKnown = selectedCompany.trim() && companyConfigs[selectedCompany.trim()];
-  const inputReady = pastedText.trim().length > 0;
-  const failedDateCount = Object.values(validation.resultsByDate).filter((items) => items.some((item) => !item.passed)).length;
   const sessionFixCount = countSessionFixes(sessionSignFixes);
   const editedValueCount = Object.keys(pasteEdits).length;
   const previewGroups = useMemo(
@@ -503,6 +528,22 @@ export function ValidatorApp() {
   const resultReporting = useMemo(
     () => buildCompanyReport(resultSnapshots, classificationGroups),
     [resultSnapshots, classificationGroups]
+  );
+  const comparisonColumns = useMemo<ComparisonColumn[]>(
+    () => comparisonDatasetIds
+      .map((datasetId) => savedDatasets.find((item) => item.id === datasetId))
+      .filter((item): item is SavedQuarterSnapshot => item !== undefined)
+      .map((dataset) => {
+        const model = buildCompanyReport([dataset], classificationGroups);
+        return {
+          datasetId: dataset.id,
+          companyName: dataset.companyName,
+          quarterLabel: dataset.quarterLabel,
+          periodLabel: model.periods[0]?.label ?? dataset.quarterLabel,
+          finalSections: model.finalSections
+        } satisfies ComparisonColumn;
+      }),
+    [comparisonDatasetIds, savedDatasets, classificationGroups]
   );
 
   function resetAdjustments() {
@@ -563,6 +604,26 @@ export function ValidatorApp() {
         setSelectedDatasetId(next[0]?.id ?? "");
       }
       return next;
+    });
+    setComparisonDatasetIds((prev) => {
+      const filtered = prev.filter((item) => item !== datasetId);
+      if (filtered.length) {
+        return filtered;
+      }
+      const nextDatasetIds = savedDatasets.filter((item) => item.id !== datasetId).slice(0, 4).map((item) => item.id);
+      return nextDatasetIds;
+    });
+  }
+
+  function toggleComparisonDataset(datasetId: string) {
+    setComparisonDatasetIds((prev) => {
+      if (prev.includes(datasetId)) {
+        return prev.filter((item) => item !== datasetId);
+      }
+      if (prev.length >= 4) {
+        return [...prev.slice(1), datasetId];
+      }
+      return [...prev, datasetId];
     });
   }
 
@@ -800,25 +861,96 @@ export function ValidatorApp() {
       </section>
 
       <section className="summary-strip">
-        <article className="summary-card">
-          <span className="summary-label">입력 상태</span>
-          <strong>{inputReady ? "준비됨" : "대기 중"}</strong>
-          <p>{inputReady ? "붙여넣은 데이터를 기준으로 즉시 검증 중" : "왼쪽 입력창에 OCR 3행 텍스트를 넣어 주세요"}</p>
+        <article className="summary-card menu-summary-card">
+          <div className="section-title">
+            <div>
+              <span className="summary-label">작업 메뉴</span>
+              <strong className="summary-title">기존 메뉴 창</strong>
+            </div>
+            <span className="soft-badge">6개 단계</span>
+          </div>
+          <div className="menu-window-grid">
+            <button className={`menu-window-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>OCR검증</button>
+            <button className={`menu-window-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>검증규칙관리</button>
+            <button className={`menu-window-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>데이터</button>
+            <button className={`menu-window-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>결과물</button>
+            <button className={`menu-window-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>분류</button>
+            <button className={`menu-window-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>수식</button>
+          </div>
+          <p>검증부터 결과물 설계까지의 흐름을 여기서 바로 이동하면서 확인할 수 있습니다.</p>
         </article>
-        <article className="summary-card">
-          <span className="summary-label">실패 묶음</span>
-          <strong>{failedDateCount}건</strong>
-          <p>날짜별 결과 중 실패 항목이 포함된 묶음 수</p>
-        </article>
-        <article className="summary-card">
-          <span className="summary-label">세션 수정</span>
-          <strong>{editedValueCount + sessionFixCount}건</strong>
-          <p>값 수정 {editedValueCount}건 / 부호 수정 {sessionFixCount}건</p>
-        </article>
-        <article className="summary-card">
-          <span className="summary-label">최종패치</span>
-          <strong>{LAST_PATCH}</strong>
-          <p>현재 적용 중인 마지막 패치 시각</p>
+        <article className="summary-card comparison-summary-card">
+          <div className="section-title">
+            <div>
+              <span className="summary-label">최종결과물</span>
+              <strong className="summary-title">기업별 · 분기별 비교</strong>
+            </div>
+            <span className="soft-badge">최대 4개 비교</span>
+          </div>
+          <div className="comparison-picker">
+            {savedDatasets.map((dataset) => {
+              const selected = comparisonDatasetIds.includes(dataset.id);
+              return (
+                <button
+                  key={`compare-pick-${dataset.id}`}
+                  className={`comparison-chip ${selected ? "active" : ""}`}
+                  onClick={() => toggleComparisonDataset(dataset.id)}
+                >
+                  {buildDatasetOptionLabel(dataset)}
+                </button>
+              );
+            })}
+            {!savedDatasets.length && <span className="muted">저장된 결과물이 생기면 여기서 비교 대상을 고를 수 있습니다.</span>}
+          </div>
+          {!!comparisonColumns.length && (
+            <div className="report-table-wrap summary-compare-wrap">
+              <table className="table report-table comparison-table">
+                <thead>
+                  <tr>
+                    <th>항목</th>
+                    {comparisonColumns.map((column) => (
+                      <th key={`compare-head-${column.datasetId}`}>
+                        <div className="final-period-head">
+                          <span>{column.companyName}</span>
+                          <small>{column.quarterLabel}</small>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparisonColumns[0].finalSections.map((section) => (
+                    <Fragment key={`summary-section-${section.title}`}>
+                      <tr className="comparison-section-row">
+                        <td colSpan={comparisonColumns.length + 1}>{section.title}</td>
+                      </tr>
+                      {section.rows.map((row) => (
+                        <tr key={`summary-row-${section.title}-${row.label}`}>
+                          <td className="formula-label-cell">{row.label}</td>
+                          {comparisonColumns.map((column) => {
+                            const sectionMatch = column.finalSections.find((item) => item.title === section.title);
+                            const rowMatch = sectionMatch?.rows.find((item) => item.label === row.label);
+                            const periodKey = rowMatch ? Object.keys(rowMatch.amounts)[0] : "";
+                            const amount = periodKey ? rowMatch?.amounts[periodKey] ?? null : null;
+                            const ratio = periodKey ? rowMatch?.ratios[periodKey] ?? null : null;
+                            return (
+                              <td key={`summary-value-${column.datasetId}-${section.title}-${row.label}`}>
+                                <div className="comparison-value-cell">
+                                  <strong>{formatMetricValue(rowMatch ?? row, amount)}</strong>
+                                  <span className="muted">비율 {formatMetricRatio(ratio)}</span>
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!!savedDatasets.length && !comparisonColumns.length && <p>비교할 결과물을 1개 이상 선택해 주세요.</p>}
         </article>
       </section>
 
