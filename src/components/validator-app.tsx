@@ -884,7 +884,7 @@ export function ValidatorApp() {
 
     const aliases = getInputAliasCandidates(input.label);
 
-    const breakdown = resultReporting.adjustedStatementRows
+    const breakdown = resultReporting.detailAdjustedStatementRows
       .filter((row) => {
         const rowKey = normalizeMetricLabel(row.canonicalKey || row.accountName);
         const rowName = normalizeMetricLabel(row.accountName);

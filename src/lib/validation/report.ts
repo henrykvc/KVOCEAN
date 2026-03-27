@@ -58,6 +58,7 @@ export type ReportingModel = {
   periods: ReportPeriod[];
   rawStatementRows: StatementMatrixRow[];
   adjustedStatementRows: StatementMatrixRow[];
+  detailAdjustedStatementRows: StatementMatrixRow[];
   finalSections: FinalMetricSection[];
 };
 
@@ -1477,6 +1478,7 @@ export function buildReportingModel(args: {
       periods: [],
       rawStatementRows: [],
       adjustedStatementRows: [],
+      detailAdjustedStatementRows: [],
       finalSections: []
     } satisfies ReportingModel;
   }
@@ -1501,6 +1503,7 @@ export function buildReportingModel(args: {
     periods,
     rawStatementRows,
     adjustedStatementRows,
+    detailAdjustedStatementRows: adjustedStatementRows,
     finalSections: buildFinalSections(context)
   } satisfies ReportingModel;
 }
@@ -1560,6 +1563,7 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
       periods: [],
       rawStatementRows: [],
       adjustedStatementRows: [],
+      detailAdjustedStatementRows: [],
       finalSections: []
     } satisfies ReportingModel;
   }
@@ -1623,8 +1627,37 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
     return Array.from(rowMap.values());
   };
 
+  const buildDetailedMatrix = (kind: "rawStatementRows" | "adjustedStatementRows") => {
+    const rowMap = new Map<string, StatementMatrixRow>();
+
+    snapshots.forEach((snapshot) => {
+      snapshot[kind].forEach((row) => {
+        const canonicalKey = resolveCanonicalAccountKey(row.accountName, row.sectionKey, reportClassificationGroups);
+        const key = buildRowIdentityKey(row.sectionKey, canonicalKey, row.accountName);
+
+        if (!rowMap.has(key)) {
+          rowMap.set(key, {
+            signFlag: row.signFlag,
+            section: row.section,
+            sectionKey: row.sectionKey,
+            accountName: row.accountName,
+            canonicalKey,
+            sourceCanonicalKey: row.canonicalKey,
+            values: Object.fromEntries(periods.map((period) => [period.key, null]))
+          });
+        }
+
+        const current = rowMap.get(key)!;
+        current.values[snapshot.quarterKey] = row.value ?? null;
+      });
+    });
+
+    return Array.from(rowMap.values());
+  };
+
   const rawStatementRows = buildMatrix("rawStatementRows");
   const adjustedStatementRows = buildMatrix("adjustedStatementRows");
+  const detailAdjustedStatementRows = buildDetailedMatrix("adjustedStatementRows");
   const context: MetricContext = {
     periods,
     rawRows: rawStatementRows,
@@ -1639,6 +1672,7 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
     periods,
     rawStatementRows,
     adjustedStatementRows,
+    detailAdjustedStatementRows,
     finalSections: buildFinalSections(context)
   } satisfies ReportingModel;
 }
