@@ -51,12 +51,20 @@ type ClassificationRow = {
 };
 
 type ComparisonColumn = {
+  slotId: string;
   datasetId: string;
   companyName: string;
   quarterLabel: string;
-  periodLabel: string;
   finalSections: ReportingModel["finalSections"];
 };
+
+type ComparisonSelection = {
+  slotId: string;
+  companyName: string;
+  datasetId: string;
+};
+
+type TopViewKey = "menu" | "final-output";
 
 function renderDiagnosisText(text: string) {
   const parts = text.split("**");
@@ -67,10 +75,6 @@ function renderDiagnosisText(text: string) {
 
 function buildReportMetricKey(sectionTitle: string, rowLabel: string) {
   return `${sectionTitle}::${rowLabel}`;
-}
-
-function buildDatasetOptionLabel(dataset: SavedQuarterSnapshot) {
-  return `${dataset.companyName} · ${dataset.quarterLabel}`;
 }
 
 function formatCalculationInputValue(value: number | null) {
@@ -340,8 +344,15 @@ function buildRequestedFormulaRows() {
   ];
 }
 
-function pickInitialComparisonIds(items: SavedQuarterSnapshot[]) {
-  return items.slice(0, 4).map((item) => item.id);
+function buildInitialComparisonSelections(items: SavedQuarterSnapshot[]): ComparisonSelection[] {
+  return Array.from({ length: 4 }, (_, index) => {
+    const dataset = items[index];
+    return {
+      slotId: `slot-${index + 1}`,
+      companyName: dataset?.companyName ?? "",
+      datasetId: dataset?.id ?? ""
+    };
+  });
 }
 
 function isSavedQuarterSnapshot(value: unknown): value is SavedQuarterSnapshot {
@@ -386,6 +397,7 @@ function parseSavedDatasets(raw: string | null): SavedQuarterSnapshot[] {
 }
 
 export function ValidatorApp() {
+  const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
   const [mounted, setMounted] = useState(false);
   const [pastedText, setPastedText] = useState("");
@@ -404,7 +416,7 @@ export function ValidatorApp() {
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [selectedResultCompany, setSelectedResultCompany] = useState<string>("");
-  const [comparisonDatasetIds, setComparisonDatasetIds] = useState<string[]>([]);
+  const [comparisonSelections, setComparisonSelections] = useState<ComparisonSelection[]>(buildInitialComparisonSelections([]));
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
@@ -424,7 +436,7 @@ export function ValidatorApp() {
       setSelectedDatasetId(saved[0].id);
       setSelectedResultCompany(saved[0].companyName);
     }
-    setComparisonDatasetIds(pickInitialComparisonIds(saved));
+    setComparisonSelections(buildInitialComparisonSelections(saved));
   }, []);
 
   useEffect(() => {
@@ -445,12 +457,21 @@ export function ValidatorApp() {
   }, [mounted, savedDatasets]);
 
   useEffect(() => {
-    setComparisonDatasetIds((prev) => {
-      const validIds = prev.filter((id) => savedDatasets.some((item) => item.id === id)).slice(0, 4);
-      if (validIds.length) {
-        return validIds;
-      }
-      return pickInitialComparisonIds(savedDatasets);
+    setComparisonSelections((prev) => {
+      const fallback = buildInitialComparisonSelections(savedDatasets);
+      return fallback.map((item, index) => {
+        const previous = prev[index];
+        if (!previous) {
+          return item;
+        }
+        const companyDatasets = savedDatasets.filter((dataset) => dataset.companyName === previous.companyName);
+        const matchedDataset = savedDatasets.find((dataset) => dataset.id === previous.datasetId);
+        return {
+          slotId: item.slotId,
+          companyName: matchedDataset?.companyName ?? companyDatasets[0]?.companyName ?? item.companyName,
+          datasetId: matchedDataset?.id ?? companyDatasets[0]?.id ?? item.datasetId
+        };
+      });
     });
   }, [savedDatasets]);
 
@@ -530,20 +551,27 @@ export function ValidatorApp() {
     [resultSnapshots, classificationGroups]
   );
   const comparisonColumns = useMemo<ComparisonColumn[]>(
-    () => comparisonDatasetIds
-      .map((datasetId) => savedDatasets.find((item) => item.id === datasetId))
-      .filter((item): item is SavedQuarterSnapshot => item !== undefined)
-      .map((dataset) => {
+    () => comparisonSelections
+      .map((selection) => {
+        const dataset = savedDatasets.find((item) => item.id === selection.datasetId);
+        if (!dataset) {
+          return null;
+        }
         const model = buildCompanyReport([dataset], classificationGroups);
         return {
+          slotId: selection.slotId,
           datasetId: dataset.id,
           companyName: dataset.companyName,
           quarterLabel: dataset.quarterLabel,
-          periodLabel: model.periods[0]?.label ?? dataset.quarterLabel,
           finalSections: model.finalSections
         } satisfies ComparisonColumn;
-      }),
-    [comparisonDatasetIds, savedDatasets, classificationGroups]
+      })
+      .filter((item): item is ComparisonColumn => item !== null),
+    [comparisonSelections, savedDatasets, classificationGroups]
+  );
+  const comparisonCompanyOptions = useMemo(
+    () => Array.from(new Set(savedDatasets.map((item) => item.companyName))),
+    [savedDatasets]
   );
 
   function resetAdjustments() {
@@ -605,26 +633,57 @@ export function ValidatorApp() {
       }
       return next;
     });
-    setComparisonDatasetIds((prev) => {
-      const filtered = prev.filter((item) => item !== datasetId);
-      if (filtered.length) {
-        return filtered;
+    setComparisonSelections((prev) => prev.map((selection) => {
+      if (selection.datasetId !== datasetId) {
+        return selection;
       }
-      const nextDatasetIds = savedDatasets.filter((item) => item.id !== datasetId).slice(0, 4).map((item) => item.id);
-      return nextDatasetIds;
-    });
+      const fallback = savedDatasets.find((item) => item.id !== datasetId && item.companyName === selection.companyName)
+        ?? savedDatasets.find((item) => item.id !== datasetId)
+        ?? null;
+      return {
+        ...selection,
+        companyName: fallback?.companyName ?? "",
+        datasetId: fallback?.id ?? ""
+      };
+    }));
   }
 
-  function toggleComparisonDataset(datasetId: string) {
-    setComparisonDatasetIds((prev) => {
-      if (prev.includes(datasetId)) {
-        return prev.filter((item) => item !== datasetId);
-      }
-      if (prev.length >= 4) {
-        return [...prev.slice(1), datasetId];
-      }
-      return [...prev, datasetId];
-    });
+  function updateComparisonCompany(slotId: string, companyName: string) {
+    const nextDataset = savedDatasets.find((item) => item.companyName === companyName) ?? null;
+    setComparisonSelections((prev) => prev.map((selection) => selection.slotId === slotId
+      ? {
+          ...selection,
+          companyName,
+          datasetId: nextDataset?.id ?? ""
+        }
+      : selection));
+  }
+
+  function updateComparisonQuarter(slotId: string, datasetId: string) {
+    setComparisonSelections((prev) => prev.map((selection) => selection.slotId === slotId
+      ? {
+          ...selection,
+          datasetId
+        }
+      : selection));
+  }
+
+  function findComparisonMetric(sectionTitle: string, rowLabel: string, slotId: string) {
+    const column = comparisonColumns.find((item) => item.slotId === slotId);
+    const section = column?.finalSections.find((item) => item.title === sectionTitle);
+    const row = section?.rows.find((item) => item.label === rowLabel);
+    if (!row) {
+      return null;
+    }
+    const periodKey = Object.keys(row.amounts)[0] ?? "";
+    if (!periodKey) {
+      return null;
+    }
+    return {
+      row,
+      amount: row.amounts[periodKey],
+      ratio: row.ratios[periodKey]
+    };
   }
 
   function updateEditableValue(rowIndex: number, colIndex: number, rawValue: number, nextValue: string) {
@@ -861,100 +920,35 @@ export function ValidatorApp() {
       </section>
 
       <section className="summary-strip">
-        <article className="summary-card menu-summary-card">
+        <button
+          className={`summary-card summary-switch-card ${topView === "menu" ? "active" : ""}`}
+          onClick={() => setTopView("menu")}
+        >
           <div className="section-title">
             <div>
               <span className="summary-label">작업 메뉴</span>
-              <strong className="summary-title">기존 메뉴 창</strong>
+              <strong className="summary-title">작업 메뉴</strong>
             </div>
             <span className="soft-badge">6개 단계</span>
           </div>
-          <div className="menu-window-grid">
-            <button className={`menu-window-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>OCR검증</button>
-            <button className={`menu-window-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>검증규칙관리</button>
-            <button className={`menu-window-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>데이터</button>
-            <button className={`menu-window-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>결과물</button>
-            <button className={`menu-window-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>분류</button>
-            <button className={`menu-window-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>수식</button>
-          </div>
-          <p>검증부터 결과물 설계까지의 흐름을 여기서 바로 이동하면서 확인할 수 있습니다.</p>
-        </article>
-        <article className="summary-card comparison-summary-card">
+          <p>누르면 아래 영역에서 기존처럼 `OCR검증`, `검증규칙관리`, `데이터`, `결과물`, `분류`, `수식` 메뉴를 볼 수 있습니다.</p>
+        </button>
+        <button
+          className={`summary-card summary-switch-card ${topView === "final-output" ? "active" : ""}`}
+          onClick={() => setTopView("final-output")}
+        >
           <div className="section-title">
             <div>
               <span className="summary-label">최종결과물</span>
               <strong className="summary-title">기업별 · 분기별 비교</strong>
             </div>
-            <span className="soft-badge">최대 4개 비교</span>
+            <span className="soft-badge">항목 + 4개 결과물</span>
           </div>
-          <div className="comparison-picker">
-            {savedDatasets.map((dataset) => {
-              const selected = comparisonDatasetIds.includes(dataset.id);
-              return (
-                <button
-                  key={`compare-pick-${dataset.id}`}
-                  className={`comparison-chip ${selected ? "active" : ""}`}
-                  onClick={() => toggleComparisonDataset(dataset.id)}
-                >
-                  {buildDatasetOptionLabel(dataset)}
-                </button>
-              );
-            })}
-            {!savedDatasets.length && <span className="muted">저장된 결과물이 생기면 여기서 비교 대상을 고를 수 있습니다.</span>}
-          </div>
-          {!!comparisonColumns.length && (
-            <div className="report-table-wrap summary-compare-wrap">
-              <table className="table report-table comparison-table">
-                <thead>
-                  <tr>
-                    <th>항목</th>
-                    {comparisonColumns.map((column) => (
-                      <th key={`compare-head-${column.datasetId}`}>
-                        <div className="final-period-head">
-                          <span>{column.companyName}</span>
-                          <small>{column.quarterLabel}</small>
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparisonColumns[0].finalSections.map((section) => (
-                    <Fragment key={`summary-section-${section.title}`}>
-                      <tr className="comparison-section-row">
-                        <td colSpan={comparisonColumns.length + 1}>{section.title}</td>
-                      </tr>
-                      {section.rows.map((row) => (
-                        <tr key={`summary-row-${section.title}-${row.label}`}>
-                          <td className="formula-label-cell">{row.label}</td>
-                          {comparisonColumns.map((column) => {
-                            const sectionMatch = column.finalSections.find((item) => item.title === section.title);
-                            const rowMatch = sectionMatch?.rows.find((item) => item.label === row.label);
-                            const periodKey = rowMatch ? Object.keys(rowMatch.amounts)[0] : "";
-                            const amount = periodKey ? rowMatch?.amounts[periodKey] ?? null : null;
-                            const ratio = periodKey ? rowMatch?.ratios[periodKey] ?? null : null;
-                            return (
-                              <td key={`summary-value-${column.datasetId}-${section.title}-${row.label}`}>
-                                <div className="comparison-value-cell">
-                                  <strong>{formatMetricValue(rowMatch ?? row, amount)}</strong>
-                                  <span className="muted">비율 {formatMetricRatio(ratio)}</span>
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {!!savedDatasets.length && !comparisonColumns.length && <p>비교할 결과물을 1개 이상 선택해 주세요.</p>}
-        </article>
+          <p>누르면 아래 영역이 5열 비교표로 바뀌고, 각 결과물 열에서 기업명과 분기를 골라 데이터를 채울 수 있습니다.</p>
+        </button>
       </section>
 
-      <section className="layout-grid">
+      {topView === "menu" && <section className="layout-grid">
         <aside className="panel sidebar">
           <div className="side-nav-card">
             <span className="section-kicker">메뉴</span>
@@ -1697,7 +1691,89 @@ export function ValidatorApp() {
           )}
 
         </section>
-      </section>
+      </section>}
+
+      {topView === "final-output" && (
+        <section className="panel final-output-compare-panel">
+          <div className="section-title">
+            <div>
+              <span className="section-kicker">최종결과물 비교</span>
+              <h2>기업별 · 분기별 4개 결과물 비교</h2>
+              <p className="panel-desc">왼쪽은 항목, 오른쪽 4개 열은 각각 다른 기업과 분기를 선택해 채우는 구조입니다.</p>
+            </div>
+          </div>
+
+          {!savedDatasets.length && <div className="notice">저장된 결과물이 없습니다. 먼저 `OCR검증`에서 데이터를 저장해 주세요.</div>}
+
+          {!!savedDatasets.length && (
+            <div className="report-table-wrap summary-compare-wrap">
+              <table className="table report-table comparison-table fixed-comparison-table">
+                <thead>
+                  <tr>
+                    <th>항목</th>
+                    {comparisonSelections.map((selection, index) => {
+                      const quarterOptions = savedDatasets.filter((item) => item.companyName === selection.companyName);
+                      return (
+                        <th key={`compare-head-${selection.slotId}`}>
+                          <div className="comparison-head-cell">
+                            <strong>{`결과물 ${index + 1}`}</strong>
+                            <select
+                              className="select"
+                              value={selection.companyName}
+                              onChange={(event) => updateComparisonCompany(selection.slotId, event.target.value)}
+                            >
+                              <option value="">기업 선택</option>
+                              {comparisonCompanyOptions.map((company) => (
+                                <option key={`${selection.slotId}-${company}`} value={company}>{company}</option>
+                              ))}
+                            </select>
+                            <select
+                              className="select"
+                              value={selection.datasetId}
+                              onChange={(event) => updateComparisonQuarter(selection.slotId, event.target.value)}
+                              disabled={!selection.companyName}
+                            >
+                              <option value="">분기 선택</option>
+                              {quarterOptions.map((dataset) => (
+                                <option key={`${selection.slotId}-${dataset.id}`} value={dataset.id}>{dataset.quarterLabel}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(resultReporting.finalSections.length ? resultReporting.finalSections : comparisonColumns[0]?.finalSections ?? []).map((section) => (
+                    <Fragment key={`summary-section-${section.title}`}>
+                      <tr className="comparison-section-row">
+                        <td colSpan={comparisonSelections.length + 1}>{section.title}</td>
+                      </tr>
+                      {section.rows.map((row) => (
+                        <tr key={`summary-row-${section.title}-${row.label}`}>
+                          <td className="formula-label-cell comparison-item-cell">{row.label}</td>
+                          {comparisonSelections.map((selection) => {
+                            const metric = findComparisonMetric(section.title, row.label, selection.slotId);
+                            return (
+                              <td key={`summary-value-${selection.slotId}-${section.title}-${row.label}`}>
+                                <div className="comparison-value-cell">
+                                  <strong>{metric ? formatMetricValue(metric.row, metric.amount) : "-"}</strong>
+                                  <span className="muted">비율 {metric ? formatMetricRatio(metric.ratio) : "-"}</span>
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
     </main>
   );
 }
