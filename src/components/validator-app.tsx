@@ -2,9 +2,13 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
+  DEFAULT_CLASSIFICATION_CATALOG,
   DEFAULT_CLASSIFICATION_GROUPS,
   DEFAULT_COMPANY_CONFIGS,
   DEFAULT_LOGIC_CONFIG,
+  classificationCatalogToGroups,
+  classificationGroupsToCatalog,
+  type ClassificationCatalogGroup,
   type ClassificationGroups,
   type CompanyConfigs,
   type LogicConfig,
@@ -42,11 +46,6 @@ type OverrideRow = {
   section: string;
   keyword: string;
   sign: SignCode;
-};
-
-type ClassificationRow = {
-  canonicalKey: string;
-  aliases: string;
 };
 
 type ComparisonColumn = {
@@ -253,19 +252,96 @@ function rowsToOverrides(rows: OverrideRow[]) {
   }, {});
 }
 
-function classificationGroupsToRows(groups: ClassificationGroups): ClassificationRow[] {
-  return Object.entries(groups).map(([canonicalKey, aliases]) => ({ canonicalKey, aliases: aliases.join("\n") }));
+function cloneClassificationCatalog(catalog: ClassificationCatalogGroup[]) {
+  try {
+    return structuredClone(catalog);
+  } catch {
+    return structuredClone(DEFAULT_CLASSIFICATION_CATALOG);
+  }
 }
 
-function rowsToClassificationGroups(rows: ClassificationRow[]) {
-  return rows.reduce<ClassificationGroups>((acc, row) => {
-    const canonicalKey = row.canonicalKey.trim();
-    if (!canonicalKey) {
-      return acc;
-    }
-    acc[canonicalKey] = parseKeywordList(row.aliases);
-    return acc;
-  }, {});
+function parseClassificationCatalogText(text: string) {
+  const grouped = new Map<string, ClassificationCatalogGroup>();
+
+  text.split(/\r?\n/)
+    .map((line) => line.split("\t").map((item) => item.trim()))
+    .forEach((columns) => {
+      const values = columns.filter(Boolean);
+      if (!values.length) {
+        return;
+      }
+
+      const groupId = columns[columns.length - 1]?.trim();
+      if (!groupId || !/^\d+$/.test(groupId)) {
+        return;
+      }
+
+      const majorCategory = columns[0] ?? "";
+      const middleCategory = columns[1] ?? "";
+      const smallCategory = columns[2] ?? "";
+      const sign = columns[3] ?? "";
+      const canonicalCandidate = columns[4] ?? "";
+      const aliasCandidate = columns.slice(4, -1).filter(Boolean).at(-1) ?? "";
+      const current = grouped.get(groupId) ?? {
+        groupId,
+        majorCategory,
+        middleCategory,
+        smallCategory,
+        sign,
+        canonicalKey: "",
+        aliases: []
+      } satisfies ClassificationCatalogGroup;
+
+      current.majorCategory ||= majorCategory;
+      current.middleCategory ||= middleCategory;
+      current.smallCategory ||= smallCategory;
+      current.sign ||= sign;
+      current.canonicalKey ||= canonicalCandidate || aliasCandidate;
+
+      [sign, canonicalCandidate, aliasCandidate]
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .forEach((item) => {
+          if (item !== current.canonicalKey) {
+            current.aliases.push(item);
+          }
+        });
+
+      current.aliases = Array.from(new Set(current.aliases));
+      grouped.set(groupId, current);
+    });
+
+  return Array.from(grouped.values()).filter((item) => item.canonicalKey.trim());
+}
+
+function buildClassificationCatalogText(catalog: ClassificationCatalogGroup[]) {
+  return catalog.flatMap((group) => {
+    const lines = [[
+      group.majorCategory,
+      group.middleCategory,
+      group.smallCategory,
+      group.sign,
+      group.canonicalKey,
+      "",
+      "",
+      group.groupId
+    ].join("\t")];
+
+    group.aliases.forEach((alias) => {
+      lines.push([
+        group.majorCategory,
+        group.middleCategory,
+        group.smallCategory,
+        "",
+        "",
+        "",
+        alias,
+        group.groupId
+      ].join("\t"));
+    });
+
+    return lines;
+  }).join("\n");
 }
 
 function sortSavedDatasets(items: SavedQuarterSnapshot[]) {
@@ -445,13 +521,14 @@ export function ValidatorApp() {
   const [logicConfig, setLogicConfig] = useState<LogicConfig>(cloneLogicConfig(DEFAULT_LOGIC_CONFIG));
   const [companyConfigs, setCompanyConfigs] = useState<CompanyConfigs>(cloneCompanyConfigs(DEFAULT_COMPANY_CONFIGS));
   const [classificationGroups, setClassificationGroups] = useState<ClassificationGroups>(cloneClassificationGroups(DEFAULT_CLASSIFICATION_GROUPS));
+  const [classificationCatalog, setClassificationCatalog] = useState<ClassificationCatalogGroup[]>(cloneClassificationCatalog(DEFAULT_CLASSIFICATION_CATALOG));
   const [pasteEdits, setPasteEdits] = useState<Record<string, number>>({});
   const [sessionSignFixes, setSessionSignFixes] = useState<SessionSignFixes>({});
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
-  const [classificationRows, setClassificationRows] = useState<ClassificationRow[]>(classificationGroupsToRows(DEFAULT_CLASSIFICATION_GROUPS));
-  const [classificationHistory, setClassificationHistory] = useState<ClassificationRow[][]>([]);
+  const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
+  const [classificationImportText, setClassificationImportText] = useState("");
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
@@ -468,9 +545,9 @@ export function ValidatorApp() {
     setLogicConfig(cloneLogicConfig(persisted.logicConfig));
     setCompanyConfigs(cloneCompanyConfigs(persisted.companyConfigs));
     setClassificationGroups(cloneClassificationGroups(persisted.classificationGroups));
+    setClassificationCatalog(cloneClassificationCatalog(persisted.classificationCatalog));
     setGlobalOverrideRows(overridesToRows(persisted.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(persisted.logicConfig.pasteSectToParent));
-    setClassificationRows(classificationGroupsToRows(persisted.classificationGroups));
     setSavedDatasets(saved);
     if (saved[0]?.id) {
       setSelectedDatasetId(saved[0].id);
@@ -485,9 +562,9 @@ export function ValidatorApp() {
     }
     window.localStorage.setItem(
       STORAGE_KEYS.config,
-      JSON.stringify({ logicConfig, companyConfigs, classificationGroups })
+      JSON.stringify({ logicConfig, companyConfigs, classificationCatalog, classificationGroups })
     );
-  }, [mounted, logicConfig, companyConfigs, classificationGroups]);
+  }, [mounted, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
 
   useEffect(() => {
     if (!mounted) {
@@ -660,7 +737,9 @@ export function ValidatorApp() {
     setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
     setLogicConfig(cloneLogicConfig(dataset.source.logicConfig));
     setCompanyConfigs(cloneCompanyConfigs(dataset.source.companyConfigs));
-    setClassificationRows(classificationGroupsToRows(classificationGroups));
+    const nextGroups = cloneClassificationGroups(dataset.source.classificationGroups ?? classificationGroups);
+    setClassificationGroups(nextGroups);
+    setClassificationCatalog(classificationGroupsToCatalog(nextGroups));
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
   }
@@ -776,10 +855,20 @@ export function ValidatorApp() {
     applySessionFix(sect, acct, nextSign);
   }
 
-  function applyClassificationGroups(nextGroups: ClassificationGroups, showFeedback = false) {
-    const clonedGroups = cloneClassificationGroups(nextGroups);
-    setClassificationGroups(clonedGroups);
-    setClassificationRows(classificationGroupsToRows(clonedGroups));
+  function applyClassificationCatalog(nextCatalog: ClassificationCatalogGroup[], showFeedback = false) {
+    const clonedCatalog = cloneClassificationCatalog(nextCatalog).map((item) => ({
+      ...item,
+      groupId: item.groupId.trim(),
+      majorCategory: item.majorCategory.trim(),
+      middleCategory: item.middleCategory.trim(),
+      smallCategory: item.smallCategory.trim(),
+      sign: item.sign.trim(),
+      canonicalKey: item.canonicalKey.trim(),
+      aliases: Array.from(new Set(item.aliases.map((alias) => alias.trim()).filter(Boolean)))
+    })).filter((item) => item.canonicalKey);
+    const nextGroups = classificationCatalogToGroups(clonedCatalog);
+    setClassificationCatalog(clonedCatalog);
+    setClassificationGroups(nextGroups);
     setClassificationHistory([]);
 
     if (showFeedback) {
@@ -788,8 +877,8 @@ export function ValidatorApp() {
     }
   }
 
-  function updateClassificationRows(updater: (prev: ClassificationRow[]) => ClassificationRow[]) {
-    setClassificationRows((prev) => {
+  function updateClassificationCatalog(updater: (prev: ClassificationCatalogGroup[]) => ClassificationCatalogGroup[]) {
+    setClassificationCatalog((prev) => {
       setClassificationHistory((history) => [...history, prev]);
       return updater(prev);
     });
@@ -801,7 +890,7 @@ export function ValidatorApp() {
       if (!last) {
         return prev;
       }
-      setClassificationRows(last);
+      setClassificationCatalog(last);
       return prev.slice(0, -1);
     });
   }
@@ -849,9 +938,11 @@ export function ValidatorApp() {
     setLogicConfig(cloneLogicConfig(defaults.logicConfig));
     setCompanyConfigs(cloneCompanyConfigs(defaults.companyConfigs));
     setClassificationGroups(cloneClassificationGroups(defaults.classificationGroups));
+    setClassificationCatalog(cloneClassificationCatalog(defaults.classificationCatalog));
     setGlobalOverrideRows(overridesToRows(defaults.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(defaults.logicConfig.pasteSectToParent));
-    setClassificationRows(classificationGroupsToRows(defaults.classificationGroups));
+    setClassificationHistory([]);
+    setClassificationImportText("");
   }
 
   function saveConfigEditors() {
@@ -872,10 +963,19 @@ export function ValidatorApp() {
       }));
     }
 
-    applyClassificationGroups(rowsToClassificationGroups(classificationRows));
+    applyClassificationCatalog(classificationCatalog);
   }
 
-  const configPayload = JSON.stringify({ logicConfig, companyConfigs, classificationGroups }, null, 2);
+  function importClassificationCatalog() {
+    const parsed = parseClassificationCatalogText(classificationImportText);
+    if (!parsed.length) {
+      return;
+    }
+    setClassificationCatalog(parsed);
+    setClassificationHistory([]);
+  }
+
+  const configPayload = JSON.stringify({ logicConfig, companyConfigs, classificationCatalog, classificationGroups }, null, 2);
 
   function buildInputBreakdown(periodKey: string, input: MetricCalculationInput) {
     if (input.components && input.components.length) {
@@ -1651,49 +1751,96 @@ export function ValidatorApp() {
                 <div className="section-title">
                   <div>
                     <span className="section-kicker">분류 기준</span>
-                    <h3>표준 항목 분류</h3>
-                    <p className="result-meta">인건비 아래에 급여, 상여, 퇴직급여 같은 하위 계정을 묶어 관리할 수 있게 정리했습니다. 여기서 추가/삭제하면 이후 결과물 계산에 반영됩니다.</p>
+                    <h3>번호 묶음 기준 분류</h3>
+                    <p className="result-meta">원본 계정은 그대로 두고, 같은 번호로 묶인 계정을 대표 항목 아래로 관리합니다. 표를 붙여넣어 한 번에 수정할 수 있습니다.</p>
                     {classificationSaveState === "saved" && (
                       <p className="save-feedback success">분류를 저장했고, 저장된 결과물도 현재 분류 기준으로 다시 계산했습니다.</p>
                     )}
                   </div>
                   <div className="inline-actions">
                     <button className="ghost-button" disabled={!classificationHistory.length} onClick={undoClassificationEdit}>되돌리기</button>
-                    <button className={`button ${classificationSaveState === "saved" ? "is-saved" : ""}`.trim()} onClick={() => applyClassificationGroups(rowsToClassificationGroups(classificationRows), true)}>
+                    <button className={`button ${classificationSaveState === "saved" ? "is-saved" : ""}`.trim()} onClick={() => applyClassificationCatalog(classificationCatalog, true)}>
                       {classificationSaveState === "saved" ? "분류 저장됨" : "분류 저장"}
                     </button>
                   </div>
                 </div>
               </section>
 
-              <section className="classification-grid">
-                {classificationRows.map((row, index) => (
-                  <article className="config-card classification-card" key={`classification-${index}`}>
-                    <div className="section-title">
-                        <input
-                          className="input"
-                          value={row.canonicalKey}
-                          placeholder="표준 항목명"
-                          onChange={(event) => updateClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))}
-                        />
-                       <button className="danger-button" onClick={() => updateClassificationRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
-                     </div>
-                     <label className="field">
-                       <span>하위 계정 목록</span>
-                       <textarea
-                         className="textarea classification-textarea"
-                         value={row.aliases}
-                         placeholder="급여&#10;상여금&#10;퇴직급여"
-                         onChange={(event) => updateClassificationRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: event.target.value } : item))}
-                       />
-                     </label>
-                   </article>
-                 ))}
-               </section>
-
-               <div className="inline-actions">
-                 <button className="ghost-button" onClick={() => updateClassificationRows((prev) => [...prev, { canonicalKey: "", aliases: "" }])}>분류 항목 추가</button>
+              <section className="config-card">
+                <div className="section-title">
+                  <div>
+                    <h3>기준표 붙여넣기</h3>
+                    <p className="muted">`대분류 / 중분류 / 소분류 / 양음 / 대표항목 / 원본계정 / 번호` 형태의 탭 구분표를 붙여넣으면 번호별 묶음으로 변환합니다.</p>
+                  </div>
+                  <div className="inline-actions">
+                    <button className="ghost-button" onClick={() => setClassificationImportText(buildClassificationCatalogText(classificationCatalog))}>현재 분류표 불러오기</button>
+                    <button className="button" onClick={importClassificationCatalog}>붙여넣기 반영</button>
+                  </div>
                 </div>
+                <textarea
+                  className="textarea classification-textarea"
+                  value={classificationImportText}
+                  onChange={(event) => setClassificationImportText(event.target.value)}
+                  placeholder={"자산\t유동자산\t당좌자산\t\t현금및현금성자산\t\t\t1000000\n자산\t유동자산\t당좌자산\t\t\t\t현금\t1000000"}
+                />
+              </section>
+
+              <section className="config-card">
+                <div className="section-title">
+                  <div>
+                    <h3>번호 묶음 편집</h3>
+                    <p className="muted">대표 항목과 하위 원본 계정 목록을 한 행에서 관리합니다.</p>
+                  </div>
+                  <div className="inline-actions">
+                    <button className="ghost-button" onClick={() => updateClassificationCatalog((prev) => [...prev, {
+                      groupId: `${Date.now()}`,
+                      majorCategory: "",
+                      middleCategory: "",
+                      smallCategory: "",
+                      sign: "",
+                      canonicalKey: "",
+                      aliases: []
+                    }])}>분류 묶음 추가</button>
+                  </div>
+                </div>
+                <div className="report-table-wrap">
+                  <table className="table report-table formula-table classification-table">
+                    <thead>
+                      <tr>
+                        <th>번호</th>
+                        <th>대표항목</th>
+                        <th>대분류</th>
+                        <th>중분류</th>
+                        <th>소분류</th>
+                        <th>양/음</th>
+                        <th>원본 계정 목록</th>
+                        <th>삭제</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {classificationCatalog.map((group, index) => (
+                        <tr key={`classification-group-${group.groupId}-${index}`}>
+                          <td><input className="input" value={group.groupId} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, groupId: event.target.value } : item))} /></td>
+                          <td><input className="input" value={group.canonicalKey} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))} /></td>
+                          <td><input className="input" value={group.majorCategory} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, majorCategory: event.target.value } : item))} /></td>
+                          <td><input className="input" value={group.middleCategory} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, middleCategory: event.target.value } : item))} /></td>
+                          <td><input className="input" value={group.smallCategory} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, smallCategory: event.target.value } : item))} /></td>
+                          <td><input className="input" value={group.sign} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: event.target.value } : item))} /></td>
+                          <td>
+                            <textarea
+                              className="textarea classification-textarea"
+                              value={group.aliases.join("\n")}
+                              onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: parseKeywordList(event.target.value) } : item))}
+                              placeholder="현금&#10;보통예금&#10;외화보통예금"
+                            />
+                          </td>
+                          <td><button className="danger-button" onClick={() => updateClassificationCatalog((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             </>
           )}
 

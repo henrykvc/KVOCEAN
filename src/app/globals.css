@@ -1063,6 +1063,15 @@ a {
   min-height: 180px;
 }
 
+.classification-table td {
+  vertical-align: top;
+}
+
+.classification-table .classification-textarea {
+  min-width: 220px;
+  min-height: 120px;
+}
+
 .data-list {
   display: flex;
   flex-direction: column;

@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 
 export type ParsedPaste = {
   catRow: string[];
@@ -68,6 +68,7 @@ export function pasteEditKey(rowIndex: number, colIndex: number) {
 export type PersistedState = {
   logicConfig: LogicConfig;
   companyConfigs: CompanyConfigs;
+  classificationCatalog: ClassificationCatalogGroup[];
   classificationGroups: ClassificationGroups;
 };
 
@@ -80,8 +81,24 @@ export function getDefaultPersistedState(): PersistedState {
   return {
     logicConfig: structuredClone(DEFAULT_LOGIC_CONFIG),
     companyConfigs: structuredClone(DEFAULT_COMPANY_CONFIGS),
+    classificationCatalog: structuredClone(DEFAULT_CLASSIFICATION_CATALOG),
     classificationGroups: structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
   };
+}
+
+function isClassificationCatalogGroup(value: unknown): value is ClassificationCatalogGroup {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const item = value as Partial<ClassificationCatalogGroup>;
+  return typeof item.groupId === "string"
+    && typeof item.majorCategory === "string"
+    && typeof item.middleCategory === "string"
+    && typeof item.smallCategory === "string"
+    && typeof item.sign === "string"
+    && typeof item.canonicalKey === "string"
+    && Array.isArray(item.aliases);
 }
 
 function sanitizeClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
@@ -116,10 +133,21 @@ export function parsePersistedState(raw: string | null): PersistedState {
 
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    const parsedCatalog = Array.isArray(parsed.classificationCatalog)
+      ? parsed.classificationCatalog.filter(isClassificationCatalogGroup)
+      : [];
+    const legacyGroups = mergeClassificationGroups(fallback.classificationGroups, parsed.classificationGroups ?? {});
+    const classificationCatalog = parsedCatalog.length
+      ? parsedCatalog
+      : classificationGroupsToCatalog(legacyGroups);
+    const classificationGroups = parsedCatalog.length
+      ? classificationCatalogToGroups(classificationCatalog)
+      : legacyGroups;
     return {
       logicConfig: { ...fallback.logicConfig, ...(parsed.logicConfig ?? {}) },
       companyConfigs: { ...fallback.companyConfigs, ...(parsed.companyConfigs ?? {}) },
-      classificationGroups: mergeClassificationGroups(fallback.classificationGroups, parsed.classificationGroups ?? {})
+      classificationCatalog,
+      classificationGroups
     };
   } catch {
     return fallback;

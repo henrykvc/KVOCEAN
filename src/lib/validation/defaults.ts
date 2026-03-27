@@ -17,6 +17,15 @@ export type CompanyConfig = {
 
 export type CompanyConfigs = Record<string, CompanyConfig>;
 export type ClassificationGroups = Record<string, string[]>;
+export type ClassificationCatalogGroup = {
+  groupId: string;
+  majorCategory: string;
+  middleCategory: string;
+  smallCategory: string;
+  sign: string;
+  canonicalKey: string;
+  aliases: string[];
+};
 
 export const LAST_PATCH = "2026-03-19 17:55";
 
@@ -238,5 +247,34 @@ export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = {
   무형자산상각비: ["무형자산상각비", "무형고정자산상각", "무형자산상각"],
   사용권자산상각비: ["사용권자산상각비"]
 };
+
+export function classificationGroupsToCatalog(groups: ClassificationGroups): ClassificationCatalogGroup[] {
+  return Object.entries(groups).map(([canonicalKey, aliases], index) => ({
+    groupId: `${String(index + 1).padStart(4, "0")}000`,
+    majorCategory: "",
+    middleCategory: "",
+    smallCategory: "",
+    sign: "",
+    canonicalKey,
+    aliases: Array.from(new Set(aliases.filter((alias) => alias.trim() && alias.trim() !== canonicalKey.trim())))
+  }));
+}
+
+export const DEFAULT_CLASSIFICATION_CATALOG: ClassificationCatalogGroup[] = classificationGroupsToCatalog(DEFAULT_CLASSIFICATION_GROUPS);
+
+export function classificationCatalogToGroups(catalog: ClassificationCatalogGroup[]): ClassificationGroups {
+  return catalog.reduce<ClassificationGroups>((acc, item) => {
+    const canonicalKey = item.canonicalKey.trim();
+    if (!canonicalKey) {
+      return acc;
+    }
+
+    acc[canonicalKey] = Array.from(new Set([
+      canonicalKey,
+      ...item.aliases.map((alias) => alias.trim()).filter(Boolean)
+    ]));
+    return acc;
+  }, {});
+}
 
 export const COMPANY_LABELS = ["회사명", "회사", "법인명", "company", "Company"];
