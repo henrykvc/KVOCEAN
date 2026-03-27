@@ -140,6 +140,23 @@ const DERIVED_ACCOUNT_SUFFIXES = [
   "누계액"
 ] as const;
 
+const NET_NEGATIVE_SUFFIXES = new Set([
+  "음수",
+  "정부보조금",
+  "국고보조금",
+  "국가보조금",
+  "대손충당금",
+  "현할차",
+  "할인차금",
+  "할증차금",
+  "전환권조정",
+  "신주인수권조정",
+  "손상차손누계",
+  "감가상각누계",
+  "상환할증금",
+  "누계액"
+]);
+
 const BALANCE_SHEET_METRICS = new Set(["자산", "유동자산", "비유동자산", "부채", "유동부채", "비유동부채", "자본"]);
 const INCOME_STATEMENT_METRICS = new Set(["매출액", "매출원가", "판매비와관리비", "영업비용", "영업외수익", "영업외비용", "영업이익", "영업이익(손실)", "계속사업당기순이익", "당기순이익", "당기순손실"]);
 
@@ -267,6 +284,42 @@ function buildDerivedMetricCandidates(names: string[]) {
   });
 
   return Array.from(candidates);
+}
+
+function buildMetricCandidateSet(names: string[], classificationGroups: ClassificationGroups) {
+  const candidates = new Set<string>();
+
+  buildDerivedMetricCandidates(names).forEach((candidate) => {
+    candidates.add(normalizeText(candidate));
+    (classificationGroups[candidate] ?? ACCOUNT_ALIASES[candidate] ?? []).forEach((alias) => {
+      candidates.add(normalizeText(alias));
+    });
+  });
+
+  names.forEach((name) => {
+    (classificationGroups[name] ?? ACCOUNT_ALIASES[name] ?? []).forEach((alias) => {
+      candidates.add(normalizeText(alias));
+      const derived = resolveCanonicalAccountKey(alias, "기타", classificationGroups);
+      candidates.add(normalizeText(derived));
+    });
+  });
+
+  return candidates;
+}
+
+function getNetMetricRows(context: MetricContext, names: string[]) {
+  const candidateSet = buildMetricCandidateSet(names, context.classificationGroups);
+  return context.adjustedRows.filter((row) => {
+    const rowKey = normalizeText(row.canonicalKey || row.accountName);
+    const rowName = normalizeText(row.accountName);
+    return candidateSet.has(rowKey) || candidateSet.has(rowName);
+  });
+}
+
+function isNegativeNetRow(row: StatementMatrixRow) {
+  const rowKey = (row.canonicalKey || row.accountName).trim();
+  const derived = stripDerivedSuffix(rowKey) ?? stripDerivedSuffix(row.accountName);
+  return Boolean(derived?.suffix && NET_NEGATIVE_SUFFIXES.has(derived.suffix as typeof DERIVED_ACCOUNT_SUFFIXES[number]));
 }
 
 function dateLabelFromValue(value: string | number | Date | null | undefined) {
@@ -646,7 +699,7 @@ function compactCalculationInputs(inputs: Array<MetricCalculationInput | null>) 
 }
 
 function getNetMetricBreakdown(context: MetricContext, periodKey: string, names: string[]) {
-  return getClassifiedRows(context.adjustedRows, buildDerivedMetricCandidates(names), undefined, context.classificationGroups)
+  return getNetMetricRows(context, names)
     .map<MetricCalculationInput | null>((row) => {
       const value = row.values[periodKey];
       if (value === null || value === undefined) {
@@ -657,7 +710,10 @@ function getNetMetricBreakdown(context: MetricContext, periodKey: string, names:
         ? row.accountName
         : `${row.canonicalKey} ← ${row.accountName}`;
 
-      return { label, value } satisfies MetricCalculationInput;
+      return {
+        label,
+        value: isNegativeNetRow(row) ? -Math.abs(value) : value
+      } satisfies MetricCalculationInput;
     })
     .filter((item): item is MetricCalculationInput => item !== null);
 }
@@ -832,7 +888,22 @@ function getPreviousPeriod(context: MetricContext, period: ReportPeriod) {
 }
 
 function getNetMetricValue(context: MetricContext, periodKey: string, names: string[]) {
-  return getAdjustedMetricSum(context, periodKey, buildDerivedMetricCandidates(names));
+  const rows = getNetMetricRows(context, names);
+  if (!rows.length) {
+    return null;
+  }
+
+  const total = rows.reduce<number | null>((sum, row) => {
+    const value = row.values[periodKey];
+    if (value === null || value === undefined) {
+      return sum;
+    }
+
+    const signedValue = isNegativeNetRow(row) ? -Math.abs(value) : value;
+    return (sum ?? 0) + signedValue;
+  }, null);
+
+  return total;
 }
 
 function buildMetricRows(context: MetricContext, specs: MetricSpec[]) {
