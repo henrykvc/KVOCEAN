@@ -716,7 +716,8 @@ export function ValidatorApp() {
     return {
       row,
       amount: row.amounts[periodKey],
-      ratio: row.ratios[periodKey]
+      ratio: row.ratios[periodKey],
+      growthRate: row.growthRates[periodKey]
     };
   }
 
@@ -1510,8 +1511,10 @@ export function ValidatorApp() {
                                   {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
-                                        <strong>{row.label === "런웨이(E)" ? "기간" : "금액"} {formatMetricValue(row, row.amounts[period.key])}</strong>
-                                        <span className={`ratio-value ${row.ratios[period.key] === null || row.ratios[period.key] === undefined ? "" : row.ratios[period.key]! < 0 ? "negative" : row.ratios[period.key]! > 0 ? "positive" : ""}`.trim()}>
+                                        {(row.amounts[period.key] !== null && row.amounts[period.key] !== undefined) && (
+                                          <strong>{row.label === "런웨이(E)" ? "기간" : "금액"} {formatMetricValue(row, row.amounts[period.key])}</strong>
+                                        )}
+                                        <span className={`ratio-value ${row.amounts[period.key] === null || row.amounts[period.key] === undefined ? "ratio-only" : ""} ${row.ratios[period.key] === null || row.ratios[period.key] === undefined ? "" : row.ratios[period.key]! < 0 ? "negative" : row.ratios[period.key]! > 0 ? "positive" : ""}`.trim()}>
                                           비율 {formatMetricRatio(row.ratios[period.key])}
                                         </span>
                                         <span className="growth-value">
@@ -1825,8 +1828,13 @@ export function ValidatorApp() {
                             return (
                               <td key={`summary-value-${selection.slotId}-${section.title}-${row.label}`}>
                                 <div className="comparison-value-cell">
-                                  <strong>{metric ? formatMetricValue(metric.row, metric.amount) : "-"}</strong>
-                                  <span className="muted">비율 {metric ? formatMetricRatio(metric.ratio) : "-"}</span>
+                                  {(metric?.amount !== null && metric?.amount !== undefined) && (
+                                    <strong>{formatMetricValue(metric.row, metric.amount)}</strong>
+                                  )}
+                                  <span className={`ratio-value ${metric && (metric.amount === null || metric.amount === undefined) ? "ratio-only" : ""} ${metric?.ratio === null || metric?.ratio === undefined ? "" : metric.ratio < 0 ? "negative" : metric.ratio > 0 ? "positive" : ""}`.trim()}>
+                                    비율 {metric ? formatMetricRatio(metric.ratio) : "-"}
+                                  </span>
+                                  <span className="growth-value">전분기 {metric?.growthRate === null || metric?.growthRate === undefined ? "-" : `${metric.growthRate.toFixed(1)}%`}</span>
                                 </div>
                               </td>
                             );
