@@ -64,6 +64,8 @@ type ComparisonSelection = {
 
 type TopViewKey = "menu" | "final-output";
 
+const RATIO_ONLY_SECTION_TITLES = new Set(["안정성 비율", "수익성 비율", "활동성 비율", "성장성 비율"]);
+
 const DETAIL_DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
 const DETAIL_VARIABLE_COST_ALIASES = [
   "매출원가",
@@ -447,7 +449,6 @@ export function ValidatorApp() {
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
-  const [selectedResultCompany, setSelectedResultCompany] = useState<string>("");
   const [comparisonSelections, setComparisonSelections] = useState<ComparisonSelection[]>(buildInitialComparisonSelections([]));
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
@@ -466,7 +467,6 @@ export function ValidatorApp() {
     setSavedDatasets(saved);
     if (saved[0]?.id) {
       setSelectedDatasetId(saved[0].id);
-      setSelectedResultCompany(saved[0].companyName);
     }
     setComparisonSelections(buildInitialComparisonSelections(saved));
   }, []);
@@ -570,17 +570,9 @@ export function ValidatorApp() {
     () => savedDatasets.find((item) => item.id === selectedDatasetId) ?? null,
     [savedDatasets, selectedDatasetId]
   );
-  const companyDatasetOptions = useMemo(
-    () => Array.from(new Set(savedDatasets.map((item) => item.companyName))),
-    [savedDatasets]
-  );
-  const resultSnapshots = useMemo(
-    () => savedDatasets.filter((item) => item.companyName === selectedResultCompany),
-    [savedDatasets, selectedResultCompany]
-  );
   const resultReporting = useMemo(
-    () => buildCompanyReport(resultSnapshots, classificationGroups),
-    [resultSnapshots, classificationGroups]
+    () => buildCompanyReport(selectedDataset ? [selectedDataset] : [], classificationGroups),
+    [selectedDataset, classificationGroups]
   );
   const comparisonColumns = useMemo<ComparisonColumn[]>(
     () => comparisonSelections
@@ -640,8 +632,11 @@ export function ValidatorApp() {
       return sortSavedDatasets(next);
     });
     setSelectedDatasetId(snapshots[0]?.id ?? "");
-    setSelectedResultCompany(snapshots[0]?.companyName ?? "");
     setActiveTab("data");
+  }
+
+  function isRatioOnlySection(title: string) {
+    return RATIO_ONLY_SECTION_TITLES.has(title);
   }
 
   function loadDatasetIntoValidator(dataset: SavedQuarterSnapshot) {
@@ -1070,14 +1065,14 @@ export function ValidatorApp() {
             </>
           ) : (
             <div className="notice input-helper">
-              <strong>{activeTab === "data" ? "데이터 안내" : activeTab === "report" ? "결과물 안내" : "보조 기능"}</strong>
-              <p className="muted" style={{ marginTop: 8 }}>
-                {activeTab === "data"
-                  ? `저장된 검증 데이터 ${savedDatasets.length}건이 누적되어 있습니다. 필요한 항목을 선택해 다시 불러오거나 결과물로 보낼 수 있습니다.`
-                  : activeTab === "report"
-                    ? `${selectedResultCompany ? `${selectedResultCompany} 데이터` : "저장된 데이터"}를 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
-                    : activeTab === "classify"
-                      ? "표준 항목별 분류를 카드 형태로 수정할 수 있습니다. 계정명 추가/삭제 후 저장하면 이후 계산에 바로 반영됩니다."
+                      <strong>{activeTab === "data" ? "데이터 안내" : activeTab === "report" ? "결과물 안내" : "보조 기능"}</strong>
+                      <p className="muted" style={{ marginTop: 8 }}>
+                        {activeTab === "data"
+                          ? `저장된 검증 데이터 ${savedDatasets.length}건이 누적되어 있습니다. 필요한 항목을 선택해 다시 불러오거나 결과물로 보낼 수 있습니다.`
+                          : activeTab === "report"
+                            ? `${selectedDataset ? `${selectedDataset.companyName} ${selectedDataset.quarterLabel}` : "저장된 데이터"} 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
+                            : activeTab === "classify"
+                              ? "표준 항목별 분류를 카드 형태로 수정할 수 있습니다. 계정명 추가/삭제 후 저장하면 이후 계산에 바로 반영됩니다."
                     : activeTab === "formulas"
                       ? "결과물 계산에 쓰는 기준 수식을 그대로 정리했습니다."
                     : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
@@ -1336,91 +1331,22 @@ export function ValidatorApp() {
                     </div>
                     <div className="data-list">
                       {savedDatasets.map((dataset) => (
-                        <article className={`data-card ${selectedDatasetId === dataset.id ? "selected" : ""}`} key={dataset.id}>
-                          <div className="section-title">
-                            <div>
-                              <strong>{dataset.companyName}</strong>
-                              <p className="result-meta">기준 분기 {dataset.quarterLabel} / 저장 시각 {new Date(dataset.savedAt).toLocaleString("ko-KR")}</p>
-                            </div>
+                        <article className={`data-row-card ${selectedDatasetId === dataset.id ? "selected" : ""}`} key={dataset.id}>
+                          <button className="data-row-trigger" onClick={() => setSelectedDatasetId((prev) => prev === dataset.id ? "" : dataset.id)}>
+                            <strong>{dataset.companyName}</strong>
                             <span className="soft-badge">{dataset.quarterLabel}</span>
-                          </div>
-                          <div className="inline-actions" style={{ marginTop: 12 }}>
-                            <button className="secondary-button" onClick={() => { setSelectedDatasetId(dataset.id); setSelectedResultCompany(dataset.companyName); setActiveTab("report"); }}>결과물 보기</button>
-                            <button className="ghost-button" onClick={() => loadDatasetIntoValidator(dataset)}>검증기로 불러오기</button>
-                            <button className="danger-button" onClick={() => deleteDataset(dataset.id)}>삭제</button>
-                          </div>
+                          </button>
+                          {selectedDatasetId === dataset.id && (
+                            <div className="data-row-actions">
+                              <button className="secondary-button" onClick={() => { setSelectedDatasetId(dataset.id); setActiveTab("report"); }}>결과물 보기</button>
+                              <button className="ghost-button" onClick={() => loadDatasetIntoValidator(dataset)}>검증기로 불러오기</button>
+                              <button className="danger-button" onClick={() => deleteDataset(dataset.id)}>삭제</button>
+                            </div>
+                          )}
                         </article>
                       ))}
                     </div>
                   </section>
-
-                  {selectedDataset && (
-                    <section className="report-grid">
-                      <article className="config-card">
-                        <div className="section-title">
-                          <div>
-                            <h3>재무제표</h3>
-                            <p className="result-meta">선택한 분기의 OCR 수정값 기준 원장</p>
-                          </div>
-                          <span className="soft-badge">{selectedDataset.quarterLabel}</span>
-                        </div>
-                        <div className="report-table-wrap">
-                          <table className="table report-table">
-                            <thead>
-                              <tr>
-                                <th>양음</th>
-                                <th>섹션</th>
-                                <th>계정명</th>
-                                <th>{selectedDataset.quarterLabel}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {selectedDataset.rawStatementRows.map((row) => (
-                                <tr key={`saved-raw-${selectedDataset.id}-${row.section}-${row.accountName}`}>
-                                  <td>{row.signFlag}</td>
-                                  <td>{row.section}</td>
-                                  <td>{row.accountName}</td>
-                                  <td>{formatNumber(row.value)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </article>
-
-                      <article className="config-card">
-                        <div className="section-title">
-                          <div>
-                            <h3>재무제표_음양반영</h3>
-                            <p className="result-meta">선택한 분기의 검증 규칙 반영 원장</p>
-                          </div>
-                          <span className="soft-badge">분석 레이어</span>
-                        </div>
-                        <div className="report-table-wrap">
-                          <table className="table report-table">
-                            <thead>
-                              <tr>
-                                <th>양음</th>
-                                <th>섹션</th>
-                                <th>계정명</th>
-                                <th>{selectedDataset.quarterLabel}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {selectedDataset.adjustedStatementRows.map((row) => (
-                                <tr key={`saved-adj-${selectedDataset.id}-${row.section}-${row.accountName}`}>
-                                  <td>{row.signFlag}</td>
-                                  <td>{row.section}</td>
-                                  <td>{row.accountName}</td>
-                                  <td>{formatNumber(row.value)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </article>
-                    </section>
-                  )}
                 </>
               )}
             </>
@@ -1440,11 +1366,6 @@ export function ValidatorApp() {
                         <p className="result-meta">엑셀의 `재무제표 → 재무제표_음양반영 → 최종결과물` 흐름을 현재 입력 데이터 기준으로 바로 보여줍니다.</p>
                       </div>
                       <div className="result-actions">
-                        {companyDatasetOptions.length > 1 && (
-                          <select className="select report-company-select" value={selectedResultCompany} onChange={(event) => setSelectedResultCompany(event.target.value)}>
-                            {companyDatasetOptions.map((company) => <option key={company} value={company}>{company}</option>)}
-                          </select>
-                        )}
                         {resultReporting.periods.map((period) => (
                           <span className="soft-badge" key={period.key}>{period.label}</span>
                         ))}
@@ -1495,6 +1416,7 @@ export function ValidatorApp() {
                                   {(() => {
                                     const metricKey = buildReportMetricKey(section.title, row.label);
                                     const metricExpanded = expandedReportMetrics[metricKey] ?? false;
+                                    const ratioOnlySection = isRatioOnlySection(section.title);
                                     return (
                                       <>
                                 <tr key={`${section.title}-${row.label}-value`} className="final-value-row separated-row">
@@ -1511,10 +1433,10 @@ export function ValidatorApp() {
                                   {resultReporting.periods.map((period) => (
                                     <td key={`${row.label}-${period.key}-value`}>
                                       <div className="final-metric-cell">
-                                        {(row.amounts[period.key] !== null && row.amounts[period.key] !== undefined) && (
+                                        {!ratioOnlySection && (
                                           <strong>{row.label === "런웨이(E)" ? "기간" : "금액"} {formatMetricValue(row, row.amounts[period.key])}</strong>
                                         )}
-                                        <span className={`ratio-value ${row.amounts[period.key] === null || row.amounts[period.key] === undefined ? "ratio-only" : ""} ${row.ratios[period.key] === null || row.ratios[period.key] === undefined ? "" : row.ratios[period.key]! < 0 ? "negative" : row.ratios[period.key]! > 0 ? "positive" : ""}`.trim()}>
+                                        <span className={`ratio-value ${ratioOnlySection ? "ratio-only" : ""} ${row.ratios[period.key] === null || row.ratios[period.key] === undefined ? "" : row.ratios[period.key]! < 0 ? "negative" : row.ratios[period.key]! > 0 ? "positive" : ""}`.trim()}>
                                           비율 {formatMetricRatio(row.ratios[period.key])}
                                         </span>
                                         <span className="growth-value">
@@ -1825,13 +1747,14 @@ export function ValidatorApp() {
                           <td className="formula-label-cell comparison-item-cell">{row.label}</td>
                           {comparisonSelections.map((selection) => {
                             const metric = findComparisonMetric(section.title, row.label, selection.slotId);
+                            const ratioOnlySection = isRatioOnlySection(section.title);
                             return (
                               <td key={`summary-value-${selection.slotId}-${section.title}-${row.label}`}>
                                 <div className="comparison-value-cell">
-                                  {(metric?.amount !== null && metric?.amount !== undefined) && (
-                                    <strong>{formatMetricValue(metric.row, metric.amount)}</strong>
+                                  {!ratioOnlySection && (
+                                    <strong>{metric ? formatMetricValue(metric.row, metric.amount) : "-"}</strong>
                                   )}
-                                  <span className={`ratio-value ${metric && (metric.amount === null || metric.amount === undefined) ? "ratio-only" : ""} ${metric?.ratio === null || metric?.ratio === undefined ? "" : metric.ratio < 0 ? "negative" : metric.ratio > 0 ? "positive" : ""}`.trim()}>
+                                  <span className={`ratio-value ${ratioOnlySection ? "ratio-only" : ""} ${metric?.ratio === null || metric?.ratio === undefined ? "" : metric.ratio < 0 ? "negative" : metric.ratio > 0 ? "positive" : ""}`.trim()}>
                                     비율 {metric ? formatMetricRatio(metric.ratio) : "-"}
                                   </span>
                                   <span className="growth-value">전분기 {metric?.growthRate === null || metric?.growthRate === undefined ? "-" : `${metric.growthRate.toFixed(1)}%`}</span>

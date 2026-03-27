@@ -1085,11 +1085,49 @@ a {
 .data-list {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.data-row-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.data-row-card.selected {
+  border-color: rgba(49, 130, 246, 0.4);
+  box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.08);
+}
+
+.data-row-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  text-align: left;
+}
+
+.data-row-trigger strong {
+  font-size: 14px;
+}
+
+.data-row-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 12px;
+  border-top: 1px solid #eef2f6;
+  background: #fbfcfe;
+}
+
+.data-row-actions button {
+  margin-top: 10px;
 }
 
 .data-card {
-  padding: 16px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
