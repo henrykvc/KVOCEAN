@@ -803,22 +803,26 @@ function buildMetricRows(context: MetricContext, specs: MetricSpec[]) {
 
       const previous = context.periods[index + 1];
       const previousAmount = previous && spec.amount ? spec.amount(previous, context) : null;
-      growthRates[period.key] = currentAmount !== null && previousAmount !== null && previousAmount !== 0
-        ? ((currentAmount - previousAmount) / Math.abs(previousAmount)) * 100
+      const previousRatio = previous && spec.ratio ? spec.ratio(previous, context) : null;
+      const growthBaseCurrent = currentAmount ?? currentRatio;
+      const growthBasePrevious = previousAmount ?? previousRatio;
+      const growthLabel = currentAmount !== null || previousAmount !== null ? "금액" : "비율";
+      growthRates[period.key] = growthBaseCurrent !== null && growthBasePrevious !== null && growthBasePrevious !== 0
+        ? ((growthBaseCurrent - growthBasePrevious) / Math.abs(growthBasePrevious)) * 100
         : null;
 
-      if (spec.amount) {
+      if (spec.amount || spec.ratio) {
         details[period.key].growthRate = createCalculationDetail(
-          "(당기 금액 - 전분기 금액) / |전분기 금액| * 100",
+          `(당기 ${growthLabel} - 전분기 ${growthLabel}) / |전분기 ${growthLabel}| * 100`,
           growthRates[period.key],
           [
-            { label: "당기 금액", value: currentAmount },
-            { label: previous ? "전분기 금액" : "비교 전분기 금액", value: previousAmount }
+            { label: `당기 ${growthLabel}`, value: growthBaseCurrent },
+            { label: previous ? `전분기 ${growthLabel}` : `비교 전분기 ${growthLabel}`, value: growthBasePrevious }
           ],
           !previous
             ? "이전 분기가 없어 증감율을 계산하지 않았습니다."
-            : previousAmount === 0
-              ? "전분기 금액이 0이라 증감율을 계산하지 않았습니다."
+            : growthBasePrevious === 0
+              ? `전분기 ${growthLabel}이 0이라 증감율을 계산하지 않았습니다.`
               : undefined
         );
       }
