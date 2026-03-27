@@ -641,6 +641,27 @@ function getClassifiedMetricBreakdown(context: MetricContext, periodKey: string,
     .filter((item): item is MetricCalculationInput => item !== null);
 }
 
+function compactCalculationInputs(inputs: Array<MetricCalculationInput | null>) {
+  return inputs.filter((item): item is MetricCalculationInput => item !== null && item.value !== null && item.value !== undefined);
+}
+
+function getNetMetricBreakdown(context: MetricContext, periodKey: string, names: string[]) {
+  return getClassifiedRows(context.adjustedRows, buildDerivedMetricCandidates(names), undefined, context.classificationGroups)
+    .map<MetricCalculationInput | null>((row) => {
+      const value = row.values[periodKey];
+      if (value === null || value === undefined) {
+        return null;
+      }
+
+      const label = row.accountName === row.canonicalKey
+        ? row.accountName
+        : `${row.canonicalKey} ← ${row.accountName}`;
+
+      return { label, value } satisfies MetricCalculationInput;
+    })
+    .filter((item): item is MetricCalculationInput => item !== null);
+}
+
 function getMetricValue(context: MetricContext, periodKey: string, names: string[]) {
   return firstAvailableValue(context.adjustedRows, periodKey, names, undefined, context.classificationGroups);
 }
@@ -711,9 +732,17 @@ function getPreferredCurrentLiabilities(context: MetricContext, periodKey: strin
 }
 
 function getPreferredQuickAssets(context: MetricContext, periodKey: string) {
-  const classifiedQuickAssets = getClassifiedMetricSum(context, periodKey, ["당좌자산"], "유동자산");
-  if (classifiedQuickAssets !== null) {
-    return classifiedQuickAssets;
+  const cash = getAdjustedMetricSum(context, periodKey, ["현금및현금성자산"]);
+  const receivables = getNetMetricValue(context, periodKey, ["매출채권"]);
+  const accruedReceivables = getNetMetricValue(context, periodKey, ["미수금"]);
+  const accruedIncome = getNetMetricValue(context, periodKey, ["미수수익"]);
+  const availableSecurities = getAdjustedMetricSum(context, periodKey, ["매도가능증권"]);
+
+  const explicitQuickAssets = [cash, receivables, accruedReceivables, accruedIncome, availableSecurities]
+    .filter((value): value is number => value !== null && value !== undefined);
+
+  if (explicitQuickAssets.length) {
+    return explicitQuickAssets.reduce((total, value) => total + value, 0);
   }
 
   const currentAssets = getPreferredCurrentAssets(context, periodKey);
@@ -726,9 +755,36 @@ function getPreferredQuickAssets(context: MetricContext, periodKey: string) {
 }
 
 function getQuickAssetBreakdown(context: MetricContext, periodKey: string) {
-  const classifiedBreakdown = getClassifiedMetricBreakdown(context, periodKey, ["당좌자산"], "유동자산");
-  if (classifiedBreakdown.length) {
-    return classifiedBreakdown;
+  const explicitBreakdown = compactCalculationInputs([
+    {
+      label: "현금및현금성자산",
+      value: getAdjustedMetricSum(context, periodKey, ["현금및현금성자산"]),
+      components: getNetMetricBreakdown(context, periodKey, ["현금및현금성자산"])
+    },
+    {
+      label: "매출채권 순액",
+      value: getNetMetricValue(context, periodKey, ["매출채권"]),
+      components: getNetMetricBreakdown(context, periodKey, ["매출채권"])
+    },
+    {
+      label: "미수금 순액",
+      value: getNetMetricValue(context, periodKey, ["미수금"]),
+      components: getNetMetricBreakdown(context, periodKey, ["미수금"])
+    },
+    {
+      label: "미수수익 순액",
+      value: getNetMetricValue(context, periodKey, ["미수수익"]),
+      components: getNetMetricBreakdown(context, periodKey, ["미수수익"])
+    },
+    {
+      label: "매도가능증권",
+      value: getAdjustedMetricSum(context, periodKey, ["매도가능증권"]),
+      components: getNetMetricBreakdown(context, periodKey, ["매도가능증권"])
+    }
+  ]);
+
+  if (explicitBreakdown.length) {
+    return explicitBreakdown;
   }
 
   return [
