@@ -125,6 +125,9 @@ const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
 const DERIVED_ACCOUNT_SUFFIXES = [
   "양수",
   "음수",
+  "정부보조금",
+  "국고보조금",
+  "국가보조금",
   "대손충당금",
   "현할차",
   "할인차금",
