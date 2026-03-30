@@ -317,16 +317,16 @@ export function isSystemFixedClassificationKey(key: string) {
   return SYSTEM_FIXED_CLASSIFICATION_KEY_SET.has(key.trim());
 }
 
-export function sanitizeClassificationAliases(aliases: string[]) {
-  return Array.from(new Set(aliases
-    .map((alias) => alias.trim())
+export function sanitizeClassificationAliases(aliases: unknown[]) {
+  return Array.from(new Set((Array.isArray(aliases) ? aliases : [])
+    .map((alias) => typeof alias === "string" ? alias.trim() : "")
     .filter((alias) => alias && !LEGACY_REMOVED_CLASSIFICATION_ALIASES.has(alias))));
 }
 
-export function sanitizeClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
-  return Object.fromEntries(Object.entries(groups).map(([canonicalKey, aliases]) => [
+export function sanitizeClassificationGroups(groups: Record<string, unknown>): ClassificationGroups {
+  return Object.fromEntries(Object.entries(groups ?? {}).map(([canonicalKey, aliases]) => [
     canonicalKey.trim(),
-    sanitizeClassificationAliases(aliases)
+    sanitizeClassificationAliases(Array.isArray(aliases) ? aliases : [])
   ]));
 }
 
