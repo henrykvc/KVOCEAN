@@ -1139,16 +1139,16 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "단기대여금",
-      amount: (period, current) => getNetMetricValue(current, period.key, ["단기대여금"]),
+      amount: (period, current) => getAdjustedMetricSum(current, period.key, ["단기대여금"]),
       amountDetail: (period, current, result) => {
-        const loans = getNetMetricValue(current, period.key, ["단기대여금"]);
-        return createCalculationDetail("단기대여금 순액", result, [
-          { label: "단기대여금 순액", value: loans, components: getNetMetricBreakdown(current, period.key, ["단기대여금"]) }
+        const loans = getAdjustedMetricSum(current, period.key, ["단기대여금"]);
+        return createCalculationDetail("단기대여금 계정 합계", result, [
+          { label: "단기대여금", value: loans, components: getClassifiedMetricBreakdown(current, period.key, ["단기대여금"]) }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["단기대여금"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["단기대여금"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const loans = getNetMetricValue(current, period.key, ["단기대여금"]);
+        const loans = getAdjustedMetricSum(current, period.key, ["단기대여금"]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("단기대여금 / 자산 * 100", result, [
           { label: "단기대여금", value: loans },
