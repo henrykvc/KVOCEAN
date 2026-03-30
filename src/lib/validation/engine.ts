@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, mergeSystemFixedClassificationCatalog, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 
 export type ParsedPaste = {
   catRow: string[];
@@ -138,7 +138,7 @@ export function parsePersistedState(raw: string | null): PersistedState {
       : [];
     const legacyGroups = mergeClassificationGroups(fallback.classificationGroups, parsed.classificationGroups ?? {});
     const classificationCatalog = parsedCatalog.length
-      ? parsedCatalog
+      ? mergeSystemFixedClassificationCatalog(parsedCatalog)
       : classificationGroupsToCatalog(legacyGroups);
     const classificationGroups = parsedCatalog.length
       ? classificationCatalogToGroups(classificationCatalog)

@@ -8,6 +8,8 @@ import {
   DEFAULT_LOGIC_CONFIG,
   classificationCatalogToGroups,
   classificationGroupsToCatalog,
+  isSystemFixedClassificationKey,
+  mergeSystemFixedClassificationCatalog,
   type ClassificationCatalogGroup,
   type ClassificationGroups,
   type CompanyConfigs,
@@ -348,15 +350,15 @@ function buildRequestedFormulaRows() {
     { 항목: "자기자본이익률(ROE)", 수식: "(계속사업당기순이익/자본) * 100" },
     { 항목: "영업이익률", 수식: "(영업이익(손실)/매출액) * 100" },
     { 항목: "공헌이익률", 수식: "(매출액 - 변동비)/매출액 * 100" },
-    { 항목: "인건비", 수식: "(인건비/(영업비용+영업외비용)) * 100" },
-    { 항목: "연구개발비", 수식: "(연구비/(영업비용+영업외비용)) * 100" },
-    { 항목: "접대비", 수식: "(접대비/(영업비용+영업외비용)) * 100" },
-    { 항목: "복리후생비", 수식: "(복리후생비/(영업비용+영업외비용)) * 100" },
-    { 항목: "광고선전비", 수식: "(광고선전비/(영업비용+영업외비용)) * 100" },
-    { 항목: "지급수수료", 수식: "(지급수수료/(영업비용+영업외비용)) * 100" },
-    { 항목: "외주용역비", 수식: "(외주용역비/(영업비용+영업외비용)) * 100" },
-    { 항목: "임차료", 수식: "(임차료/(영업비용+영업외비용)) * 100" },
-    { 항목: "이자비용", 수식: "(총이자비용/(영업비용+영업외비용)) * 100" },
+    { 항목: "인건비", 수식: "(인건비/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "연구개발비", 수식: "(연구비/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "접대비", 수식: "(접대비/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "복리후생비", 수식: "(복리후생비/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "광고선전비", 수식: "(광고선전비/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "지급수수료", 수식: "(지급수수료/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "외주용역비", 수식: "(외주용역비/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "임차료", 수식: "(임차료/(매출원가+영업비용+영업외비용)) * 100" },
+    { 항목: "이자비용", 수식: "(총이자비용/(매출원가+영업비용+영업외비용)) * 100" },
     { 항목: "현금및현금성자산", 수식: "(현금및현금성자산/자산) * 100" },
     { 항목: "단기대여금", 수식: "((단기대여금_양수 - 단기대여금_음수)/자산) * 100" },
     { 항목: "개발비(자산)", 수식: "((개발비_양수 - 개발비_음수)/자산) * 100" },
@@ -624,6 +626,12 @@ export function ValidatorApp() {
     () => Array.from(new Set(savedDatasets.map((item) => item.companyName))),
     [savedDatasets]
   );
+  const editableClassificationCatalog = useMemo(
+    () => classificationCatalog
+      .map((group, index) => ({ group, index }))
+      .filter(({ group }) => !isSystemFixedClassificationKey(group.canonicalKey)),
+    [classificationCatalog]
+  );
 
   function resetAdjustments() {
     setPasteEdits({});
@@ -851,7 +859,7 @@ export function ValidatorApp() {
   }
 
   function applyClassificationCatalog(nextCatalog: ClassificationCatalogGroup[], showFeedback = false) {
-    const clonedCatalog = cloneClassificationCatalog(nextCatalog).map((item) => ({
+    const clonedCatalog = mergeSystemFixedClassificationCatalog(cloneClassificationCatalog(nextCatalog)).map((item) => ({
       ...item,
       groupId: item.groupId.trim(),
       majorCategory: item.majorCategory.trim(),
@@ -1698,7 +1706,7 @@ export function ValidatorApp() {
                 <div className="section-title">
                   <div>
                     <h3>분류 항목 편집</h3>
-                    <p className="muted">수식에 필요한 대표 항목과 원본 계정 목록만 간단하게 관리합니다.</p>
+                    <p className="muted">수식에 필요한 대표 항목과 원본 계정 목록만 간단하게 관리합니다. 상위 확정 항목은 시스템 고정값으로 유지하고 여기서 숨깁니다.</p>
                   </div>
                   <div className="inline-actions">
                     <button className="ghost-button" onClick={() => updateClassificationCatalog((prev) => [...prev, {
@@ -1723,7 +1731,7 @@ export function ValidatorApp() {
                       </tr>
                     </thead>
                     <tbody>
-                      {classificationCatalog.map((group, index) => (
+                      {editableClassificationCatalog.map(({ group, index }) => (
                         <tr key={`classification-group-${group.groupId}-${index}`}>
                           <td><input className="input" value={group.groupId} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, groupId: event.target.value } : item))} /></td>
                           <td><input className="input" value={group.canonicalKey} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))} /></td>

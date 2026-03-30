@@ -27,6 +27,23 @@ export type ClassificationCatalogGroup = {
   aliases: string[];
 };
 
+export const SYSTEM_FIXED_CLASSIFICATION_KEYS = [
+  "자산",
+  "부채",
+  "자본",
+  "유동자산",
+  "비유동자산",
+  "유동부채",
+  "비유동부채",
+  "매출액",
+  "매출원가",
+  "영업이익",
+  "영업외수익",
+  "영업외비용"
+] as const;
+
+const SYSTEM_FIXED_CLASSIFICATION_KEY_SET = new Set<string>(SYSTEM_FIXED_CLASSIFICATION_KEYS);
+
 export const LAST_PATCH = "2026-03-19 17:55";
 
 export const RESULT_ORDER = [
@@ -283,6 +300,40 @@ export function classificationGroupsToCatalog(groups: ClassificationGroups): Cla
 }
 
 export const DEFAULT_CLASSIFICATION_CATALOG: ClassificationCatalogGroup[] = classificationGroupsToCatalog(DEFAULT_CLASSIFICATION_GROUPS);
+
+export function isSystemFixedClassificationKey(key: string) {
+  return SYSTEM_FIXED_CLASSIFICATION_KEY_SET.has(key.trim());
+}
+
+export function mergeSystemFixedClassificationCatalog(catalog: ClassificationCatalogGroup[]): ClassificationCatalogGroup[] {
+  const normalizedCatalog = catalog.map((item) => ({
+    ...item,
+    canonicalKey: item.canonicalKey.trim(),
+    aliases: Array.from(new Set(item.aliases.map((alias) => alias.trim()).filter(Boolean)))
+  }));
+
+  const byCanonicalKey = new Map(normalizedCatalog.map((item) => [item.canonicalKey, item]));
+
+  DEFAULT_CLASSIFICATION_CATALOG
+    .filter((item) => isSystemFixedClassificationKey(item.canonicalKey))
+    .forEach((defaultItem) => {
+      const existing = byCanonicalKey.get(defaultItem.canonicalKey);
+      if (existing) {
+        byCanonicalKey.set(defaultItem.canonicalKey, {
+          ...existing,
+          aliases: Array.from(new Set([...defaultItem.aliases, ...existing.aliases]))
+        });
+        return;
+      }
+
+      byCanonicalKey.set(defaultItem.canonicalKey, structuredClone(defaultItem));
+    });
+
+  return normalizedCatalog.map((item) => byCanonicalKey.get(item.canonicalKey) ?? item)
+    .concat(
+      Array.from(byCanonicalKey.values()).filter((item) => !normalizedCatalog.some((catalogItem) => catalogItem.canonicalKey === item.canonicalKey))
+    );
+}
 
 export function classificationCatalogToGroups(catalog: ClassificationCatalogGroup[]): ClassificationGroups {
   return catalog.reduce<ClassificationGroups>((acc, item) => {
