@@ -897,6 +897,10 @@ function getThreeQuarterPriorPeriod(context: MetricContext, period: ReportPeriod
   return getPeriodOffset(context, period, 3);
 }
 
+function formatPeriodInputLabel(prefix: string, period: ReportPeriod | null) {
+  return period ? `${prefix} (${period.label})` : prefix;
+}
+
 function getMonthlySpendBase(current: MetricContext, period: ReportPeriod) {
   const sales = getAdjustedMetricValue(current, period.key, ["매출액"]);
   const operatingIncome = getAdjustedMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
@@ -1443,8 +1447,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         return createCalculationDetail("매출액 / 기초기말 평균총자산", result, [
           { label: "매출액", value: sales },
-          { label: "기초 자산", value: baseAssets },
-          { label: "기말 자산", value: currentAssets },
+          { label: formatPeriodInputLabel("기초 자산", basePeriod), value: baseAssets },
+          { label: formatPeriodInputLabel("기말 자산", period), value: currentAssets },
           { label: "기초기말 평균총자산", value: averageAssets }
         ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : averageAssets === 0 ? "평균총자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
@@ -1466,8 +1470,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         return createCalculationDetail("매출액 / 기초기말 평균매출채권", result, [
           { label: "매출액", value: sales },
-          { label: "기초 매출채권", value: baseReceivables },
-          { label: "기말 매출채권", value: currentReceivables },
+          { label: formatPeriodInputLabel("기초 매출채권", basePeriod), value: baseReceivables },
+          { label: formatPeriodInputLabel("기말 매출채권", period), value: currentReceivables },
           { label: "기초기말 평균매출채권", value: averageReceivables }
         ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : averageReceivables === 0 ? "평균매출채권이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
@@ -1491,8 +1495,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const turnover = safeDivide(sales, averageReceivables, 1);
         return createCalculationDetail("365 / 매출채권회전율", result, [
           { label: "매출액", value: sales },
-          { label: "기초 매출채권", value: baseReceivables },
-          { label: "기말 매출채권", value: currentReceivables },
+          { label: formatPeriodInputLabel("기초 매출채권", basePeriod), value: baseReceivables },
+          { label: formatPeriodInputLabel("기말 매출채권", period), value: currentReceivables },
           { label: "기초기말 평균매출채권", value: averageReceivables },
           { label: "매출채권회전율", value: turnover }
         ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);
@@ -1515,8 +1519,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
         return createCalculationDetail("매출원가 / 기초기말 평균재고자산", result, [
           { label: "매출원가", value: costOfSales },
-          { label: "기초 재고자산", value: baseInventory },
-          { label: "기말 재고자산", value: currentInventory },
+          { label: formatPeriodInputLabel("기초 재고자산", basePeriod), value: baseInventory },
+          { label: formatPeriodInputLabel("기말 재고자산", period), value: currentInventory },
           { label: "기초기말 평균재고자산", value: averageInventory }
         ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : averageInventory === 0 ? "평균재고자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
@@ -1540,8 +1544,8 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const turnover = safeDivide(costOfSales, averageInventory, 1);
         return createCalculationDetail("365 / 재고자산회전율", result, [
           { label: "매출원가", value: costOfSales },
-          { label: "기초 재고자산", value: baseInventory },
-          { label: "기말 재고자산", value: currentInventory },
+          { label: formatPeriodInputLabel("기초 재고자산", basePeriod), value: baseInventory },
+          { label: formatPeriodInputLabel("기말 재고자산", period), value: currentInventory },
           { label: "기초기말 평균재고자산", value: averageInventory },
           { label: "재고자산회전율", value: turnover }
         ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);

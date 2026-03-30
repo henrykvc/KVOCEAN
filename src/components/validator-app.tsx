@@ -1010,34 +1010,7 @@ export function ValidatorApp() {
     if (input.components && input.components.length) {
       return input.components;
     }
-
-    const aliases = getInputAliasCandidates(input.label);
-
-    const breakdown = resultReporting.detailAdjustedStatementRows
-      .filter((row) => {
-        const rowKey = normalizeMetricLabel(row.canonicalKey || row.accountName);
-        const rowName = normalizeMetricLabel(row.accountName);
-        return aliases.some((alias) => rowKey.includes(alias) || rowName.includes(alias) || alias.includes(rowKey) || alias.includes(rowName));
-      })
-      .map<MetricCalculationInput | null>((row) => {
-        const value = row.values[periodKey];
-        if (value === null || value === undefined) {
-          return null;
-        }
-        const label = row.accountName === row.canonicalKey ? row.accountName : `${row.canonicalKey} ← ${row.accountName}`;
-        return { label, value } satisfies MetricCalculationInput;
-      })
-      .filter((item): item is MetricCalculationInput => item !== null);
-
-    if (!breakdown.length) {
-      return [];
-    }
-
-    if (breakdown.length === 1 && normalizeMetricLabel(breakdown[0].label) === normalizeMetricLabel(input.label)) {
-      return [];
-    }
-
-    return breakdown;
+    return [];
   }
 
   function renderMetricCalculationCard(
