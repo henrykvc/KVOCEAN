@@ -42,6 +42,19 @@ export const SYSTEM_FIXED_CLASSIFICATION_KEYS = [
   "영업외비용"
 ] as const;
 
+const LEGACY_REMOVED_CLASSIFICATION_ALIASES = new Set<string>([
+  "개발비_양수",
+  "개발비_음수",
+  "선급금_양수",
+  "선급금_음수",
+  "단기대여금_양수",
+  "단기대여금_음수",
+  "매출채권_양수",
+  "매출채권_음수",
+  "미수금_음수",
+  "미수수익_음수"
+]);
+
 const SYSTEM_FIXED_CLASSIFICATION_KEY_SET = new Set<string>(SYSTEM_FIXED_CLASSIFICATION_KEYS);
 
 export const LAST_PATCH = "2026-03-19 17:55";
@@ -304,11 +317,24 @@ export function isSystemFixedClassificationKey(key: string) {
   return SYSTEM_FIXED_CLASSIFICATION_KEY_SET.has(key.trim());
 }
 
+export function sanitizeClassificationAliases(aliases: string[]) {
+  return Array.from(new Set(aliases
+    .map((alias) => alias.trim())
+    .filter((alias) => alias && !LEGACY_REMOVED_CLASSIFICATION_ALIASES.has(alias))));
+}
+
+export function sanitizeClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
+  return Object.fromEntries(Object.entries(groups).map(([canonicalKey, aliases]) => [
+    canonicalKey.trim(),
+    sanitizeClassificationAliases(aliases)
+  ]));
+}
+
 export function mergeSystemFixedClassificationCatalog(catalog: ClassificationCatalogGroup[]): ClassificationCatalogGroup[] {
   const normalizedCatalog = catalog.map((item) => ({
     ...item,
     canonicalKey: item.canonicalKey.trim(),
-    aliases: Array.from(new Set(item.aliases.map((alias) => alias.trim()).filter(Boolean)))
+    aliases: sanitizeClassificationAliases(item.aliases)
   }));
 
   const byCanonicalKey = new Map(normalizedCatalog.map((item) => [item.canonicalKey, item]));

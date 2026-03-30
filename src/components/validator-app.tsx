@@ -10,6 +10,8 @@ import {
   classificationGroupsToCatalog,
   isSystemFixedClassificationKey,
   mergeSystemFixedClassificationCatalog,
+  sanitizeClassificationAliases,
+  sanitizeClassificationGroups,
   type ClassificationCatalogGroup,
   type ClassificationGroups,
   type CompanyConfigs,
@@ -101,6 +103,31 @@ const DETAIL_VARIABLE_COST_ALIASES = [
 ];
 const DETAIL_BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const DETAIL_INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
+const DISPLAYABLE_CLASSIFICATION_DETAIL_KEYS = new Set([
+  "차입금",
+  "인건비",
+  "연구개발비",
+  "접대비",
+  "광고선전비",
+  "지급수수료",
+  "외주용역비",
+  "임차료",
+  "여비교통비",
+  "도서인쇄비",
+  "소모품비",
+  "대손상각비",
+  "판매촉진비",
+  "대외협력비",
+  "기술이전료",
+  "경상기술료",
+  "전산운영비",
+  "단기대여금",
+  "퇴직급여충당부채",
+  "매출채권",
+  "미수금",
+  "미수수익",
+  "재고자산"
+]);
 
 function renderDiagnosisText(text: string) {
   const parts = text.split("**");
@@ -224,6 +251,15 @@ function parseKeywordList(value: string) {
     .split(/\r?\n|,/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function getDisplayedClassificationAliases(group: ClassificationCatalogGroup) {
+  if (!DISPLAYABLE_CLASSIFICATION_DETAIL_KEYS.has(group.canonicalKey.trim())) {
+    return [];
+  }
+
+  return sanitizeClassificationAliases(group.aliases)
+    .filter((alias) => alias.trim() && alias.trim() !== group.canonicalKey.trim());
 }
 
 function objectEntriesToRows(record: Record<string, string>): MapRow[] {
@@ -420,14 +456,14 @@ function parseSavedDatasets(raw: string | null): SavedQuarterSnapshot[] {
     }
     return parsed.filter(isSavedQuarterSnapshot).map((item) => ({
       ...item,
-      source: {
-        ...item.source,
-        logicConfig: cloneLogicConfig((item.source as { logicConfig?: LogicConfig }).logicConfig ?? DEFAULT_LOGIC_CONFIG),
-        companyConfigs: cloneCompanyConfigs((item.source as { companyConfigs?: CompanyConfigs }).companyConfigs ?? DEFAULT_COMPANY_CONFIGS),
-        classificationGroups: cloneClassificationGroups((item.source as { classificationGroups?: ClassificationGroups }).classificationGroups ?? DEFAULT_CLASSIFICATION_GROUPS),
-        sessionSignFixes: cloneSessionSignFixes((item.source as { sessionSignFixes?: SessionSignFixes }).sessionSignFixes ?? {})
-      }
-    }));
+        source: {
+          ...item.source,
+          logicConfig: cloneLogicConfig((item.source as { logicConfig?: LogicConfig }).logicConfig ?? DEFAULT_LOGIC_CONFIG),
+          companyConfigs: cloneCompanyConfigs((item.source as { companyConfigs?: CompanyConfigs }).companyConfigs ?? DEFAULT_COMPANY_CONFIGS),
+          classificationGroups: cloneClassificationGroups(sanitizeClassificationGroups((item.source as { classificationGroups?: ClassificationGroups }).classificationGroups ?? DEFAULT_CLASSIFICATION_GROUPS)),
+          sessionSignFixes: cloneSessionSignFixes((item.source as { sessionSignFixes?: SessionSignFixes }).sessionSignFixes ?? {})
+        }
+      }));
   } catch {
     return [];
   }
@@ -867,7 +903,7 @@ export function ValidatorApp() {
       smallCategory: item.smallCategory.trim(),
       sign: item.sign.trim(),
       canonicalKey: item.canonicalKey.trim(),
-      aliases: Array.from(new Set(item.aliases.map((alias) => alias.trim()).filter(Boolean)))
+      aliases: sanitizeClassificationAliases(item.aliases)
     })).filter((item) => item.canonicalKey);
     const nextGroups = classificationCatalogToGroups(clonedCatalog);
     setClassificationCatalog(clonedCatalog);
@@ -1738,9 +1774,9 @@ export function ValidatorApp() {
                           <td>
                             <textarea
                               className="textarea classification-textarea"
-                              value={group.aliases.join("\n")}
+                              value={getDisplayedClassificationAliases(group).join("\n")}
                               onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: parseKeywordList(event.target.value) } : item))}
-                              placeholder="현금&#10;보통예금&#10;외화보통예금"
+                              placeholder="실제 세부 계정이 있으면 줄바꿈으로 입력"
                             />
                           </td>
                           <td><button className="danger-button" onClick={() => updateClassificationCatalog((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button></td>

@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, mergeSystemFixedClassificationCatalog, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, mergeSystemFixedClassificationCatalog, sanitizeClassificationGroups, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 
 export type ParsedPaste = {
   catRow: string[];
@@ -101,7 +101,7 @@ function isClassificationCatalogGroup(value: unknown): value is ClassificationCa
     && Array.isArray(item.aliases);
 }
 
-function sanitizeClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
+function normalizeClassificationGroups(groups: ClassificationGroups): ClassificationGroups {
   const next = structuredClone(groups);
   const netIncomeAliases = ["당기순이익", "당기순손실", "당기순이익(손실)", "당기순손익"];
 
@@ -122,7 +122,7 @@ function mergeClassificationGroups(defaults: ClassificationGroups, persisted: Cl
     merged[key] = Array.from(new Set([...(defaultAliases ?? []), ...(aliases ?? [])]));
   }
 
-  return sanitizeClassificationGroups(merged);
+  return normalizeClassificationGroups(merged);
 }
 
 export function parsePersistedState(raw: string | null): PersistedState {
@@ -136,7 +136,7 @@ export function parsePersistedState(raw: string | null): PersistedState {
     const parsedCatalog = Array.isArray(parsed.classificationCatalog)
       ? parsed.classificationCatalog.filter(isClassificationCatalogGroup)
       : [];
-    const legacyGroups = mergeClassificationGroups(fallback.classificationGroups, parsed.classificationGroups ?? {});
+    const legacyGroups = sanitizeClassificationGroups(mergeClassificationGroups(fallback.classificationGroups, parsed.classificationGroups ?? {}));
     const classificationCatalog = parsedCatalog.length
       ? mergeSystemFixedClassificationCatalog(parsedCatalog)
       : classificationGroupsToCatalog(legacyGroups);
