@@ -1158,16 +1158,16 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "개발비(자산)",
-      amount: (period, current) => getNetMetricValue(current, period.key, ["개발비(자산)", "개발비"]),
+      amount: (period, current) => getAdjustedMetricSum(current, period.key, ["개발비(자산)", "개발비"]),
       amountDetail: (period, current, result) => {
-        const developmentAsset = getNetMetricValue(current, period.key, ["개발비(자산)", "개발비"]);
-        return createCalculationDetail("개발비(자산) 순액", result, [
-          { label: "개발비(자산) 순액", value: developmentAsset, components: getNetMetricBreakdown(current, period.key, ["개발비(자산)", "개발비"]) }
+        const developmentAsset = getAdjustedMetricSum(current, period.key, ["개발비(자산)", "개발비"]);
+        return createCalculationDetail("개발비(자산) 계정 합계", result, [
+          { label: "개발비(자산)", value: developmentAsset, components: getClassifiedMetricBreakdown(current, period.key, ["개발비(자산)"]) }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["개발비(자산)", "개발비"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["개발비(자산)", "개발비"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const developmentAsset = getNetMetricValue(current, period.key, ["개발비(자산)", "개발비"]);
+        const developmentAsset = getAdjustedMetricSum(current, period.key, ["개발비(자산)", "개발비"]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("개발비(자산) / 자산 * 100", result, [
           { label: "개발비(자산)", value: developmentAsset },
@@ -1177,16 +1177,16 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "선급금",
-      amount: (period, current) => getNetMetricValue(current, period.key, ["선급금"]),
+      amount: (period, current) => getAdjustedMetricSum(current, period.key, ["선급금"]),
       amountDetail: (period, current, result) => {
-        const prepaid = getNetMetricValue(current, period.key, ["선급금"]);
-        return createCalculationDetail("선급금 순액", result, [
-          { label: "선급금 순액", value: prepaid, components: getNetMetricBreakdown(current, period.key, ["선급금"]) }
+        const prepaid = getAdjustedMetricSum(current, period.key, ["선급금"]);
+        return createCalculationDetail("선급금 계정 합계", result, [
+          { label: "선급금", value: prepaid, components: getClassifiedMetricBreakdown(current, period.key, ["선급금"]) }
         ]);
       },
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["선급금"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["선급금"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const prepaid = getNetMetricValue(current, period.key, ["선급금"]);
+        const prepaid = getAdjustedMetricSum(current, period.key, ["선급금"]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("선급금 / 자산 * 100", result, [
           { label: "선급금", value: prepaid },
