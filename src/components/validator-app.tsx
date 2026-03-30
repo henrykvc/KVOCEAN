@@ -70,15 +70,6 @@ type ComparisonSelection = {
 
 type TopViewKey = "menu" | "final-output";
 
-type AccountDictionaryStatus = "new" | "mapped" | "ignored";
-
-type AccountDictionaryReview = {
-  confirmedCanonicalKey: string;
-  status: AccountDictionaryStatus;
-};
-
-type AccountDictionaryReviewMap = Record<string, AccountDictionaryReview>;
-
 type AccountDictionaryEntry = {
   entryKey: string;
   section: string;
@@ -87,16 +78,6 @@ type AccountDictionaryEntry = {
   normalizedAccountName: string;
   sampleCompany: string;
   sampleQuarter: string;
-  suggestedCanonicalKey: string;
-  confirmedCanonicalKey: string;
-  status: AccountDictionaryStatus;
-};
-
-type AccountDictionaryStoredEntry = Omit<AccountDictionaryEntry, "confirmedCanonicalKey" | "status">;
-
-type AccountDictionaryStore = {
-  entries: AccountDictionaryStoredEntry[];
-  reviews: AccountDictionaryReviewMap;
 };
 
 const RATIO_ONLY_SECTION_TITLES = new Set(["안정성 비율", "수익성 비율", "성장성 비율"]);
@@ -158,25 +139,6 @@ const DISPLAYABLE_CLASSIFICATION_DETAIL_KEYS = new Set([
   "재고자산"
 ]);
 
-const ACCOUNT_DB_EXCLUDED_KEYS = new Set([
-  ...DETAIL_DEPRECIATION_ALIASES,
-  ...DETAIL_VARIABLE_COST_ALIASES,
-  ...DETAIL_BORROWING_ALIASES,
-  ...DETAIL_INTEREST_ALIASES,
-  "자산",
-  "부채",
-  "자본",
-  "유동자산",
-  "비유동자산",
-  "유동부채",
-  "비유동부채",
-  "매출액",
-  "매출원가",
-  "영업이익",
-  "영업이익(손실)",
-  "영업외수익",
-  "영업외비용"
-]);
 
 function renderDiagnosisText(text: string) {
   const parts = text.split("**");
@@ -310,24 +272,7 @@ function buildAccountDictionaryEntryKey(sectionKey: string, accountName: string)
   return `${normalizeAccountDictionaryKey(sectionKey)}::${normalizeAccountDictionaryKey(accountName)}`;
 }
 
-function parseAccountDictionaryReviews(value: unknown): AccountDictionaryReviewMap {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([key, reviewValue]) => {
-    if (!reviewValue || typeof reviewValue !== "object") {
-      return [];
-    }
-
-    const item = reviewValue as Partial<AccountDictionaryReview>;
-    const confirmedCanonicalKey = String(item.confirmedCanonicalKey ?? "").trim();
-    const status = item.status === "mapped" || item.status === "ignored" ? item.status : "new";
-    return [[key, { confirmedCanonicalKey, status } satisfies AccountDictionaryReview]];
-  }));
-}
-
-function parseAccountDictionaryEntries(value: unknown): AccountDictionaryStoredEntry[] {
+function parseAccountDictionaryEntries(value: unknown): AccountDictionaryEntry[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -337,7 +282,7 @@ function parseAccountDictionaryEntries(value: unknown): AccountDictionaryStoredE
       return [];
     }
 
-    const item = entryValue as Partial<AccountDictionaryStoredEntry>;
+    const item = entryValue as Partial<AccountDictionaryEntry>;
     const entryKey = String(item.entryKey ?? "").trim();
     const section = String(item.section ?? "").trim();
     const sectionKey = String(item.sectionKey ?? "").trim();
@@ -355,37 +300,27 @@ function parseAccountDictionaryEntries(value: unknown): AccountDictionaryStoredE
       accountName,
       normalizedAccountName,
       sampleCompany: String(item.sampleCompany ?? "").trim(),
-      sampleQuarter: String(item.sampleQuarter ?? "").trim(),
-      suggestedCanonicalKey: String(item.suggestedCanonicalKey ?? "").trim()
-    } satisfies AccountDictionaryStoredEntry];
+      sampleQuarter: String(item.sampleQuarter ?? "").trim()
+    } satisfies AccountDictionaryEntry];
   });
 }
 
-function parseAccountDictionaryStore(raw: string | null): AccountDictionaryStore {
+function parseAccountDictionaryStore(raw: string | null): AccountDictionaryEntry[] {
   if (!raw) {
-    return { entries: [], reviews: {} };
+    return [];
   }
 
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") {
-      return { entries: [], reviews: {} };
+    if (Array.isArray(parsed)) {
+      return parseAccountDictionaryEntries(parsed);
     }
-
-    const objectValue = parsed as Record<string, unknown>;
-    if (Array.isArray(objectValue.entries) || objectValue.reviews) {
-      return {
-        entries: parseAccountDictionaryEntries(objectValue.entries),
-        reviews: parseAccountDictionaryReviews(objectValue.reviews ?? {})
-      };
+    if (parsed && typeof parsed === "object") {
+      return parseAccountDictionaryEntries((parsed as { entries?: unknown }).entries ?? []);
     }
-
-    return {
-      entries: [],
-      reviews: parseAccountDictionaryReviews(parsed)
-    };
+    return [];
   } catch {
-    return { entries: [], reviews: {} };
+    return [];
   }
 }
 
@@ -410,7 +345,7 @@ function shouldCollectAccountDictionaryRow(row: SavedQuarterSnapshot["adjustedSt
 }
 
 function extractAccountDictionaryEntries(savedDatasets: SavedQuarterSnapshot[]) {
-  const entries = new Map<string, AccountDictionaryStoredEntry>();
+  const entries = new Map<string, AccountDictionaryEntry>();
 
   savedDatasets.forEach((dataset) => {
     dataset.adjustedStatementRows.forEach((row) => {
@@ -430,8 +365,7 @@ function extractAccountDictionaryEntries(savedDatasets: SavedQuarterSnapshot[]) 
         accountName: row.accountName,
         normalizedAccountName: normalizeAccountDictionaryKey(row.accountName),
         sampleCompany: dataset.companyName,
-        sampleQuarter: dataset.quarterLabel,
-        suggestedCanonicalKey: row.canonicalKey !== row.accountName && !ACCOUNT_DB_EXCLUDED_KEYS.has(row.canonicalKey.trim()) ? row.canonicalKey : ""
+        sampleQuarter: dataset.quarterLabel
       });
     });
   });
@@ -439,8 +373,8 @@ function extractAccountDictionaryEntries(savedDatasets: SavedQuarterSnapshot[]) 
   return Array.from(entries.values()).sort((a, b) => a.sectionKey.localeCompare(b.sectionKey, "ko") || a.accountName.localeCompare(b.accountName, "ko"));
 }
 
-function mergeStoredAccountDictionaryEntries(storedEntries: AccountDictionaryStoredEntry[], observedEntries: AccountDictionaryStoredEntry[]) {
-  const merged = new Map<string, AccountDictionaryStoredEntry>();
+function mergeStoredAccountDictionaryEntries(storedEntries: AccountDictionaryEntry[], observedEntries: AccountDictionaryEntry[]) {
+  const merged = new Map<string, AccountDictionaryEntry>();
   storedEntries.forEach((entry) => merged.set(entry.entryKey, entry));
   observedEntries.forEach((entry) => {
     if (!merged.has(entry.entryKey)) {
@@ -448,34 +382,6 @@ function mergeStoredAccountDictionaryEntries(storedEntries: AccountDictionarySto
     }
   });
   return Array.from(merged.values()).sort((a, b) => a.sectionKey.localeCompare(b.sectionKey, "ko") || a.accountName.localeCompare(b.accountName, "ko"));
-}
-
-function buildAccountDictionaryEntries(storedEntries: AccountDictionaryStoredEntry[], reviews: AccountDictionaryReviewMap) {
-  return storedEntries.map((entry) => {
-    const review = reviews[entry.entryKey] ?? { confirmedCanonicalKey: "", status: "new" as const };
-    return {
-      ...entry,
-      confirmedCanonicalKey: review.confirmedCanonicalKey,
-      status: review.status
-    } satisfies AccountDictionaryEntry;
-  });
-}
-
-function mergeAccountDictionaryMappings(groups: ClassificationGroups, entries: AccountDictionaryEntry[]) {
-  const next = cloneClassificationGroups(groups);
-
-  entries.forEach((entry) => {
-    if (entry.status !== "mapped" || !entry.confirmedCanonicalKey.trim()) {
-      return;
-    }
-
-    const canonicalKey = entry.confirmedCanonicalKey.trim();
-    const aliases = new Set(next[canonicalKey] ?? []);
-    aliases.add(entry.accountName.trim());
-    next[canonicalKey] = sanitizeClassificationAliases(Array.from(aliases));
-  });
-
-  return next;
 }
 
 function getDisplayedClassificationAliases(group: ClassificationCatalogGroup) {
@@ -713,8 +619,7 @@ export function ValidatorApp() {
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
-  const [accountDictionaryEntriesState, setAccountDictionaryEntriesState] = useState<AccountDictionaryStoredEntry[]>([]);
-  const [accountDictionaryReviews, setAccountDictionaryReviews] = useState<AccountDictionaryReviewMap>({});
+  const [accountDictionaryEntriesState, setAccountDictionaryEntriesState] = useState<AccountDictionaryEntry[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [comparisonSelections, setComparisonSelections] = useState<ComparisonSelection[]>(buildInitialComparisonSelections([]));
   const [sameCompanyMode, setSameCompanyMode] = useState(false);
@@ -731,8 +636,7 @@ export function ValidatorApp() {
     setCompanyConfigs(cloneCompanyConfigs(persisted.companyConfigs));
     setClassificationGroups(cloneClassificationGroups(persisted.classificationGroups));
     setClassificationCatalog(cloneClassificationCatalog(persisted.classificationCatalog));
-    setAccountDictionaryEntriesState(accountDictionary.entries);
-    setAccountDictionaryReviews(accountDictionary.reviews);
+    setAccountDictionaryEntriesState(accountDictionary);
     setGlobalOverrideRows(overridesToRows(persisted.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(persisted.logicConfig.pasteSectToParent));
     setSavedDatasets(saved);
@@ -763,11 +667,8 @@ export function ValidatorApp() {
     if (!mounted) {
       return;
     }
-    window.localStorage.setItem(STORAGE_KEYS.accountDictionary, JSON.stringify({
-      entries: accountDictionaryEntriesState,
-      reviews: accountDictionaryReviews
-    } satisfies AccountDictionaryStore));
-  }, [mounted, accountDictionaryEntriesState, accountDictionaryReviews]);
+    window.localStorage.setItem(STORAGE_KEYS.accountDictionary, JSON.stringify(accountDictionaryEntriesState));
+  }, [mounted, accountDictionaryEntriesState]);
 
   useEffect(() => {
     const observedEntries = extractAccountDictionaryEntries(savedDatasets);
@@ -828,14 +729,7 @@ export function ValidatorApp() {
       }),
     [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
   );
-  const accountDictionaryEntries = useMemo(
-    () => buildAccountDictionaryEntries(accountDictionaryEntriesState, accountDictionaryReviews),
-    [accountDictionaryEntriesState, accountDictionaryReviews]
-  );
-  const effectiveClassificationGroups = useMemo(
-    () => mergeAccountDictionaryMappings(classificationGroups, accountDictionaryEntries),
-    [classificationGroups, accountDictionaryEntries]
-  );
+  const accountDictionaryEntries = useMemo(() => accountDictionaryEntriesState, [accountDictionaryEntriesState]);
   const reporting = useMemo(
     () => {
       const reportArgs = {
@@ -844,21 +738,13 @@ export function ValidatorApp() {
         tolerance,
         logicConfig,
         companyConfigs,
-        classificationGroups: effectiveClassificationGroups,
+        classificationGroups,
         pasteEdits,
         sessionSignFixes
       };
       return buildReportingModel(reportArgs);
     },
-    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, effectiveClassificationGroups, pasteEdits, sessionSignFixes]
-  );
-  const mappedAccountDictionaryCount = useMemo(
-    () => accountDictionaryEntries.filter((entry) => entry.status === "mapped" && entry.confirmedCanonicalKey).length,
-    [accountDictionaryEntries]
-  );
-  const unmappedAccountDictionaryEntries = useMemo(
-    () => accountDictionaryEntries.filter((entry) => entry.status !== "mapped"),
-    [accountDictionaryEntries]
+    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, classificationGroups, pasteEdits, sessionSignFixes]
   );
   const accountDictionarySectionGroups = useMemo(
     () => Array.from(accountDictionaryEntries.reduce((acc, entry) => {
@@ -895,9 +781,9 @@ export function ValidatorApp() {
       selectedDataset
         ? savedDatasets.filter((item) => item.companyName === selectedDataset.companyName)
         : [],
-      effectiveClassificationGroups
+      classificationGroups
     ),
-    [selectedDataset, savedDatasets, effectiveClassificationGroups]
+    [selectedDataset, savedDatasets, classificationGroups]
   );
   const selectedReportPeriod = useMemo(
     () => selectedDataset
@@ -914,7 +800,7 @@ export function ValidatorApp() {
         }
         const model = buildCompanyReport(
           savedDatasets.filter((item) => item.companyName === dataset.companyName),
-          effectiveClassificationGroups
+          classificationGroups
         );
         return {
           slotId: selection.slotId,
@@ -926,7 +812,7 @@ export function ValidatorApp() {
         } satisfies ComparisonColumn;
       })
       .filter((item): item is ComparisonColumn => item !== null),
-    [comparisonSelections, savedDatasets, effectiveClassificationGroups]
+    [comparisonSelections, savedDatasets, classificationGroups]
   );
   const comparisonCompanyOptions = useMemo(
     () => Array.from(new Set(savedDatasets.map((item) => item.companyName))),
@@ -937,10 +823,6 @@ export function ValidatorApp() {
       .map((group, index) => ({ group, index }))
       .filter(({ group }) => !isSystemFixedClassificationKey(group.canonicalKey)),
     [classificationCatalog]
-  );
-  const accountMappingOptions = useMemo(
-    () => editableClassificationCatalog.map(({ group }) => group.canonicalKey).sort((a, b) => a.localeCompare(b, "ko")),
-    [editableClassificationCatalog]
   );
 
   function resetAdjustments() {
@@ -958,7 +840,7 @@ export function ValidatorApp() {
       tolerance,
       logicConfig,
       companyConfigs,
-      classificationGroups: effectiveClassificationGroups,
+      classificationGroups,
       pasteEdits,
       sessionSignFixes
     };
@@ -978,39 +860,6 @@ export function ValidatorApp() {
     });
     setSelectedDatasetId(snapshots[0]?.id ?? "");
     setActiveTab("data");
-  }
-
-  function updateAccountDictionaryReview(entryKey: string, nextReview: Partial<AccountDictionaryReview>) {
-    setAccountDictionaryReviews((prev) => {
-      const current = prev[entryKey] ?? { confirmedCanonicalKey: "", status: "new" as const };
-      const merged = {
-        ...current,
-        ...nextReview,
-        confirmedCanonicalKey: (nextReview.confirmedCanonicalKey ?? current.confirmedCanonicalKey).trim()
-      } satisfies AccountDictionaryReview;
-
-      if (!merged.confirmedCanonicalKey && merged.status === "mapped") {
-        merged.status = "new";
-      }
-
-      return { ...prev, [entryKey]: merged };
-    });
-  }
-
-  function applyAccountDictionaryMapping(entry: AccountDictionaryEntry, canonicalKey: string) {
-    const nextCanonicalKey = canonicalKey.trim();
-    updateAccountDictionaryReview(entry.entryKey, {
-      confirmedCanonicalKey: nextCanonicalKey,
-      status: nextCanonicalKey ? "mapped" : "new"
-    });
-  }
-
-  function ignoreAccountDictionaryEntry(entry: AccountDictionaryEntry) {
-    updateAccountDictionaryReview(entry.entryKey, { status: "ignored" });
-  }
-
-  function resetAccountDictionaryEntry(entry: AccountDictionaryEntry) {
-    updateAccountDictionaryReview(entry.entryKey, { confirmedCanonicalKey: "", status: "new" });
   }
 
   function isRatioOnlySection(title: string) {
@@ -1485,7 +1334,7 @@ export function ValidatorApp() {
                     : activeTab === "formulas"
                       ? "결과물 계산에 쓰는 기준 수식을 그대로 정리했습니다."
                       : activeTab === "account-db"
-                        ? `검증 저장 데이터에서 누적된 원본 계정 ${accountDictionaryEntries.length}건을 관리합니다. 미매핑 ${unmappedAccountDictionaryEntries.length}건을 대표 항목에 연결하면 이후 결과물 계산에 자동 반영됩니다.`
+                        ? `검증 저장 데이터에서 누적된 원본 계정 ${accountDictionaryEntries.length}건을 관리합니다. 3줄 데이터의 상위 분류 아래 원본 계정명이 중복 없이 계속 쌓입니다.`
                      : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
               </p>
             </div>
@@ -2114,12 +1963,11 @@ export function ValidatorApp() {
                   <div>
                     <span className="section-kicker">4. 계정 DB</span>
                     <h3>검증 저장 데이터 기반 계정 사전</h3>
-                    <p className="result-meta">OCR검증에서 저장한 데이터만 누적합니다. 기존에 없던 원본 계정이 생기면 여기에 쌓이고, 대표 항목에 연결하면 이후 분류와 결과물 계산에 바로 반영됩니다.</p>
+                    <p className="result-meta">OCR검증에서 저장한 데이터만 누적합니다. 3줄 데이터의 상위 분류를 기준으로 원본 계정명을 중복 없이 계속 쌓아두는 사전입니다.</p>
                   </div>
                   <div className="inline-actions">
                     <span className="soft-badge">누적 {accountDictionaryEntries.length}건</span>
-                    <span className="soft-badge">미매핑 {unmappedAccountDictionaryEntries.length}건</span>
-                    <span className="soft-badge">반영 완료 {mappedAccountDictionaryCount}건</span>
+                    <span className="soft-badge">섹션 {accountDictionarySectionGroups.length}개</span>
                   </div>
                 </div>
               </section>
@@ -2127,124 +1975,44 @@ export function ValidatorApp() {
               {!accountDictionaryEntries.length && <div className="notice">아직 누적된 계정 DB가 없습니다. OCR검증에서 검증 후 `저장하기`를 누르면 원본 계정이 자동으로 쌓입니다.</div>}
 
               {!!accountDictionaryEntries.length && (
-                <>
-                  <section className="config-card">
-                    <div className="section-title">
-                      <div>
-                        <h3>미매핑 신규 계정</h3>
-                        <p className="muted">새로운 원본 계정이 결과물에서 빠지지 않도록 먼저 대표 항목에 연결하세요.</p>
-                      </div>
+                <section className="config-card">
+                  <div className="section-title">
+                    <div>
+                      <h3>섹션별 누적 원본 계정</h3>
+                      <p className="muted">유동자산이 있으면 그 아래 원본 계정이 계속 쌓이고, 비유동자산이 있으면 그 아래 원본 계정이 계속 쌓이는 구조입니다.</p>
                     </div>
-                    {!unmappedAccountDictionaryEntries.length && <div className="notice">현재 미매핑 계정이 없습니다. 새로 저장되는 계정은 자동으로 여기에 추가됩니다.</div>}
-                    {!!unmappedAccountDictionaryEntries.length && (
-                      <div className="report-table-wrap">
-                        <table className="table report-table formula-table">
-                          <thead>
-                            <tr>
-                              <th>상위 분류</th>
-                              <th>원본 계정명</th>
-                              <th>예시 데이터</th>
-                              <th>대표 항목 연결</th>
-                              <th>상태</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {unmappedAccountDictionaryEntries.map((entry) => (
-                              <tr key={`account-db-unmapped-${entry.entryKey}`}>
-                                <td>{entry.sectionKey}</td>
-                                <td>{entry.accountName}</td>
-                                <td>{`${entry.sampleCompany} ${entry.sampleQuarter}`.trim() || "-"}</td>
-                                <td>
-                                  <select
-                                    className="select"
-                                    value={entry.confirmedCanonicalKey}
-                                    onChange={(event) => applyAccountDictionaryMapping(entry, event.target.value)}
-                                  >
-                                    <option value="">대표 항목 선택</option>
-                                    {entry.suggestedCanonicalKey && !accountMappingOptions.includes(entry.suggestedCanonicalKey) && (
-                                      <option value={entry.suggestedCanonicalKey}>{entry.suggestedCanonicalKey}</option>
-                                    )}
-                                    {accountMappingOptions.map((option) => (
-                                      <option key={`${entry.entryKey}-${option}`} value={option}>{option}</option>
-                                    ))}
-                                  </select>
-                                </td>
-                                <td>
-                                  <div className="inline-actions">
-                                    {entry.suggestedCanonicalKey && (
-                                      <button className="ghost-button" onClick={() => applyAccountDictionaryMapping(entry, entry.suggestedCanonicalKey)}>추천 적용</button>
-                                    )}
-                                    <button className="secondary-button" onClick={() => ignoreAccountDictionaryEntry(entry)}>보류</button>
-                                  </div>
-                                </td>
+                  </div>
+                  <div className="data-list grouped-data-list">
+                    {accountDictionarySectionGroups.map(([sectionKey, entries]) => (
+                      <article className="data-company-card" key={`account-db-section-${sectionKey}`}>
+                        <div className="data-company-row">
+                          <strong>{sectionKey}</strong>
+                          <span className="soft-badge">{entries.length}건</span>
+                        </div>
+                        <div className="report-table-wrap">
+                          <table className="table report-table formula-table">
+                            <thead>
+                              <tr>
+                                <th>상위 분류</th>
+                                <th>원본 계정명</th>
+                                <th>예시 데이터</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="config-card">
-                    <div className="section-title">
-                      <div>
-                        <h3>섹션별 누적 원본 계정</h3>
-                        <p className="muted">같은 섹션에 한 번이라도 등장한 원본 계정명만 중복 없이 쌓습니다. 확정 매핑은 현재 분류 기준에 자동 병합됩니다.</p>
-                      </div>
-                    </div>
-                    <div className="data-list grouped-data-list">
-                      {accountDictionarySectionGroups.map(([sectionKey, entries]) => (
-                        <article className="data-company-card" key={`account-db-section-${sectionKey}`}>
-                          <div className="data-company-row">
-                            <strong>{sectionKey}</strong>
-                            <span className="soft-badge">{entries.length}건</span>
-                          </div>
-                          <div className="report-table-wrap">
-                            <table className="table report-table formula-table">
-                              <thead>
-                                <tr>
-                                  <th>원본 계정명</th>
-                                  <th>연결 항목</th>
-                                  <th>상태</th>
-                                  <th>예시 데이터</th>
+                            </thead>
+                            <tbody>
+                              {entries.map((entry) => (
+                                <tr key={`account-db-entry-${entry.entryKey}`}>
+                                  <td>{entry.sectionKey}</td>
+                                  <td>{entry.accountName}</td>
+                                  <td>{`${entry.sampleCompany} ${entry.sampleQuarter}`.trim() || "-"}</td>
                                 </tr>
-                              </thead>
-                              <tbody>
-                                {entries.map((entry) => (
-                                  <tr key={`account-db-entry-${entry.entryKey}`}>
-                                    <td>{entry.accountName}</td>
-                                    <td>
-                                      <select
-                                        className="select"
-                                        value={entry.confirmedCanonicalKey}
-                                        onChange={(event) => applyAccountDictionaryMapping(entry, event.target.value)}
-                                      >
-                                        <option value="">미연결</option>
-                                        {entry.suggestedCanonicalKey && !accountMappingOptions.includes(entry.suggestedCanonicalKey) && (
-                                          <option value={entry.suggestedCanonicalKey}>{entry.suggestedCanonicalKey}</option>
-                                        )}
-                                        {accountMappingOptions.map((option) => (
-                                          <option key={`${entry.entryKey}-mapped-${option}`} value={option}>{option}</option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                    <td>
-                                      <div className="inline-actions">
-                                        <span className="soft-badge">{entry.status === "mapped" ? "반영됨" : entry.status === "ignored" ? "보류" : "신규"}</span>
-                                        {entry.status !== "new" && <button className="ghost-button" onClick={() => resetAccountDictionaryEntry(entry)}>초기화</button>}
-                                      </div>
-                                    </td>
-                                    <td>{`${entry.sampleCompany} ${entry.sampleQuarter}`.trim() || "-"}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                </>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
               )}
             </>
           )}
