@@ -84,6 +84,7 @@ const ACCOUNT_DB_SECTIONS = {
   유동자산: ["유동자산"],
   비유동자산: ["비유동자산"],
   유동부채: ["유동부채"],
+  비유동부채: ["비유동부채"],
   매출원가: ["매출원가"],
   판매비와관리비: ["판매비와관리비", "판관비", "영업비용", "판매관리비", "판매비및관리비", "판매비와관리비합계"],
   영업외수익: ["영업외수익", "기타수익", "영업외수익합계", "금융수익"],
@@ -1300,7 +1301,7 @@ export function ValidatorApp() {
                     : activeTab === "formulas"
                       ? "결과물 계산에 쓰는 기준 수식을 그대로 정리했습니다."
                       : activeTab === "account-db"
-                        ? `저장된 회사별 분기 데이터에서 유동자산 · 비유동자산 · 유동부채 · 매출원가 · 판매비와관리비 · 영업외수익 · 영업외비용 · 기타 하위 계정 ${accountDictionaryEntries.length}건을 모아 봅니다.`
+                        ? `저장된 회사별 분기 데이터에서 유동자산 · 비유동자산 · 유동부채 · 비유동부채 · 매출원가 · 판매비와관리비 · 영업외수익 · 영업외비용 · 기타 하위 계정 ${accountDictionaryEntries.length}건을 모아 봅니다.`
                      : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
               </p>
             </div>
@@ -1929,7 +1930,7 @@ export function ValidatorApp() {
                   <div>
                     <span className="section-kicker">4. 계정 DB</span>
                     <h3>회사별 분기 데이터 기준 계정 DB</h3>
-                    <p className="result-meta">지금까지 저장한 회사별 분기 데이터에서 `유동자산`, `비유동자산`, `유동부채`, `매출원가`, `판매비와관리비`, `영업외수익`, `영업외비용`, `기타` 아래 실제 하위 계정만 모아 보여줍니다.</p>
+                    <p className="result-meta">지금까지 저장한 회사별 분기 데이터에서 `유동자산`, `비유동자산`, `유동부채`, `비유동부채`, `매출원가`, `판매비와관리비`, `영업외수익`, `영업외비용`, `기타` 아래 실제 하위 계정만 모아 보여줍니다.</p>
                   </div>
                   <div className="inline-actions">
                     <span className="soft-badge">누적 {accountDictionaryEntries.length}건</span>
