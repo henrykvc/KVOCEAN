@@ -70,37 +70,22 @@ type ComparisonSelection = {
 
 type TopViewKey = "menu" | "final-output";
 
-type ObservedAccountEntry = {
+type SectionAccountDbEntry = {
   entryKey: string;
   section: string;
   sectionKey: string;
   accountName: string;
-  normalizedAccountName: string;
   sampleCompany: string;
   sampleQuarter: string;
+  occurrences: number;
 };
 
-type MappingSaveState = "idle" | "saved" | "error";
-
-type MappingStatus = {
-  state: MappingSaveState;
-  message: string;
-};
-
-function isLocalClassificationCatalogGroup(value: unknown): value is ClassificationCatalogGroup {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const item = value as Partial<ClassificationCatalogGroup>;
-  return typeof item.groupId === "string"
-    && typeof item.majorCategory === "string"
-    && typeof item.middleCategory === "string"
-    && typeof item.smallCategory === "string"
-    && typeof item.sign === "string"
-    && typeof item.canonicalKey === "string"
-    && Array.isArray(item.aliases);
-}
+const ACCOUNT_DB_SECTIONS = {
+  매출원가: ["매출원가"],
+  판매비와관리비: ["판매비와관리비", "판관비", "영업비용"],
+  영업외수익: ["영업외수익"],
+  영업외비용: ["영업외비용"]
+} as const;
 
 const RATIO_ONLY_SECTION_TITLES = new Set(["안정성 비율", "수익성 비율", "성장성 비율"]);
 
@@ -135,6 +120,33 @@ const DETAIL_VARIABLE_COST_ALIASES = [
 ];
 const DETAIL_BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const DETAIL_INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
+const DISPLAYABLE_CLASSIFICATION_DETAIL_KEYS = new Set([
+  "차입금",
+  "인건비",
+  "연구개발비",
+  "접대비",
+  "광고선전비",
+  "지급수수료",
+  "외주용역비",
+  "임차료",
+  "여비교통비",
+  "도서인쇄비",
+  "소모품비",
+  "대손상각비",
+  "판매촉진비",
+  "대외협력비",
+  "기술이전료",
+  "경상기술료",
+  "전산운영비",
+  "단기대여금",
+  "퇴직급여충당부채",
+  "매출채권",
+  "미수금",
+  "미수수익",
+  "재고자산"
+]);
+
+
 function renderDiagnosisText(text: string) {
   const parts = text.split("**");
   return parts.map((part, index) =>
@@ -259,56 +271,75 @@ function parseKeywordList(value: string) {
     .filter(Boolean);
 }
 
-function normalizeMappingToken(value: string) {
+function normalizeAccountDictionaryKey(value: string) {
   return value.trim().replace(/\s+/g, "").toLowerCase();
 }
 
-function buildObservedEntryKey(sectionKey: string, accountName: string) {
-  return `${normalizeMappingToken(sectionKey)}::${normalizeMappingToken(accountName)}`;
+function resolveAccountDbSection(sectionKey: string) {
+  const normalizedSectionKey = normalizeAccountDictionaryKey(sectionKey);
+
+  for (const [parentSection, aliases] of Object.entries(ACCOUNT_DB_SECTIONS)) {
+    if (aliases.some((alias) => normalizeAccountDictionaryKey(alias) === normalizedSectionKey)) {
+      return parentSection;
+    }
+  }
+
+  return null;
 }
 
-function shouldCollectObservedAccountRow(row: SavedQuarterSnapshot["adjustedStatementRows"][number]) {
+function shouldCollectAccountDictionaryRow(row: SavedQuarterSnapshot["adjustedStatementRows"][number]) {
   const accountName = row.accountName.trim();
   const sectionKey = row.sectionKey.trim();
-  const canonicalKey = row.canonicalKey.trim();
+  const matchedSection = resolveAccountDbSection(sectionKey);
 
   if (!accountName || row.value === null || row.value === undefined) {
     return false;
   }
 
-  if (normalizeMappingToken(accountName) === normalizeMappingToken(sectionKey)) {
+  if (!matchedSection) {
     return false;
   }
 
-  if (isSystemFixedClassificationKey(accountName) || isSystemFixedClassificationKey(canonicalKey)) {
+  if (normalizeAccountDictionaryKey(accountName) === normalizeAccountDictionaryKey(sectionKey)) {
     return false;
   }
 
   return true;
 }
 
-function extractObservedAccountEntries(savedDatasets: SavedQuarterSnapshot[]) {
-  const entries = new Map<string, ObservedAccountEntry>();
+function extractAccountDictionaryEntries(savedDatasets: SavedQuarterSnapshot[]) {
+  const entries = new Map<string, SectionAccountDbEntry>();
 
   savedDatasets.forEach((dataset) => {
     dataset.adjustedStatementRows.forEach((row) => {
-      if (!shouldCollectObservedAccountRow(row)) {
+      if (!shouldCollectAccountDictionaryRow(row)) {
         return;
       }
 
-      const entryKey = buildObservedEntryKey(row.sectionKey, row.accountName);
-      if (entries.has(entryKey)) {
+      const matchedSection = resolveAccountDbSection(row.sectionKey);
+      if (!matchedSection) {
+        return;
+      }
+
+      const entryKey = `${normalizeAccountDictionaryKey(matchedSection)}::${normalizeAccountDictionaryKey(row.accountName)}`;
+      const existing = entries.get(entryKey);
+
+      if (existing) {
+        entries.set(entryKey, {
+          ...existing,
+          occurrences: existing.occurrences + 1
+        });
         return;
       }
 
       entries.set(entryKey, {
         entryKey,
         section: row.section,
-        sectionKey: row.sectionKey,
+        sectionKey: matchedSection,
         accountName: row.accountName,
-        normalizedAccountName: normalizeMappingToken(row.accountName),
         sampleCompany: dataset.companyName,
-        sampleQuarter: dataset.quarterLabel
+        sampleQuarter: dataset.quarterLabel,
+        occurrences: 1
       });
     });
   });
@@ -316,128 +347,13 @@ function extractObservedAccountEntries(savedDatasets: SavedQuarterSnapshot[]) {
   return Array.from(entries.values()).sort((a, b) => a.sectionKey.localeCompare(b.sectionKey, "ko") || a.accountName.localeCompare(b.accountName, "ko"));
 }
 
-function buildCatalogAliasIndex(catalog: ClassificationCatalogGroup[]) {
-  const aliasIndex = new Map<string, string>();
-
-  catalog.forEach((group) => {
-    const canonicalKey = group.canonicalKey.trim();
-    if (!canonicalKey) {
-      return;
-    }
-
-    [canonicalKey, ...sanitizeClassificationAliases(group.aliases)].forEach((token) => {
-      const normalized = normalizeMappingToken(token);
-      if (!normalized || aliasIndex.has(normalized)) {
-        return;
-      }
-      aliasIndex.set(normalized, canonicalKey);
-    });
-  });
-
-  return aliasIndex;
-}
-
-function buildMappingValidationIssues(catalog: ClassificationCatalogGroup[]) {
-  const duplicateCanonicalKeys = new Set<string>();
-  const duplicateAliases = new Map<string, string[]>();
-  const canonicalOwners = new Map<string, string>();
-  const aliasOwners = new Map<string, string>();
-
-  catalog.forEach((group) => {
-    const canonicalKey = group.canonicalKey.trim();
-    if (!canonicalKey) {
-      return;
-    }
-
-    const normalizedCanonicalKey = normalizeMappingToken(canonicalKey);
-    const existingCanonicalOwner = canonicalOwners.get(normalizedCanonicalKey);
-    if (existingCanonicalOwner && existingCanonicalOwner !== canonicalKey) {
-      duplicateCanonicalKeys.add(canonicalKey);
-      duplicateCanonicalKeys.add(existingCanonicalOwner);
-    } else {
-      canonicalOwners.set(normalizedCanonicalKey, canonicalKey);
-    }
-
-    sanitizeClassificationAliases(group.aliases).forEach((alias) => {
-      const normalizedAlias = normalizeMappingToken(alias);
-      if (!normalizedAlias || normalizedAlias === normalizedCanonicalKey) {
-        return;
-      }
-
-      const existingAliasOwner = aliasOwners.get(normalizedAlias);
-      if (existingAliasOwner && existingAliasOwner !== canonicalKey) {
-        duplicateAliases.set(normalizedAlias, Array.from(new Set([existingAliasOwner, canonicalKey])));
-      } else {
-        aliasOwners.set(normalizedAlias, canonicalKey);
-      }
-    });
-  });
-
-  return {
-    duplicateCanonicalKeys: Array.from(duplicateCanonicalKeys).sort((a, b) => a.localeCompare(b, "ko")),
-    duplicateAliases: Array.from(duplicateAliases.entries()).map(([alias, owners]) => ({ alias, owners }))
-  };
-}
-
-function buildUnmappedObservedEntries(observedEntries: ObservedAccountEntry[], catalog: ClassificationCatalogGroup[]) {
-  const aliasIndex = buildCatalogAliasIndex(catalog);
-
-  return observedEntries
-    .filter((entry) => !aliasIndex.has(entry.normalizedAccountName))
-    .sort((a, b) => a.sectionKey.localeCompare(b.sectionKey, "ko") || a.accountName.localeCompare(b.accountName, "ko"));
-}
-
-function buildTransientObservedEntries(reporting: ReportingModel, companyName: string) {
-  if (!reporting.adjustedStatementRows.length || !reporting.periods.length) {
+function getDisplayedClassificationAliases(group: ClassificationCatalogGroup) {
+  if (!DISPLAYABLE_CLASSIFICATION_DETAIL_KEYS.has(group.canonicalKey.trim())) {
     return [];
   }
 
-  const sampleQuarter = reporting.periods[0].label;
-  const snapshot: SavedQuarterSnapshot = {
-    id: `transient__${companyName}__${sampleQuarter}`,
-    companyName,
-    quarterKey: sampleQuarter,
-    quarterLabel: sampleQuarter,
-    savedAt: new Date(0).toISOString(),
-    rawStatementRows: [],
-    adjustedStatementRows: reporting.adjustedStatementRows.map((row) => ({
-      signFlag: row.signFlag,
-      section: row.section,
-      sectionKey: row.sectionKey,
-      accountName: row.accountName,
-      canonicalKey: row.canonicalKey,
-      value: row.values[reporting.periods[0].key] ?? 0
-    })),
-    source: {
-      pastedText: "",
-      tolerance: 0,
-      pasteEdits: {},
-      sessionSignFixes: {},
-      logicConfig: structuredClone(DEFAULT_LOGIC_CONFIG),
-      companyConfigs: structuredClone(DEFAULT_COMPANY_CONFIGS),
-      classificationGroups: structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
-    }
-  };
-
-  return extractObservedAccountEntries([snapshot]);
-}
-
-function sortManagementCatalog(catalog: ClassificationCatalogGroup[]) {
-  return [...catalog].sort((a, b) => {
-    const aKey = `${a.majorCategory}|${a.middleCategory}|${a.smallCategory}|${a.groupId}|${a.canonicalKey}`;
-    const bKey = `${b.majorCategory}|${b.middleCategory}|${b.smallCategory}|${b.groupId}|${b.canonicalKey}`;
-    return aKey.localeCompare(bKey, "ko");
-  });
-}
-
-function buildMappingRowTitle(group: ClassificationCatalogGroup) {
-  return [group.majorCategory, group.middleCategory, group.smallCategory].filter(Boolean).join(" > ");
-}
-
-function buildAliasText(group: ClassificationCatalogGroup) {
   return sanitizeClassificationAliases(group.aliases)
-    .filter((alias) => alias.trim() && alias.trim() !== group.canonicalKey.trim())
-    .join("\n");
+    .filter((alias) => alias.trim() && alias.trim() !== group.canonicalKey.trim());
 }
 
 function objectEntriesToRows(record: Record<string, string>): MapRow[] {
@@ -477,25 +393,6 @@ function cloneClassificationCatalog(catalog: ClassificationCatalogGroup[]) {
     return structuredClone(catalog);
   } catch {
     return structuredClone(DEFAULT_CLASSIFICATION_CATALOG);
-  }
-}
-
-function parseAccountDbCatalog(raw: string | null, fallback: ClassificationCatalogGroup[]) {
-  if (!raw) {
-    return cloneClassificationCatalog(fallback);
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    const catalog = Array.isArray(parsed)
-      ? parsed.filter(isLocalClassificationCatalogGroup)
-      : parsed && typeof parsed === "object" && Array.isArray((parsed as { catalog?: unknown[] }).catalog)
-        ? (parsed as { catalog: unknown[] }).catalog.filter(isLocalClassificationCatalogGroup)
-        : [];
-
-    return catalog.length ? cloneClassificationCatalog(catalog) : cloneClassificationCatalog(fallback);
-  } catch {
-    return cloneClassificationCatalog(fallback);
   }
 }
 
@@ -683,7 +580,6 @@ export function ValidatorApp() {
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
-  const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
@@ -691,21 +587,16 @@ export function ValidatorApp() {
   const [sameCompanyMode, setSameCompanyMode] = useState(false);
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
-  const [accountDbCatalog, setAccountDbCatalog] = useState<ClassificationCatalogGroup[]>(cloneClassificationCatalog(DEFAULT_CLASSIFICATION_CATALOG));
-  const [accountDbHistory, setAccountDbHistory] = useState<ClassificationCatalogGroup[][]>([]);
-  const [accountDbStatus, setAccountDbStatus] = useState<MappingStatus>({ state: "idle", message: "" });
-  const [unmappedTargetSelections, setUnmappedTargetSelections] = useState<Record<string, string>>({});
+  const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
 
   useEffect(() => {
     setMounted(true);
     const persisted = parsePersistedState(window.localStorage.getItem(STORAGE_KEYS.config));
     const saved = parseSavedDatasets(window.localStorage.getItem(STORAGE_KEYS.datasets));
-    const accountDb = parseAccountDbCatalog(window.localStorage.getItem(STORAGE_KEYS.accountDictionary), persisted.classificationCatalog);
     setLogicConfig(cloneLogicConfig(persisted.logicConfig));
     setCompanyConfigs(cloneCompanyConfigs(persisted.companyConfigs));
     setClassificationGroups(cloneClassificationGroups(persisted.classificationGroups));
     setClassificationCatalog(cloneClassificationCatalog(persisted.classificationCatalog));
-    setAccountDbCatalog(accountDb);
     setGlobalOverrideRows(overridesToRows(persisted.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(persisted.logicConfig.pasteSectToParent));
     setSavedDatasets(saved);
@@ -714,13 +605,6 @@ export function ValidatorApp() {
     }
     setComparisonSelections(buildInitialComparisonSelections(saved));
   }, []);
-
-  useEffect(() => {
-    if (!mounted) {
-      return;
-    }
-    window.localStorage.setItem(STORAGE_KEYS.accountDictionary, JSON.stringify({ version: 2, catalog: accountDbCatalog }));
-  }, [mounted, accountDbCatalog]);
 
   useEffect(() => {
     if (!mounted) {
@@ -793,6 +677,7 @@ export function ValidatorApp() {
       }),
     [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
   );
+  const accountDictionaryEntries = useMemo(() => extractAccountDictionaryEntries(savedDatasets), [savedDatasets]);
   const reporting = useMemo(
     () => {
       const reportArgs = {
@@ -809,26 +694,21 @@ export function ValidatorApp() {
     },
     [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, classificationGroups, pasteEdits, sessionSignFixes]
   );
-  const observedAccountEntries = useMemo(
+  const accountDictionarySectionGroups = useMemo(
     () => {
-      const currentCompany = selectedCompany.trim() || reporting.companyName || reporting.detectedCompany || "현재 입력";
-      const merged = new Map<string, ObservedAccountEntry>();
-      extractObservedAccountEntries(savedDatasets).forEach((entry) => merged.set(entry.entryKey, entry));
-      buildTransientObservedEntries(reporting, currentCompany).forEach((entry) => {
-        if (!merged.has(entry.entryKey)) {
-          merged.set(entry.entryKey, entry);
-        }
-      });
-      return Array.from(merged.values()).sort((a, b) => a.sectionKey.localeCompare(b.sectionKey, "ko") || a.accountName.localeCompare(b.accountName, "ko"));
+      const grouped = accountDictionaryEntries.reduce((acc, entry) => {
+        const items = acc.get(entry.sectionKey) ?? [];
+        items.push(entry);
+        acc.set(entry.sectionKey, items);
+        return acc;
+      }, new Map<string, SectionAccountDbEntry[]>());
+
+      return Object.keys(ACCOUNT_DB_SECTIONS)
+        .map((sectionKey) => [sectionKey, grouped.get(sectionKey) ?? []] as const)
+        .filter(([, entries]) => entries.length > 0);
     },
-    [savedDatasets, reporting, selectedCompany]
+    [accountDictionaryEntries]
   );
-  const managementCatalog = useMemo(() => sortManagementCatalog(accountDbCatalog), [accountDbCatalog]);
-  const unmappedObservedEntries = useMemo(
-    () => buildUnmappedObservedEntries(observedAccountEntries, accountDbCatalog),
-    [observedAccountEntries, accountDbCatalog]
-  );
-  const mappingIssues = useMemo(() => buildMappingValidationIssues(accountDbCatalog), [accountDbCatalog]);
 
   const companyKnown = selectedCompany.trim() && companyConfigs[selectedCompany.trim()];
   const sessionFixCount = countSessionFixes(sessionSignFixes);
@@ -897,13 +777,6 @@ export function ValidatorApp() {
       .map((group, index) => ({ group, index }))
       .filter(({ group }) => !isSystemFixedClassificationKey(group.canonicalKey)),
     [classificationCatalog]
-  );
-  const accountDbCatalogRows = useMemo(
-    () => managementCatalog.map((group) => ({
-      group,
-      index: accountDbCatalog.findIndex((item) => item.groupId === group.groupId && item.canonicalKey === group.canonicalKey)
-    })).filter((item) => item.index >= 0),
-    [managementCatalog, accountDbCatalog]
   );
 
   function resetAdjustments() {
@@ -1142,7 +1015,6 @@ export function ValidatorApp() {
       canonicalKey: item.canonicalKey.trim(),
       aliases: sanitizeClassificationAliases(item.aliases)
     })).filter((item) => item.canonicalKey);
-
     const nextGroups = classificationCatalogToGroups(clonedCatalog);
     setClassificationCatalog(clonedCatalog);
     setClassificationGroups(nextGroups);
@@ -1152,8 +1024,6 @@ export function ValidatorApp() {
       setClassificationSaveState("saved");
       window.setTimeout(() => setClassificationSaveState("idle"), 1800);
     }
-
-    return true;
   }
 
   function updateClassificationCatalog(updater: (prev: ClassificationCatalogGroup[]) => ClassificationCatalogGroup[]) {
@@ -1172,93 +1042,6 @@ export function ValidatorApp() {
       setClassificationCatalog(last);
       return prev.slice(0, -1);
     });
-  }
-
-  function applyAccountDbCatalog(nextCatalog: ClassificationCatalogGroup[], showFeedback = false) {
-    const clonedCatalog = cloneClassificationCatalog(nextCatalog).map((item) => ({
-      ...item,
-      groupId: item.groupId.trim(),
-      majorCategory: item.majorCategory.trim(),
-      middleCategory: item.middleCategory.trim(),
-      smallCategory: item.smallCategory.trim(),
-      sign: item.sign.trim(),
-      canonicalKey: item.canonicalKey.trim(),
-      aliases: sanitizeClassificationAliases(item.aliases)
-    })).filter((item) => item.canonicalKey);
-    const issues = buildMappingValidationIssues(clonedCatalog);
-
-    if (issues.duplicateCanonicalKeys.length || issues.duplicateAliases.length) {
-      const duplicateAliasText = issues.duplicateAliases[0]
-        ? `${issues.duplicateAliases[0].owners.join(" / ")}에 중복된 별칭 ${issues.duplicateAliases[0].alias}`
-        : "";
-      setAccountDbStatus({
-        state: "error",
-        message: issues.duplicateCanonicalKeys.length
-          ? `대표 계정명이 중복되었습니다: ${issues.duplicateCanonicalKeys.join(", ")}`
-          : `별칭이 여러 대표 계정에 중복되었습니다. ${duplicateAliasText}`.trim()
-      });
-      return false;
-    }
-
-    setAccountDbCatalog(clonedCatalog);
-    setAccountDbHistory([]);
-    setAccountDbStatus(showFeedback
-      ? { state: "saved", message: "전체 DB를 저장했습니다. 현재 결과물은 기존 분류 기준 그대로 유지됩니다." }
-      : { state: "idle", message: "" });
-
-    if (showFeedback) {
-      window.setTimeout(() => setAccountDbStatus((prev) => prev.state === "saved" ? { state: "idle", message: "" } : prev), 1800);
-    }
-
-    return true;
-  }
-
-  function updateAccountDbCatalog(updater: (prev: ClassificationCatalogGroup[]) => ClassificationCatalogGroup[]) {
-    setAccountDbCatalog((prev) => {
-      setAccountDbHistory((history) => [...history, prev]);
-      return updater(prev);
-    });
-  }
-
-  function undoAccountDbEdit() {
-    setAccountDbHistory((prev) => {
-      const last = prev[prev.length - 1];
-      if (!last) {
-        return prev;
-      }
-      setAccountDbCatalog(last);
-      return prev.slice(0, -1);
-    });
-  }
-
-  function addUnmappedEntryToGroup(entry: ObservedAccountEntry) {
-    const targetCanonicalKey = unmappedTargetSelections[entry.entryKey]?.trim();
-    if (!targetCanonicalKey) {
-      setAccountDbStatus({ state: "error", message: `${entry.accountName}에 연결할 대표 계정을 먼저 선택해 주세요.` });
-      return;
-    }
-
-    const owner = buildCatalogAliasIndex(accountDbCatalog).get(entry.normalizedAccountName);
-    if (owner && owner !== targetCanonicalKey) {
-      setAccountDbStatus({ state: "error", message: `${entry.accountName}은 이미 ${owner}에 연결되어 있습니다.` });
-      return;
-    }
-
-    updateAccountDbCatalog((prev) => prev.map((group) => {
-      if (group.canonicalKey.trim() !== targetCanonicalKey) {
-        return group;
-      }
-      return {
-        ...group,
-        aliases: sanitizeClassificationAliases([...group.aliases, entry.accountName])
-      };
-    }));
-    setUnmappedTargetSelections((prev) => {
-      const next = { ...prev };
-      delete next[entry.entryKey];
-      return next;
-    });
-    setAccountDbStatus({ state: "idle", message: "" });
   }
 
   function toggleResultCard(cardKey: string, defaultOpen: boolean) {
@@ -1308,7 +1091,6 @@ export function ValidatorApp() {
     setGlobalOverrideRows(overridesToRows(defaults.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(defaults.logicConfig.pasteSectToParent));
     setClassificationHistory([]);
-    setClassificationSaveState("idle");
   }
 
   function saveConfigEditors() {
@@ -1438,8 +1220,8 @@ export function ValidatorApp() {
               <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
               <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
               <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>3-1. 분류</button>
-              <button className={`side-nav-item ${activeTab === "account-db" ? "active" : ""}`} onClick={() => setActiveTab("account-db")}>3-2. 전체 DB</button>
-              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>3-3. 수식</button>
+              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>3-2. 수식</button>
+              <button className={`side-nav-item ${activeTab === "account-db" ? "active" : ""}`} onClick={() => setActiveTab("account-db")}>4. 계정 DB</button>
             </div>
           </div>
 
@@ -1502,11 +1284,11 @@ export function ValidatorApp() {
                           : activeTab === "report"
                             ? `${selectedDataset ? `${selectedDataset.companyName} ${selectedDataset.quarterLabel}` : "저장된 데이터"} 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
                             : activeTab === "classify"
-                              ? "현재 결과물 계산에 실제 반영되는 분류 기준입니다. 여기 수정은 결과물에 직접 반영됩니다."
+                              ? "표준 항목별 분류를 카드 형태로 수정할 수 있습니다. 계정명 추가/삭제 후 저장하면 이후 계산에 바로 반영됩니다."
                     : activeTab === "formulas"
                       ? "결과물 계산에 쓰는 기준 수식을 그대로 정리했습니다."
                       : activeTab === "account-db"
-                        ? `전체 DB ${managementCatalog.length}개와 신규 미매핑 계정 ${unmappedObservedEntries.length}개를 관리합니다. 아직 결과물 계산에는 직접 연결하지 않습니다.`
+                        ? `저장된 회사별 분기 데이터에서 매출원가 · 판매비와관리비 · 영업외수익 · 영업외비용 하위 계정 ${accountDictionaryEntries.length}건을 모아 봅니다.`
                      : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
               </p>
             </div>
@@ -2028,7 +1810,7 @@ export function ValidatorApp() {
                   <div>
                     <span className="section-kicker">분류 기준</span>
                     <h3>번호 묶음 기준 분류</h3>
-                    <p className="result-meta">현재 결과물 계산에 직접 연결된 분류 기준입니다. 여기서 저장한 내용만 결과물 계산에 반영됩니다.</p>
+                    <p className="result-meta">원본 계정은 그대로 두고, 같은 번호로 묶인 계정을 대표 항목 아래로 관리합니다. 표를 붙여넣어 한 번에 수정할 수 있습니다.</p>
                     {classificationSaveState === "saved" && (
                       <p className="save-feedback success">분류를 저장했고, 저장된 결과물도 현재 분류 기준으로 다시 계산했습니다.</p>
                     )}
@@ -2046,7 +1828,7 @@ export function ValidatorApp() {
                 <div className="section-title">
                   <div>
                     <h3>분류 항목 편집</h3>
-                    <p className="muted">기존 결과물 기준을 유지하기 위해 분류 화면은 그대로 남겨둡니다. 전체 DB와 다르게 이 화면은 계산 source of truth입니다.</p>
+                    <p className="muted">수식에 필요한 대표 항목과 원본 계정 목록만 간단하게 관리합니다. 상위 확정 항목은 시스템 고정값으로 유지하고 여기서 숨깁니다.</p>
                   </div>
                   <div className="inline-actions">
                     <button className="ghost-button" onClick={() => updateClassificationCatalog((prev) => [...prev, {
@@ -2078,7 +1860,7 @@ export function ValidatorApp() {
                           <td>
                             <textarea
                               className="textarea classification-textarea"
-                              value={buildAliasText(group)}
+                              value={getDisplayedClassificationAliases(group).join("\n")}
                               onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: parseKeywordList(event.target.value) } : item))}
                               placeholder="실제 세부 계정이 있으면 줄바꿈으로 입력"
                             />
@@ -2133,146 +1915,57 @@ export function ValidatorApp() {
               <section className="overview-card report-hero-card">
                 <div className="section-title">
                   <div>
-                    <span className="section-kicker">전체 계정 DB</span>
-                    <h3>분류와 별도로 전체 계정 풀 관리</h3>
-                    <p className="result-meta">기존 분류는 그대로 두고, 별도 전체 DB를 먼저 쌓습니다. 신규 계정은 아래 미매핑 목록에서 대표 계정으로 흡수하고, 이상하면 언제든 기존 분류만 계속 사용할 수 있습니다.</p>
-                    {accountDbStatus.message && (
-                      <p className={`save-feedback ${accountDbStatus.state === "error" ? "status-fail" : "success"}`}>{accountDbStatus.message}</p>
-                    )}
+                    <span className="section-kicker">4. 계정 DB</span>
+                    <h3>회사별 분기 데이터 기준 손익 계정 DB</h3>
+                    <p className="result-meta">지금까지 저장한 회사별 분기 데이터에서 `매출원가`, `판매비와관리비`, `영업외수익`, `영업외비용` 아래 실제 하위 계정만 모아 보여줍니다.</p>
                   </div>
                   <div className="inline-actions">
-                    <span className="soft-badge">대표 계정 {managementCatalog.length}개</span>
-                    <span className="soft-badge">미매핑 {unmappedObservedEntries.length}건</span>
-                    <button className="ghost-button" disabled={!accountDbHistory.length} onClick={undoAccountDbEdit}>되돌리기</button>
-                    <button className={`button ${accountDbStatus.state === "saved" ? "is-saved" : ""}`.trim()} onClick={() => applyAccountDbCatalog(accountDbCatalog, true)}>
-                      {accountDbStatus.state === "saved" ? "전체 DB 저장됨" : "전체 DB 저장"}
-                    </button>
+                    <span className="soft-badge">누적 {accountDictionaryEntries.length}건</span>
+                    <span className="soft-badge">섹션 {accountDictionarySectionGroups.length}개</span>
                   </div>
                 </div>
               </section>
 
-              {(mappingIssues.duplicateCanonicalKeys.length || mappingIssues.duplicateAliases.length) && (
-                <section className="notice">
-                  <strong>저장 전 확인 필요</strong>
-                  <p className="muted" style={{ marginTop: 8 }}>
-                    {mappingIssues.duplicateCanonicalKeys.length
-                      ? `대표 계정명 중복: ${mappingIssues.duplicateCanonicalKeys.join(", ")}`
-                      : `별칭 중복: ${mappingIssues.duplicateAliases.map((item) => `${item.alias} (${item.owners.join(" / ")})`).join(", ")}`}
-                  </p>
+              {!accountDictionaryEntries.length && <div className="notice">아직 표시할 손익 계정 DB가 없습니다. `저장하기`로 회사별 분기 데이터를 먼저 쌓아 주세요.</div>}
+
+              {!!accountDictionaryEntries.length && (
+                <section className="config-card">
+                  <div className="section-title">
+                    <div>
+                      <h3>상위 항목별 하위 계정</h3>
+                    <p className="muted">네 개 상위 항목 아래에 저장된 하위 계정을 중복 없이 모았습니다.</p>
+                    </div>
+                  </div>
+                  <div className="data-list grouped-data-list">
+                    {accountDictionarySectionGroups.map(([sectionKey, entries]) => (
+                      <article className="data-company-card" key={`account-db-section-${sectionKey}`}>
+                        <div className="data-company-row">
+                          <strong>{sectionKey}</strong>
+                          <span className="soft-badge">{entries.length}건</span>
+                        </div>
+                        <div className="report-table-wrap">
+                          <table className="table report-table formula-table">
+                            <thead>
+                              <tr>
+                                <th>상위 항목</th>
+                                <th>하위 계정명</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {entries.map((entry) => (
+                                <tr key={`account-db-entry-${entry.entryKey}`}>
+                                  <td>{entry.sectionKey}</td>
+                                  <td>{entry.accountName}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
                 </section>
               )}
-
-              <section className="config-card">
-                <div className="section-title">
-                  <div>
-                    <h3>대표 계정 DB</h3>
-                    <p className="muted">`DB.xlsx`처럼 대표 계정 아래에 소분류를 쌓는 구조입니다. 아직 결과물 계산은 이 DB를 보지 않고 기존 분류만 사용합니다.</p>
-                  </div>
-                  <div className="inline-actions">
-                    <button className="ghost-button" onClick={() => updateAccountDbCatalog((prev) => [...prev, {
-                      groupId: `${Date.now()}`,
-                      majorCategory: "",
-                      middleCategory: "",
-                      smallCategory: "",
-                      sign: "",
-                      canonicalKey: "",
-                      aliases: []
-                    }])}>대표 계정 추가</button>
-                  </div>
-                </div>
-                <div className="report-table-wrap">
-                  <table className="table report-table formula-table classification-table">
-                    <thead>
-                      <tr>
-                        <th>대분류</th>
-                        <th>일치값</th>
-                        <th>중분류</th>
-                        <th>번호</th>
-                        <th>대표 계정</th>
-                        <th>소분류</th>
-                        <th>삭제</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {accountDbCatalogRows.map(({ group, index }) => {
-                        const fixed = isSystemFixedClassificationKey(group.canonicalKey);
-                        return (
-                          <tr key={`classification-group-${group.groupId}-${index}`}>
-                            <td><input className="input" value={group.majorCategory} onChange={(event) => updateAccountDbCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, majorCategory: event.target.value } : item))} /></td>
-                            <td><input className="input" value={group.middleCategory} onChange={(event) => updateAccountDbCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, middleCategory: event.target.value } : item))} /></td>
-                            <td><input className="input" value={group.smallCategory} onChange={(event) => updateAccountDbCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, smallCategory: event.target.value } : item))} /></td>
-                            <td><input className="input" value={group.groupId} onChange={(event) => updateAccountDbCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, groupId: event.target.value } : item))} /></td>
-                            <td>
-                              <input
-                                className="input"
-                                value={group.canonicalKey}
-                                disabled={fixed}
-                                onChange={(event) => updateAccountDbCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))}
-                              />
-                            </td>
-                            <td>
-                              <textarea
-                                className="textarea classification-textarea"
-                                value={buildAliasText(group)}
-                                onChange={(event) => updateAccountDbCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: parseKeywordList(event.target.value) } : item))}
-                                placeholder="실제 들어오는 원본 계정을 줄바꿈으로 입력"
-                              />
-                            </td>
-                            <td>
-                              <button className="danger-button" disabled={fixed} onClick={() => updateAccountDbCatalog((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              <section className="config-card">
-                <div className="section-title">
-                  <div>
-                    <h3>신규 미매핑 계정</h3>
-                    <p className="muted">저장 데이터와 현재 입력에서 아직 대표 계정에 연결되지 않은 원본 계정입니다. 올바른 대표 계정을 선택해 소분류로 추가하세요.</p>
-                  </div>
-                </div>
-                {!unmappedObservedEntries.length && <div className="notice">현재 미매핑 계정이 없습니다. 지금 기준으로 결과물 연결이 끊긴 원본 계정은 없습니다.</div>}
-                {!!unmappedObservedEntries.length && (
-                  <div className="report-table-wrap">
-                    <table className="table report-table formula-table">
-                      <thead>
-                        <tr>
-                          <th>관측 분류</th>
-                          <th>원본 계정명</th>
-                          <th>예시</th>
-                          <th>대표 계정 선택</th>
-                          <th>추가</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {unmappedObservedEntries.map((entry) => (
-                          <tr key={`unmapped-entry-${entry.entryKey}`}>
-                            <td>{entry.sectionKey}</td>
-                            <td>{entry.accountName}</td>
-                            <td>{`${entry.sampleCompany} ${entry.sampleQuarter}`.trim() || "현재 입력"}</td>
-                            <td>
-                              <select className="select" value={unmappedTargetSelections[entry.entryKey] ?? ""} onChange={(event) => setUnmappedTargetSelections((prev) => ({ ...prev, [entry.entryKey]: event.target.value }))}>
-                                <option value="">대표 계정 선택</option>
-                                {managementCatalog.map((group) => (
-                                  <option key={`mapping-target-${group.groupId}-${group.canonicalKey}`} value={group.canonicalKey}>
-                                    {[group.canonicalKey, buildMappingRowTitle(group)].filter(Boolean).join(" | ")}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td><button className="secondary-button" onClick={() => addUnmappedEntryToGroup(entry)}>소분류에 추가</button></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
             </>
           )}
 
