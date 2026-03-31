@@ -81,10 +81,14 @@ type SectionAccountDbEntry = {
 };
 
 const ACCOUNT_DB_SECTIONS = {
+  유동자산: ["유동자산"],
+  비유동자산: ["비유동자산"],
+  유동부채: ["유동부채"],
   매출원가: ["매출원가"],
-  판매비와관리비: ["판매비와관리비", "판관비", "영업비용"],
-  영업외수익: ["영업외수익"],
-  영업외비용: ["영업외비용"]
+  판매비와관리비: ["판매비와관리비", "판관비", "영업비용", "판매관리비", "판매비및관리비", "판매비와관리비합계"],
+  영업외수익: ["영업외수익", "기타수익", "영업외수익합계", "금융수익"],
+  영업외비용: ["영업외비용", "기타비용", "영업외비용합계", "금융비용"],
+  기타: []
 } as const;
 
 const RATIO_ONLY_SECTION_TITLES = new Set(["안정성 비율", "수익성 비율", "성장성 비율"]);
@@ -279,18 +283,22 @@ function resolveAccountDbSection(sectionKey: string) {
   const normalizedSectionKey = normalizeAccountDictionaryKey(sectionKey);
 
   for (const [parentSection, aliases] of Object.entries(ACCOUNT_DB_SECTIONS)) {
+    if (parentSection === "기타") {
+      continue;
+    }
     if (aliases.some((alias) => normalizeAccountDictionaryKey(alias) === normalizedSectionKey)) {
       return parentSection;
     }
   }
 
-  return null;
+  return "기타";
 }
 
 function shouldCollectAccountDictionaryRow(row: SavedQuarterSnapshot["adjustedStatementRows"][number]) {
   const accountName = row.accountName.trim();
   const sectionKey = row.sectionKey.trim();
   const matchedSection = resolveAccountDbSection(sectionKey);
+  const canonicalKey = row.canonicalKey.trim();
 
   if (!accountName || row.value === null || row.value === undefined) {
     return false;
@@ -301,6 +309,10 @@ function shouldCollectAccountDictionaryRow(row: SavedQuarterSnapshot["adjustedSt
   }
 
   if (normalizeAccountDictionaryKey(accountName) === normalizeAccountDictionaryKey(sectionKey)) {
+    return false;
+  }
+
+  if (matchedSection === "기타" && (isSystemFixedClassificationKey(accountName) || isSystemFixedClassificationKey(canonicalKey))) {
     return false;
   }
 
@@ -1288,7 +1300,7 @@ export function ValidatorApp() {
                     : activeTab === "formulas"
                       ? "결과물 계산에 쓰는 기준 수식을 그대로 정리했습니다."
                       : activeTab === "account-db"
-                        ? `저장된 회사별 분기 데이터에서 매출원가 · 판매비와관리비 · 영업외수익 · 영업외비용 하위 계정 ${accountDictionaryEntries.length}건을 모아 봅니다.`
+                        ? `저장된 회사별 분기 데이터에서 유동자산 · 비유동자산 · 유동부채 · 매출원가 · 판매비와관리비 · 영업외수익 · 영업외비용 · 기타 하위 계정 ${accountDictionaryEntries.length}건을 모아 봅니다.`
                      : "규칙 관리와 내보내기는 검증 흐름을 지원하는 보조 기능입니다."}
               </p>
             </div>
@@ -1916,8 +1928,8 @@ export function ValidatorApp() {
                 <div className="section-title">
                   <div>
                     <span className="section-kicker">4. 계정 DB</span>
-                    <h3>회사별 분기 데이터 기준 손익 계정 DB</h3>
-                    <p className="result-meta">지금까지 저장한 회사별 분기 데이터에서 `매출원가`, `판매비와관리비`, `영업외수익`, `영업외비용` 아래 실제 하위 계정만 모아 보여줍니다.</p>
+                    <h3>회사별 분기 데이터 기준 계정 DB</h3>
+                    <p className="result-meta">지금까지 저장한 회사별 분기 데이터에서 `유동자산`, `비유동자산`, `유동부채`, `매출원가`, `판매비와관리비`, `영업외수익`, `영업외비용`, `기타` 아래 실제 하위 계정만 모아 보여줍니다.</p>
                   </div>
                   <div className="inline-actions">
                     <span className="soft-badge">누적 {accountDictionaryEntries.length}건</span>
