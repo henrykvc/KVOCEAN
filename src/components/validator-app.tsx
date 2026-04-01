@@ -80,6 +80,52 @@ type SectionAccountDbEntry = {
   occurrences: number;
 };
 
+const MANAGED_ACCOUNT_DB_CLASSIFICATION_KEYS = [
+  "당좌자산",
+  "차입금",
+  "매출채권",
+  "재고자산",
+  "미수금",
+  "미수수익",
+  "감가상각비",
+  "무형자산상각비",
+  "사용권자산상각비",
+  "인건비",
+  "연구개발비",
+  "접대비",
+  "복리후생비",
+  "광고선전비",
+  "지급수수료",
+  "외주용역비",
+  "임차료",
+  "배송비",
+  "운반비",
+  "수출제비용",
+  "여비교통비",
+  "통신비",
+  "세금과공과금",
+  "도서인쇄비",
+  "소모품비",
+  "대손상각비",
+  "판매촉진비",
+  "대외협력비",
+  "행사비",
+  "기술이전료",
+  "경상기술료",
+  "전산운영비",
+  "반품비용",
+  "기타변동비",
+  "이자비용",
+  "단기대여금",
+  "개발비(자산)",
+  "선급금",
+  "가수금",
+  "가지급금",
+  "퇴직급여충당부채"
+] as const;
+
+const MANAGED_ACCOUNT_DB_CLASSIFICATION_KEY_SET = new Set<string>(MANAGED_ACCOUNT_DB_CLASSIFICATION_KEYS);
+
 const ACCOUNT_DB_SECTIONS = {
   유동자산: ["유동자산"],
   비유동자산: ["비유동자산"],
@@ -293,6 +339,28 @@ function resolveAccountDbSection(sectionKey: string) {
   }
 
   return "기타";
+}
+
+function buildManagedClassificationLookup(catalog: ClassificationCatalogGroup[]) {
+  const lookup = new Map<string, string>();
+
+  catalog.forEach((group) => {
+    const canonicalKey = group.canonicalKey.trim();
+    if (!MANAGED_ACCOUNT_DB_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
+      return;
+    }
+
+    lookup.set(normalizeAccountDictionaryKey(canonicalKey), canonicalKey);
+    sanitizeClassificationAliases(group.aliases).forEach((alias) => {
+      lookup.set(normalizeAccountDictionaryKey(alias), canonicalKey);
+    });
+  });
+
+  return lookup;
+}
+
+function resolveManagedClassification(accountName: string, lookup: Map<string, string>) {
+  return lookup.get(normalizeAccountDictionaryKey(accountName)) ?? "";
 }
 
 function shouldCollectAccountDictionaryRow(row: SavedQuarterSnapshot["adjustedStatementRows"][number]) {
@@ -691,6 +759,14 @@ export function ValidatorApp() {
     [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
   );
   const accountDictionaryEntries = useMemo(() => extractAccountDictionaryEntries(savedDatasets), [savedDatasets]);
+  const managedClassificationLookup = useMemo(
+    () => buildManagedClassificationLookup(classificationCatalog),
+    [classificationCatalog]
+  );
+  const managedClassificationOptions = useMemo(
+    () => MANAGED_ACCOUNT_DB_CLASSIFICATION_KEYS.filter((key) => classificationCatalog.some((group) => group.canonicalKey.trim() === key)),
+    [classificationCatalog]
+  );
   const reporting = useMemo(
     () => {
       const reportArgs = {
@@ -721,6 +797,10 @@ export function ValidatorApp() {
         .filter(([, entries]) => entries.length > 0);
     },
     [accountDictionaryEntries]
+  );
+  const classifiedAccountDictionaryCount = useMemo(
+    () => accountDictionaryEntries.filter((entry) => resolveManagedClassification(entry.accountName, managedClassificationLookup)).length,
+    [accountDictionaryEntries, managedClassificationLookup]
   );
 
   const companyKnown = selectedCompany.trim() && companyConfigs[selectedCompany.trim()];
@@ -1125,6 +1205,35 @@ export function ValidatorApp() {
     }
 
     applyClassificationCatalog(classificationCatalog);
+  }
+
+  function assignAccountDbClassification(accountName: string, nextCanonicalKey: string) {
+    const normalizedAccountName = accountName.trim();
+    if (!normalizedAccountName) {
+      return;
+    }
+
+    const nextCatalog = classificationCatalog.map((group) => {
+      const canonicalKey = group.canonicalKey.trim();
+      if (!MANAGED_ACCOUNT_DB_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
+        return group;
+      }
+
+      const aliases = sanitizeClassificationAliases(group.aliases).filter((alias) => normalizeAccountDictionaryKey(alias) !== normalizeAccountDictionaryKey(normalizedAccountName));
+      if (canonicalKey !== nextCanonicalKey) {
+        return {
+          ...group,
+          aliases
+        };
+      }
+
+      return {
+        ...group,
+        aliases: Array.from(new Set([...aliases, normalizedAccountName]))
+      };
+    });
+
+    applyClassificationCatalog(nextCatalog, true);
   }
 
   const configPayload = JSON.stringify({ logicConfig, companyConfigs, classificationCatalog, classificationGroups }, null, 2);
@@ -1935,6 +2044,7 @@ export function ValidatorApp() {
                   <div className="inline-actions">
                     <span className="soft-badge">누적 {accountDictionaryEntries.length}건</span>
                     <span className="soft-badge">섹션 {accountDictionarySectionGroups.length}개</span>
+                    <span className="soft-badge">분류완료 {classifiedAccountDictionaryCount}건</span>
                   </div>
                 </div>
               </section>
@@ -1946,7 +2056,7 @@ export function ValidatorApp() {
                   <div className="section-title">
                     <div>
                       <h3>상위 항목별 하위 계정</h3>
-                    <p className="muted">네 개 상위 항목 아래에 저장된 하위 계정을 중복 없이 모았습니다.</p>
+                    <p className="muted">새로 쌓이는 하위 계정을 여기서 바로 대표 분류에 연결합니다. 상위항목 직접 참조값은 제외하고, 합산 관리가 필요한 분류만 선택지로 보여줍니다.</p>
                     </div>
                   </div>
                   <div className="data-list grouped-data-list">
@@ -1962,15 +2072,34 @@ export function ValidatorApp() {
                               <tr>
                                 <th>상위 항목</th>
                                 <th>하위 계정명</th>
+                                <th>현재 분류</th>
+                                <th>분류 지정</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {entries.map((entry) => (
-                                <tr key={`account-db-entry-${entry.entryKey}`}>
-                                  <td>{entry.sectionKey}</td>
-                                  <td>{entry.accountName}</td>
-                                </tr>
-                              ))}
+                              {entries.map((entry) => {
+                                const currentClassification = resolveManagedClassification(entry.accountName, managedClassificationLookup);
+
+                                return (
+                                  <tr key={`account-db-entry-${entry.entryKey}`}>
+                                    <td>{entry.sectionKey}</td>
+                                    <td>{entry.accountName}</td>
+                                    <td>{currentClassification || <span className="muted">미분류</span>}</td>
+                                    <td>
+                                      <select
+                                        className="select"
+                                        value={currentClassification}
+                                        onChange={(event) => assignAccountDbClassification(entry.accountName, event.target.value)}
+                                      >
+                                        <option value="">미분류</option>
+                                        {managedClassificationOptions.map((option) => (
+                                          <option key={`${entry.entryKey}-${option}`} value={option}>{option}</option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
