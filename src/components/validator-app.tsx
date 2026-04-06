@@ -1051,11 +1051,6 @@ export function ValidatorApp() {
     setSelectedCompany(dataset.companyName);
     setPasteEdits({ ...dataset.source.pasteEdits });
     setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
-    setLogicConfig(cloneLogicConfig(dataset.source.logicConfig));
-    setCompanyConfigs(cloneCompanyConfigs(dataset.source.companyConfigs));
-    const nextGroups = cloneClassificationGroups(dataset.source.classificationGroups ?? classificationGroups);
-    setClassificationGroups(nextGroups);
-    setClassificationCatalog(classificationGroupsToCatalog(nextGroups));
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
   }
