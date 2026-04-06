@@ -128,33 +128,6 @@ const DETAIL_VARIABLE_COST_ALIASES = [
 ];
 const DETAIL_BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const DETAIL_INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
-const DISPLAYABLE_CLASSIFICATION_DETAIL_KEYS = new Set([
-  "차입금",
-  "인건비",
-  "연구개발비",
-  "접대비",
-  "광고선전비",
-  "지급수수료",
-  "외주용역비",
-  "임차료",
-  "여비교통비",
-  "도서인쇄비",
-  "소모품비",
-  "대손상각비",
-  "판매촉진비",
-  "대외협력비",
-  "기술이전료",
-  "경상기술료",
-  "전산운영비",
-  "단기대여금",
-  "퇴직급여충당부채",
-  "매출채권",
-  "미수금",
-  "미수수익",
-  "재고자산"
-]);
-
-
 function renderDiagnosisText(text: string) {
   const parts = text.split("**");
   return parts.map((part, index) =>
@@ -386,10 +359,6 @@ function extractAccountDictionaryEntries(savedDatasets: SavedQuarterSnapshot[]) 
 }
 
 function getDisplayedClassificationAliases(group: ClassificationCatalogGroup) {
-  if (!DISPLAYABLE_CLASSIFICATION_DETAIL_KEYS.has(group.canonicalKey.trim())) {
-    return [];
-  }
-
   return sanitizeClassificationAliases(group.aliases)
     .filter((alias) => alias.trim() && alias.trim() !== group.canonicalKey.trim());
 }
