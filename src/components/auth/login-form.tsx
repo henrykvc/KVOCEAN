@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/browser";
 
 type LoginFormProps = {
   nextPath?: string;
@@ -15,6 +16,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "sent" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -38,8 +40,7 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          email,
-          next: nextPath
+          email
         })
       });
 
@@ -49,11 +50,22 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
         throw new Error(typeof payload.error === "string" ? payload.error : "로그인 메일 발송에 실패했습니다.");
       }
 
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
+
+      if (error) {
+        throw error;
+      }
+
       setStatus("sent");
-      setMessage(typeof payload.message === "string" ? payload.message : "매직링크를 보냈습니다. 메일을 확인해 주세요.");
+      setMessage("로그인되었습니다. 작업 화면으로 이동합니다.");
+      window.location.assign(nextPath || "/");
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "로그인 메일 발송에 실패했습니다.");
+      setMessage(error instanceof Error ? error.message : "로그인에 실패했습니다.");
     }
   }
 
@@ -62,7 +74,7 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
       <div className="auth-copy">
         <span className="auth-eyebrow">Protected Workspace</span>
         <h1>KV OCEAN 로그인</h1>
-        <p>허용된 이메일 계정으로 로그인해야 공용 데이터와 분류 기준을 볼 수 있습니다.</p>
+        <p>등록된 이메일과 비밀번호로 로그인해야 공용 데이터와 분류 기준을 볼 수 있습니다.</p>
       </div>
 
       <form className="auth-form" onSubmit={handleSubmit}>
@@ -77,8 +89,19 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
           onChange={(event) => setEmail(event.target.value)}
           required
         />
+        <label className="auth-label" htmlFor="password">비밀번호</label>
+        <input
+          id="password"
+          className="input auth-input"
+          type="password"
+          autoComplete="current-password"
+          placeholder="비밀번호 입력"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+        />
         <button className="button auth-submit" type="submit" disabled={status === "submitting"}>
-          {status === "submitting" ? "메일 보내는 중..." : "매직링크 보내기"}
+          {status === "submitting" ? "로그인 중..." : "로그인"}
         </button>
       </form>
 
@@ -90,7 +113,7 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
 
       <div className="auth-note">
         <strong>운영 메모</strong>
-        <p>Supabase Auth에서 초대된 계정 또는 허용된 이메일만 들어올 수 있게 설정해 두세요.</p>
+        <p>Supabase Auth에 등록된 사용자이면서 허용 사용자 목록에 들어 있는 이메일만 로그인할 수 있습니다.</p>
       </div>
     </div>
   );

@@ -4,8 +4,8 @@
 
 1. Supabase 대시보드에서 `Authentication > Providers > Email`로 이동합니다.
 2. `Enable Email provider`를 켭니다.
-3. 비밀번호 대신 매직링크만 쓸 거면 `Confirm email`은 켜두는 편이 안전합니다.
-4. 공개 가입을 막고 싶으면 초대 방식으로 운영하고, 앱에서는 `shouldCreateUser: false`로 이미 막아 둔 상태입니다.
+3. 로그인 방식은 이메일+비밀번호 기준으로 운영합니다.
+4. 공개 가입을 막고 싶으면 초대 방식 또는 수동 사용자 생성 방식으로 운영합니다.
 
 ## 2. URL 설정
 
@@ -54,19 +54,19 @@ ALLOWED_EMAILS=name@company.com,other@company.com
    - `ALLOWED_EMAILS`
    - 필요 시 `ALLOWED_EMAIL_DOMAINS`
 
-## 6. 허용 사용자 초대
+## 6. 허용 사용자 생성
 
 1. Supabase 대시보드에서 `Authentication`으로 이동합니다.
 2. `Users` 메뉴를 엽니다.
-3. 오른쪽 위 `Invite user` 또는 `Add user` 버튼을 누릅니다.
-4. 초대할 이메일에 `henry@kakaoventures.co.kr`를 입력합니다.
-5. 이메일 초대를 보냅니다.
-6. 받은 메일의 링크를 누르면 최초 로그인 세션이 생성됩니다.
+3. 오른쪽 위 `Add user` 버튼을 누릅니다.
+4. 이메일에 `henry@kakaoventures.co.kr`를 입력합니다.
+5. 비밀번호를 직접 지정하거나, 생성 후 비밀번호 재설정 절차를 사용합니다.
+6. 생성된 이메일/비밀번호로 로그인합니다.
 
 - 지금 앱은 `ALLOWED_EMAILS`에 들어 있는 이메일만 통과시킵니다.
 - `SUPABASE_SERVICE_ROLE_KEY`까지 연결하면 `allowed_users` 테이블에 등록된 이메일만 통과시킵니다.
-- Supabase에 사용자를 초대하지 않으면 `shouldCreateUser: false` 때문에 로그인 메일 발송이 실패할 수 있습니다.
-- 나중에 다른 사람을 추가할 때는 `ALLOWED_EMAILS`에 이메일을 더하고, 같은 방식으로 Supabase에서 초대하면 됩니다.
+- Supabase Auth에 사용자가 없으면 이메일/비밀번호 로그인도 불가능합니다.
+- 나중에 다른 사람을 추가할 때는 `ALLOWED_EMAILS`에 이메일을 더하고, 같은 방식으로 Supabase에서 사용자를 생성하면 됩니다.
 
 ## 7. 관리자 위임 구조
 
