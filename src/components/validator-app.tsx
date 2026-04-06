@@ -274,7 +274,12 @@ function resolveAccountDbSection(sectionKey: string) {
 function buildManagedClassificationLookup(catalog: ClassificationCatalogGroup[]) {
   const lookup = new Map<string, string>();
 
-  catalog.forEach((group) => {
+  const orderedCatalog = [
+    ...catalog.filter((group) => group.canonicalKey.trim() !== "변동비"),
+    ...catalog.filter((group) => group.canonicalKey.trim() === "변동비")
+  ];
+
+  orderedCatalog.forEach((group) => {
     const canonicalKey = group.canonicalKey.trim();
     if (!MANAGED_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
       return;
@@ -635,13 +640,11 @@ function inferManagedClassificationKey(accountName: string, sectionKey: string) 
 
   if (["유동자산", "비유동자산"].includes(sectionKey)) {
     if (/매출채권|외상매출금|받을어음/.test(normalizedName)) return "매출채권";
-    if (/미수수익/.test(normalizedName)) return "미수수익";
-    if (/미수금|부가세대급금/.test(normalizedName)) return "미수금";
     if (/재고|^상품$|^제품$|^원재료$/.test(normalizedName)) return "재고자산";
     if (/단기대여금/.test(normalizedName)) return "단기대여금";
     if (/선급금/.test(normalizedName)) return "선급금";
     if (/개발비/.test(normalizedName)) return "개발비(자산)";
-    if (/현금|예금|예치금|단기매매증권|정기예적금|외화예금|매도가능증권/.test(normalizedName)) return "당좌자산";
+    if (/현금|예금|예치금|단기매매증권|정기예적금|외화예금|매도가능증권|미수금|미수수익|부가세대급금/.test(normalizedName)) return "당좌자산";
   }
 
   if (["유동부채", "비유동부채"].includes(sectionKey)) {
@@ -663,23 +666,11 @@ function inferManagedClassificationKey(accountName: string, sectionKey: string) 
     if (/지급수수료|수수료/.test(normalizedName)) return "지급수수료";
     if (/외주|용역/.test(normalizedName)) return "외주용역비";
     if (/임차료|임대료/.test(normalizedName)) return "임차료";
-    if (/배송비|포장비/.test(normalizedName)) return "배송비";
-    if (/운반비|차량유지비/.test(normalizedName)) return "운반비";
-    if (/수출제비용/.test(normalizedName)) return "수출제비용";
-    if (/여비|교통|출장/.test(normalizedName)) return "여비교통비";
-    if (/통신비/.test(normalizedName)) return "통신비";
-    if (/세금과공과|공과금/.test(normalizedName)) return "세금과공과금";
-    if (/도서인쇄|인쇄비/.test(normalizedName)) return "도서인쇄비";
-    if (/소모품|사무용품/.test(normalizedName)) return "소모품비";
-    if (/대손/.test(normalizedName)) return "대손상각비";
-    if (/판촉|판매촉진/.test(normalizedName)) return "판매촉진비";
-    if (/대외협력/.test(normalizedName)) return "대외협력비";
-    if (/행사비/.test(normalizedName)) return "행사비";
-    if (/기술이전/.test(normalizedName)) return "기술이전료";
-    if (/경상기술/.test(normalizedName)) return "경상기술료";
-    if (/전산운영|시스템운영|전산비/.test(normalizedName)) return "전산운영비";
-    if (/반품/.test(normalizedName)) return "반품비용";
-    if (/촬영경비/.test(normalizedName)) return "기타변동비";
+    if (/배송비|포장비|운반비|차량유지비|수출제비용|여비|교통|출장|통신비|세금과공과|공과금|도서인쇄|인쇄비|소모품|사무용품|대손|판촉|판매촉진|대외협력|행사비|기술이전|경상기술|전산운영|시스템운영|전산비|반품|촬영경비/.test(normalizedName)) return "변동비";
+  }
+
+  if (sectionKey === "매출원가") {
+    return "매출원가";
   }
 
   if (sectionKey === "영업외비용") {
@@ -723,13 +714,27 @@ function applyManagedAssignmentsFromSavedDatasets(
     }
 
     const normalizedEntryKey = normalizeAccountDictionaryKey(entry.accountName);
-    const alreadyIncluded = sanitizeClassificationAliases(targetGroup.aliases).some((alias) => normalizeAccountDictionaryKey(alias) === normalizedEntryKey);
-    if (alreadyIncluded) {
-      return;
-    }
+    const appendAliasToGroup = (groupKey: string) => {
+      const group = nextCatalog.find((item) => item.canonicalKey.trim() === groupKey);
+      if (!group) {
+        return;
+      }
 
-    targetGroup.aliases = Array.from(new Set([...sanitizeClassificationAliases(targetGroup.aliases), entry.accountName]));
-    changed = true;
+      const alreadyIncluded = sanitizeClassificationAliases(group.aliases)
+        .some((alias) => normalizeAccountDictionaryKey(alias) === normalizedEntryKey);
+      if (alreadyIncluded) {
+        return;
+      }
+
+      group.aliases = Array.from(new Set([...sanitizeClassificationAliases(group.aliases), entry.accountName]));
+      changed = true;
+    };
+
+    appendAliasToGroup(inferredKey);
+
+    if (["매출원가", "인건비", "연구개발비", "광고선전비", "접대비", "복리후생비", "지급수수료", "외주용역비", "임차료", "변동비"].includes(inferredKey)) {
+      appendAliasToGroup("변동비");
+    }
   });
 
   if (!changed) {
@@ -1086,7 +1091,7 @@ export function ValidatorApp() {
   const editableClassificationCatalog = useMemo(
     () => classificationCatalog
       .map((group, index) => ({ group, index }))
-      .filter(({ group }) => !isSystemFixedClassificationKey(group.canonicalKey)),
+      .filter(({ group }) => MANAGED_CLASSIFICATION_KEY_SET.has(group.canonicalKey.trim())),
     [classificationCatalog]
   );
 
@@ -1478,12 +1483,19 @@ export function ValidatorApp() {
         <p className="metric-detail-formula">{detail.formula}</p>
         {!!detail.inputs.length && (
           <div className="metric-detail-inputs">
-            {detail.inputs.map((input) => {
+            {detail.inputs.map((input, inputIndex) => {
               const breakdown = buildInputBreakdown(periodKey, input);
+              const ioLabel = kind === "ratio"
+                ? inputIndex === 0
+                  ? "분자"
+                  : inputIndex === 1
+                    ? "분모"
+                    : null
+                : null;
               return (
                 <div className="metric-detail-input-wrap" key={`${kind}-${input.label}`}>
                   <div className="metric-detail-input">
-                    <span>{input.label}</span>
+                    <span>{ioLabel ? `${ioLabel} · ${input.label}` : input.label}</span>
                     <strong>{formatCalculationInputValue(input.value)}</strong>
                   </div>
                   {!!breakdown.length && (

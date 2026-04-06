@@ -119,7 +119,7 @@ function createCalculationDetail(
 const DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
 const COST_STRUCTURE_ITEMS = ["인건비", "광고선전비", "연구개발비", "접대비", "복리후생비", "지급수수료", "외주용역비", "임차료", "총이자비용"];
 const ASSET_LIABILITY_ITEMS = ["현금및현금성자산", "매도가능증권", "단기대여금", "개발비(자산)", "선급금", "가수금", "가지급금", "퇴직급여충당부채(자산)"];
-const VARIABLE_COST_ALIASES = ["매출원가", "외주용역비", "외주비", "지급수수료", "광고선전비", "배송비", "운반비", "수출제비용", "인건비", "복리후생비", "접대비", "연구개발비", "여비교통비", "통신비", "세금과공과금", "도서인쇄비", "소모품비", "대손상각비", "판매촉진비", "대외협력비", "행사비", "기술이전료", "경상기술료", "전산운영비", "반품비용", "기타변동비"];
+const VARIABLE_COST_ALIASES = ["변동비"];
 const BORROWING_ALIASES = ["차입금", "단기차입금", "장기차입금", "유동성장기차입금", "사채"];
 const INTEREST_ALIASES = ["총이자비용", "이자비용", "금융비용"];
 const DERIVED_ACCOUNT_SUFFIXES = [
@@ -794,25 +794,14 @@ function getPreferredCurrentLiabilities(context: MetricContext, periodKey: strin
 }
 
 function getPreferredQuickAssets(context: MetricContext, periodKey: string) {
-  const cashLikeQuickAssets = getClassifiedMetricSum(context, periodKey, ["당좌자산"]);
-  const receivables = getClassifiedMetricSum(context, periodKey, ["매출채권"]);
-  const accruedReceivables = getClassifiedMetricSum(context, periodKey, ["미수금"]);
-  const accruedIncome = getClassifiedMetricSum(context, periodKey, ["미수수익"]);
-
-  const explicitQuickAssets = [cashLikeQuickAssets, receivables, accruedReceivables, accruedIncome]
+  const explicitQuickAssets = [getClassifiedMetricSum(context, periodKey, ["당좌자산"])]
     .filter((value): value is number => value !== null && value !== undefined);
 
   if (explicitQuickAssets.length) {
     return explicitQuickAssets.reduce((total, value) => total + value, 0);
   }
 
-  const currentAssets = getPreferredCurrentAssets(context, periodKey);
-  const inventory = getNetMetricValue(context, periodKey, ["재고자산"]);
-  if (currentAssets === null) {
-    return null;
-  }
-
-  return currentAssets - (inventory ?? 0);
+  return null;
 }
 
 function getQuickAssetBreakdown(context: MetricContext, periodKey: string) {
@@ -821,21 +810,6 @@ function getQuickAssetBreakdown(context: MetricContext, periodKey: string) {
       label: "당좌자산",
       value: getClassifiedMetricSum(context, periodKey, ["당좌자산"]),
       components: getClassifiedMetricBreakdown(context, periodKey, ["당좌자산"])
-    },
-    {
-      label: "매출채권 순액",
-      value: getClassifiedMetricSum(context, periodKey, ["매출채권"]),
-      components: getClassifiedMetricBreakdown(context, periodKey, ["매출채권"])
-    },
-    {
-      label: "미수금 순액",
-      value: getClassifiedMetricSum(context, periodKey, ["미수금"]),
-      components: getClassifiedMetricBreakdown(context, periodKey, ["미수금"])
-    },
-    {
-      label: "미수수익 순액",
-      value: getClassifiedMetricSum(context, periodKey, ["미수수익"]),
-      components: getClassifiedMetricBreakdown(context, periodKey, ["미수수익"])
     }
   ]);
 
