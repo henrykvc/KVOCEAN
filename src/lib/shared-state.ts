@@ -3,7 +3,7 @@ import {
   DEFAULT_COMPANY_CONFIGS,
   DEFAULT_LOGIC_CONFIG,
   classificationCatalogToGroups,
-  mergeSystemFixedClassificationCatalog,
+  mergeDefaultClassificationCatalog,
   sanitizeClassificationAliases,
   type ClassificationCatalogGroup,
   type ClassificationGroups,
@@ -30,7 +30,7 @@ export function normalizeSharedConfig(input: Partial<PersistedState> | null | un
 }
 
 export function serializeSharedConfig(config: SharedConfigRecord) {
-  const catalog = mergeSystemFixedClassificationCatalog(config.classificationCatalog.map((item) => ({
+  const catalog = mergeDefaultClassificationCatalog(config.classificationCatalog.map((item) => ({
     ...item,
     aliases: sanitizeClassificationAliases(item.aliases)
   })));
@@ -48,7 +48,7 @@ export function deserializeSharedConfig(row: {
   classification_catalog?: ClassificationCatalogGroup[] | null;
 } | null | undefined): SharedConfigRecord {
   const catalog = Array.isArray(row?.classification_catalog)
-    ? mergeSystemFixedClassificationCatalog(row?.classification_catalog)
+    ? mergeDefaultClassificationCatalog(row?.classification_catalog)
     : structuredClone(DEFAULT_CLASSIFICATION_CATALOG);
 
   return normalizeSharedConfig({

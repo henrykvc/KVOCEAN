@@ -360,6 +360,35 @@ export function mergeSystemFixedClassificationCatalog(catalog: ClassificationCat
     );
 }
 
+export function mergeDefaultClassificationCatalog(catalog: ClassificationCatalogGroup[]): ClassificationCatalogGroup[] {
+  const normalizedCatalog = catalog.map((item) => ({
+    ...item,
+    canonicalKey: item.canonicalKey.trim(),
+    aliases: sanitizeClassificationAliases(item.aliases)
+  }));
+
+  const byCanonicalKey = new Map(normalizedCatalog.map((item) => [item.canonicalKey, item]));
+
+  DEFAULT_CLASSIFICATION_CATALOG.forEach((defaultItem) => {
+    const existing = byCanonicalKey.get(defaultItem.canonicalKey);
+    if (existing) {
+      byCanonicalKey.set(defaultItem.canonicalKey, {
+        ...defaultItem,
+        ...existing,
+        aliases: Array.from(new Set([...defaultItem.aliases, ...existing.aliases]))
+      });
+      return;
+    }
+
+    byCanonicalKey.set(defaultItem.canonicalKey, structuredClone(defaultItem));
+  });
+
+  return normalizedCatalog.map((item) => byCanonicalKey.get(item.canonicalKey) ?? item)
+    .concat(
+      Array.from(byCanonicalKey.values()).filter((item) => !normalizedCatalog.some((catalogItem) => catalogItem.canonicalKey === item.canonicalKey))
+    );
+}
+
 export function classificationCatalogToGroups(catalog: ClassificationCatalogGroup[]): ClassificationGroups {
   return catalog.reduce<ClassificationGroups>((acc, item) => {
     const canonicalKey = item.canonicalKey.trim();

@@ -9,7 +9,7 @@ import {
   classificationCatalogToGroups,
   classificationGroupsToCatalog,
   isSystemFixedClassificationKey,
-  mergeSystemFixedClassificationCatalog,
+  mergeDefaultClassificationCatalog,
   sanitizeClassificationAliases,
   sanitizeClassificationGroups,
   type ClassificationCatalogGroup,
@@ -1244,7 +1244,7 @@ export function ValidatorApp() {
   }
 
   function applyClassificationCatalog(nextCatalog: ClassificationCatalogGroup[], showFeedback = false) {
-    const clonedCatalog = mergeSystemFixedClassificationCatalog(cloneClassificationCatalog(nextCatalog)).map((item) => ({
+    const clonedCatalog = mergeDefaultClassificationCatalog(cloneClassificationCatalog(nextCatalog)).map((item) => ({
       ...item,
       groupId: item.groupId.trim(),
       majorCategory: item.majorCategory.trim(),
