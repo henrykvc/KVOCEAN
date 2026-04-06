@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { deserializeSharedConfig, serializeSharedConfig, type SharedStateResponse } from "@/lib/shared-state";
-import { isEmailAllowed } from "@/lib/auth/access";
 import type { SavedQuarterSnapshot } from "@/lib/validation/report";
 
 async function requireAuthorizedUser() {
@@ -10,7 +9,7 @@ async function requireAuthorizedUser() {
     data: { user }
   } = await supabase.auth.getUser();
 
-  if (!user?.email || !await isEmailAllowed(user.email)) {
+  if (!user?.email) {
     return { supabase, user: null };
   }
 

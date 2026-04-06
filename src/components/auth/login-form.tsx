@@ -9,7 +9,6 @@ type LoginFormProps = {
 };
 
 const ERROR_MESSAGES: Record<string, string> = {
-  unauthorized: "허용된 이메일 계정만 접근할 수 있습니다.",
   callback: "로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.",
   missing_code: "이메일 링크가 올바르지 않습니다. 새 링크를 요청해 주세요."
 };
@@ -74,7 +73,7 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
       <div className="auth-copy">
         <span className="auth-eyebrow">Protected Workspace</span>
         <h1>KV OCEAN 로그인</h1>
-        <p>등록된 이메일과 비밀번호로 로그인해야 공용 데이터와 분류 기준을 볼 수 있습니다.</p>
+        <p>이메일과 비밀번호로 로그인해야 공용 데이터와 분류 기준을 볼 수 있습니다.</p>
       </div>
 
       <form className="auth-form" onSubmit={handleSubmit}>
@@ -113,7 +112,7 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
 
       <div className="auth-note">
         <strong>운영 메모</strong>
-        <p>Supabase Auth에 등록된 사용자이면서 허용 사용자 목록에 들어 있는 이메일만 로그인할 수 있습니다.</p>
+        <p>Supabase Auth에 등록된 사용자만 로그인할 수 있습니다.</p>
       </div>
     </div>
   );

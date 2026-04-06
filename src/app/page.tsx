@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { ValidatorApp } from "@/components/validator-app";
-import { isEmailAllowed } from "@/lib/auth/access";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function Page() {
@@ -11,11 +10,6 @@ export default async function Page() {
 
   if (!user) {
     redirect("/login");
-  }
-
-  if (!await isEmailAllowed(user.email)) {
-    await supabase.auth.signOut();
-    redirect("/login?error=unauthorized");
   }
 
   return (

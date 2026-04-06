@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { isEmailAllowed } from "@/lib/auth/access";
 
 function renderHashBridgeHtml(nextPath: string) {
   const escapedNextPath = JSON.stringify(nextPath);
@@ -96,11 +95,6 @@ export async function GET(request: NextRequest) {
   const {
     data: { user }
   } = await supabase.auth.getUser();
-
-  if (!await isEmailAllowed(user?.email)) {
-    await supabase.auth.signOut();
-    return NextResponse.redirect(new URL("/login?error=unauthorized", request.url));
-  }
 
   return NextResponse.redirect(new URL(nextPath, request.url));
 }
