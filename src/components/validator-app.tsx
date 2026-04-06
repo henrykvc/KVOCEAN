@@ -668,6 +668,25 @@ function hasCustomConfig(config: {
   return configSnapshot(config) !== configSnapshot(getDefaultPersistedState());
 }
 
+function recoverClassificationConfigFromDatasets(savedDatasets: SavedQuarterSnapshot[]) {
+  const mergedGroups = savedDatasets.reduce<ClassificationGroups>((acc, dataset) => {
+    const sourceGroups = sanitizeClassificationGroups(dataset.source.classificationGroups ?? {});
+
+    Object.entries(sourceGroups).forEach(([canonicalKey, aliases]) => {
+      acc[canonicalKey] = Array.from(new Set([...(acc[canonicalKey] ?? []), canonicalKey, ...aliases]));
+    });
+
+    return acc;
+  }, {});
+
+  const catalog = classificationGroupsToCatalog(mergedGroups);
+
+  return parsePersistedState(JSON.stringify({
+    classificationCatalog: catalog,
+    classificationGroups: mergedGroups
+  }));
+}
+
 export function ValidatorApp() {
   const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
@@ -719,23 +738,35 @@ export function ValidatorApp() {
         const remote = await response.json() as SharedStateResponse;
         const remotePersisted = parsePersistedState(JSON.stringify(remote.config));
         const remoteSaved = parseSavedDatasets(JSON.stringify(remote.datasets));
+        const recoveredPersisted = recoverClassificationConfigFromDatasets(remoteSaved.length ? remoteSaved : localSaved);
+        const shouldRecoverRemoteClassification = !hasCustomConfig(remotePersisted) && hasCustomConfig(recoveredPersisted);
 
         const shouldMigrateLocal = !remoteSaved.length && localSaved.length;
         const shouldMigrateLocalConfig = !hasCustomConfig(remotePersisted) && hasCustomConfig(localPersisted);
 
-        if (shouldMigrateLocal || shouldMigrateLocalConfig) {
+        if (shouldMigrateLocal || shouldMigrateLocalConfig || shouldRecoverRemoteClassification) {
+          const mergedConfig = shouldMigrateLocalConfig
+            ? localPersisted
+            : shouldRecoverRemoteClassification
+              ? {
+                  ...remotePersisted,
+                  classificationCatalog: recoveredPersisted.classificationCatalog,
+                  classificationGroups: recoveredPersisted.classificationGroups
+                }
+              : remotePersisted;
+
           await fetch("/api/shared-state", {
             method: "PUT",
             headers: {
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              config: shouldMigrateLocalConfig ? localPersisted : remotePersisted,
+              config: mergedConfig,
               datasets: shouldMigrateLocal ? localSaved : remoteSaved
             })
           });
 
-          nextPersisted = shouldMigrateLocalConfig ? localPersisted : remotePersisted;
+          nextPersisted = mergedConfig;
           nextSaved = shouldMigrateLocal ? localSaved : remoteSaved;
         } else {
           nextPersisted = remotePersisted;
