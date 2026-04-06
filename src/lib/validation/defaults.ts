@@ -27,6 +27,52 @@ export type ClassificationCatalogGroup = {
   aliases: string[];
 };
 
+export const MANAGED_CLASSIFICATION_KEYS = [
+  "당좌자산",
+  "차입금",
+  "매출채권",
+  "재고자산",
+  "미수금",
+  "미수수익",
+  "감가상각비",
+  "무형자산상각비",
+  "사용권자산상각비",
+  "인건비",
+  "연구개발비",
+  "접대비",
+  "복리후생비",
+  "광고선전비",
+  "지급수수료",
+  "외주용역비",
+  "임차료",
+  "배송비",
+  "운반비",
+  "수출제비용",
+  "여비교통비",
+  "통신비",
+  "세금과공과금",
+  "도서인쇄비",
+  "소모품비",
+  "대손상각비",
+  "판매촉진비",
+  "대외협력비",
+  "행사비",
+  "기술이전료",
+  "경상기술료",
+  "전산운영비",
+  "반품비용",
+  "기타변동비",
+  "이자비용",
+  "단기대여금",
+  "개발비(자산)",
+  "선급금",
+  "가수금",
+  "가지급금",
+  "퇴직급여충당부채"
+] as const;
+
+export const MANAGED_CLASSIFICATION_KEY_SET = new Set<string>(MANAGED_CLASSIFICATION_KEYS);
+
 export const SYSTEM_FIXED_CLASSIFICATION_KEYS = [
   "자산",
   "부채",
@@ -375,12 +421,19 @@ export function mergeDefaultClassificationCatalog(catalog: ClassificationCatalog
       byCanonicalKey.set(defaultItem.canonicalKey, {
         ...defaultItem,
         ...existing,
-        aliases: Array.from(new Set([...defaultItem.aliases, ...existing.aliases]))
+        aliases: MANAGED_CLASSIFICATION_KEY_SET.has(defaultItem.canonicalKey)
+          ? Array.from(new Set(existing.aliases))
+          : Array.from(new Set([...defaultItem.aliases, ...existing.aliases]))
       });
       return;
     }
 
-    byCanonicalKey.set(defaultItem.canonicalKey, structuredClone(defaultItem));
+    byCanonicalKey.set(defaultItem.canonicalKey, MANAGED_CLASSIFICATION_KEY_SET.has(defaultItem.canonicalKey)
+      ? {
+          ...structuredClone(defaultItem),
+          aliases: []
+        }
+      : structuredClone(defaultItem));
   });
 
   return normalizedCatalog.map((item) => byCanonicalKey.get(item.canonicalKey) ?? item)

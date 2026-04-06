@@ -6,6 +6,8 @@ import {
   DEFAULT_CLASSIFICATION_GROUPS,
   DEFAULT_COMPANY_CONFIGS,
   DEFAULT_LOGIC_CONFIG,
+  MANAGED_CLASSIFICATION_KEYS,
+  MANAGED_CLASSIFICATION_KEY_SET,
   classificationCatalogToGroups,
   classificationGroupsToCatalog,
   isSystemFixedClassificationKey,
@@ -80,52 +82,6 @@ type SectionAccountDbEntry = {
   sampleQuarter: string;
   occurrences: number;
 };
-
-const MANAGED_ACCOUNT_DB_CLASSIFICATION_KEYS = [
-  "당좌자산",
-  "차입금",
-  "매출채권",
-  "재고자산",
-  "미수금",
-  "미수수익",
-  "감가상각비",
-  "무형자산상각비",
-  "사용권자산상각비",
-  "인건비",
-  "연구개발비",
-  "접대비",
-  "복리후생비",
-  "광고선전비",
-  "지급수수료",
-  "외주용역비",
-  "임차료",
-  "배송비",
-  "운반비",
-  "수출제비용",
-  "여비교통비",
-  "통신비",
-  "세금과공과금",
-  "도서인쇄비",
-  "소모품비",
-  "대손상각비",
-  "판매촉진비",
-  "대외협력비",
-  "행사비",
-  "기술이전료",
-  "경상기술료",
-  "전산운영비",
-  "반품비용",
-  "기타변동비",
-  "이자비용",
-  "단기대여금",
-  "개발비(자산)",
-  "선급금",
-  "가수금",
-  "가지급금",
-  "퇴직급여충당부채"
-] as const;
-
-const MANAGED_ACCOUNT_DB_CLASSIFICATION_KEY_SET = new Set<string>(MANAGED_ACCOUNT_DB_CLASSIFICATION_KEYS);
 
 const ACCOUNT_DB_SECTIONS = {
   유동자산: ["유동자산"],
@@ -347,7 +303,7 @@ function buildManagedClassificationLookup(catalog: ClassificationCatalogGroup[])
 
   catalog.forEach((group) => {
     const canonicalKey = group.canonicalKey.trim();
-    if (!MANAGED_ACCOUNT_DB_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
+    if (!MANAGED_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
       return;
     }
 
@@ -687,6 +643,144 @@ function recoverClassificationConfigFromDatasets(savedDatasets: SavedQuarterSnap
   }));
 }
 
+function inferManagedClassificationKey(accountName: string, sectionKey: string) {
+  const normalizedName = accountName.trim();
+  if (!normalizedName) {
+    return "";
+  }
+
+  const exactManagedKey = MANAGED_CLASSIFICATION_KEYS.find((key) => normalizeAccountDictionaryKey(key) === normalizeAccountDictionaryKey(normalizedName));
+  if (exactManagedKey) {
+    return exactManagedKey;
+  }
+
+  for (const [canonicalKey, aliases] of Object.entries(DEFAULT_CLASSIFICATION_GROUPS)) {
+    if (!MANAGED_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
+      continue;
+    }
+
+    if (aliases.some((alias) => normalizeAccountDictionaryKey(alias) === normalizeAccountDictionaryKey(normalizedName))) {
+      return canonicalKey;
+    }
+  }
+
+  if (["유동자산", "비유동자산"].includes(sectionKey)) {
+    if (/매출채권|외상매출금|받을어음/.test(normalizedName)) return "매출채권";
+    if (/미수수익/.test(normalizedName)) return "미수수익";
+    if (/미수금|부가세대급금/.test(normalizedName)) return "미수금";
+    if (/재고|^상품$|^제품$|^원재료$/.test(normalizedName)) return "재고자산";
+    if (/단기대여금/.test(normalizedName)) return "단기대여금";
+    if (/선급금/.test(normalizedName)) return "선급금";
+    if (/개발비/.test(normalizedName)) return "개발비(자산)";
+    if (/현금|예금|예치금|단기매매증권|정기예적금|외화예금|매도가능증권/.test(normalizedName)) return "당좌자산";
+  }
+
+  if (["유동부채", "비유동부채"].includes(sectionKey)) {
+    if (/퇴직급여충당부채|장기종업원급여부채|연차충당부채/.test(normalizedName)) return "퇴직급여충당부채";
+    if (/가수금/.test(normalizedName)) return "가수금";
+    if (/가지급금/.test(normalizedName)) return "가지급금";
+    if (/차입금|사채|리스부채|전환사채|전환우선주부채|주임종단기채무|주임종장기차입금/.test(normalizedName)) return "차입금";
+  }
+
+  if (["영업비용", "판매비와관리비"].includes(sectionKey)) {
+    if (/사용권자산.*상각|리스.*감가상각/.test(normalizedName)) return "사용권자산상각비";
+    if (/무형.*상각|판권.*상각/.test(normalizedName)) return "무형자산상각비";
+    if (/감가상각비/.test(normalizedName)) return "감가상각비";
+    if (/급여|상여|잡급|잡금|인건비|퇴직급여|주식보상비용/.test(normalizedName)) return "인건비";
+    if (/연구|개발비/.test(normalizedName)) return "연구개발비";
+    if (/접대비|업무추진비/.test(normalizedName)) return "접대비";
+    if (/복리후생비/.test(normalizedName)) return "복리후생비";
+    if (/광고|선전/.test(normalizedName)) return "광고선전비";
+    if (/지급수수료|수수료/.test(normalizedName)) return "지급수수료";
+    if (/외주|용역/.test(normalizedName)) return "외주용역비";
+    if (/임차료|임대료/.test(normalizedName)) return "임차료";
+    if (/배송비|포장비/.test(normalizedName)) return "배송비";
+    if (/운반비|차량유지비/.test(normalizedName)) return "운반비";
+    if (/수출제비용/.test(normalizedName)) return "수출제비용";
+    if (/여비|교통|출장/.test(normalizedName)) return "여비교통비";
+    if (/통신비/.test(normalizedName)) return "통신비";
+    if (/세금과공과|공과금/.test(normalizedName)) return "세금과공과금";
+    if (/도서인쇄|인쇄비/.test(normalizedName)) return "도서인쇄비";
+    if (/소모품|사무용품/.test(normalizedName)) return "소모품비";
+    if (/대손/.test(normalizedName)) return "대손상각비";
+    if (/판촉|판매촉진/.test(normalizedName)) return "판매촉진비";
+    if (/대외협력/.test(normalizedName)) return "대외협력비";
+    if (/행사비/.test(normalizedName)) return "행사비";
+    if (/기술이전/.test(normalizedName)) return "기술이전료";
+    if (/경상기술/.test(normalizedName)) return "경상기술료";
+    if (/전산운영|시스템운영|전산비/.test(normalizedName)) return "전산운영비";
+    if (/반품/.test(normalizedName)) return "반품비용";
+    if (/촬영경비/.test(normalizedName)) return "기타변동비";
+  }
+
+  if (sectionKey === "영업외비용") {
+    if (/이자비용|금융비용/.test(normalizedName)) return "이자비용";
+  }
+
+  return "";
+}
+
+function applyManagedAssignmentsFromSavedDatasets(
+  config: {
+    logicConfig: LogicConfig;
+    companyConfigs: CompanyConfigs;
+    classificationCatalog: ClassificationCatalogGroup[];
+    classificationGroups: ClassificationGroups;
+  },
+  savedDatasets: SavedQuarterSnapshot[]
+) {
+  const accountEntries = extractAccountDictionaryEntries(savedDatasets);
+  const lookup = buildManagedClassificationLookup(config.classificationCatalog);
+  let changed = false;
+
+  const nextCatalog = config.classificationCatalog.map((group) => ({
+    ...group,
+    aliases: [...group.aliases]
+  }));
+
+  accountEntries.forEach((entry) => {
+    if (resolveManagedClassification(entry.accountName, lookup)) {
+      return;
+    }
+
+    const inferredKey = inferManagedClassificationKey(entry.accountName, entry.sectionKey);
+    if (!inferredKey) {
+      return;
+    }
+
+    const targetGroup = nextCatalog.find((group) => group.canonicalKey.trim() === inferredKey);
+    if (!targetGroup) {
+      return;
+    }
+
+    const normalizedEntryKey = normalizeAccountDictionaryKey(entry.accountName);
+    const alreadyIncluded = sanitizeClassificationAliases(targetGroup.aliases).some((alias) => normalizeAccountDictionaryKey(alias) === normalizedEntryKey);
+    if (alreadyIncluded) {
+      return;
+    }
+
+    targetGroup.aliases = Array.from(new Set([...sanitizeClassificationAliases(targetGroup.aliases), entry.accountName]));
+    changed = true;
+  });
+
+  if (!changed) {
+    return {
+      nextConfig: config,
+      changed: false
+    };
+  }
+
+  const normalizedCatalog = mergeDefaultClassificationCatalog(nextCatalog);
+  return {
+    nextConfig: {
+      ...config,
+      classificationCatalog: normalizedCatalog,
+      classificationGroups: classificationCatalogToGroups(normalizedCatalog)
+    },
+    changed: true
+  };
+}
+
 export function ValidatorApp() {
   const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
@@ -740,20 +834,24 @@ export function ValidatorApp() {
         const remoteSaved = parseSavedDatasets(JSON.stringify(remote.datasets));
         const recoveredPersisted = recoverClassificationConfigFromDatasets(remoteSaved.length ? remoteSaved : localSaved);
         const shouldRecoverRemoteClassification = !hasCustomConfig(remotePersisted) && hasCustomConfig(recoveredPersisted);
+        const { nextConfig: autoAssignedRemotePersisted, changed: autoAssignedChanged } = applyManagedAssignmentsFromSavedDatasets(
+          shouldRecoverRemoteClassification
+            ? {
+                ...remotePersisted,
+                classificationCatalog: recoveredPersisted.classificationCatalog,
+                classificationGroups: recoveredPersisted.classificationGroups
+              }
+            : remotePersisted,
+          remoteSaved.length ? remoteSaved : localSaved
+        );
 
         const shouldMigrateLocal = !remoteSaved.length && localSaved.length;
         const shouldMigrateLocalConfig = !hasCustomConfig(remotePersisted) && hasCustomConfig(localPersisted);
 
-        if (shouldMigrateLocal || shouldMigrateLocalConfig || shouldRecoverRemoteClassification) {
+        if (shouldMigrateLocal || shouldMigrateLocalConfig || shouldRecoverRemoteClassification || autoAssignedChanged) {
           const mergedConfig = shouldMigrateLocalConfig
             ? localPersisted
-            : shouldRecoverRemoteClassification
-              ? {
-                  ...remotePersisted,
-                  classificationCatalog: recoveredPersisted.classificationCatalog,
-                  classificationGroups: recoveredPersisted.classificationGroups
-                }
-              : remotePersisted;
+            : autoAssignedRemotePersisted;
 
           await fetch("/api/shared-state", {
             method: "PUT",
@@ -915,7 +1013,7 @@ export function ValidatorApp() {
     [classificationCatalog]
   );
   const managedClassificationOptions = useMemo(
-    () => MANAGED_ACCOUNT_DB_CLASSIFICATION_KEYS.filter((key) => classificationCatalog.some((group) => group.canonicalKey.trim() === key)),
+    () => MANAGED_CLASSIFICATION_KEYS.filter((key) => classificationCatalog.some((group) => group.canonicalKey.trim() === key)),
     [classificationCatalog]
   );
   const reporting = useMemo(
@@ -1361,7 +1459,7 @@ export function ValidatorApp() {
 
     const nextCatalog = classificationCatalog.map((group) => {
       const canonicalKey = group.canonicalKey.trim();
-      if (!MANAGED_ACCOUNT_DB_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
+      if (!MANAGED_CLASSIFICATION_KEY_SET.has(canonicalKey)) {
         return group;
       }
 
@@ -2101,7 +2199,7 @@ export function ValidatorApp() {
                     <p className="muted">수식에 필요한 대표 항목과 원본 계정 목록만 간단하게 관리합니다. 상위 확정 항목은 시스템 고정값으로 유지하고 여기서 숨깁니다.</p>
                   </div>
                   <div className="inline-actions">
-                    <button className="ghost-button" onClick={() => updateClassificationCatalog((prev) => [...prev, {
+                      <button className="ghost-button" onClick={() => updateClassificationCatalog((prev) => [...prev, {
                       groupId: `${Date.now()}`,
                       majorCategory: "",
                       middleCategory: "",
@@ -2116,7 +2214,6 @@ export function ValidatorApp() {
                   <table className="table report-table formula-table classification-table">
                     <thead>
                       <tr>
-                        <th>번호</th>
                         <th>대표항목</th>
                         <th>원본 계정 목록</th>
                         <th>삭제</th>
@@ -2125,7 +2222,6 @@ export function ValidatorApp() {
                     <tbody>
                       {editableClassificationCatalog.map(({ group, index }) => (
                         <tr key={`classification-group-${group.groupId}-${index}`}>
-                          <td><input className="input" value={group.groupId} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, groupId: event.target.value } : item))} /></td>
                           <td><input className="input" value={group.canonicalKey} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))} /></td>
                           <td>
                             <textarea

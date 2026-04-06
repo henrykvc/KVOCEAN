@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { ACCOUNT_ALIASES, DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, MANAGED_CLASSIFICATION_KEY_SET, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, pasteEditKey, safeFloat, type SessionSignFixes } from "./engine";
 
 export type ReportPeriod = {
@@ -291,13 +291,19 @@ function buildMetricCandidateSet(names: string[], classificationGroups: Classifi
 
   buildDerivedMetricCandidates(names).forEach((candidate) => {
     candidates.add(normalizeText(candidate));
-    (classificationGroups[candidate] ?? ACCOUNT_ALIASES[candidate] ?? []).forEach((alias) => {
+    const aliases = MANAGED_CLASSIFICATION_KEY_SET.has(candidate)
+      ? (classificationGroups[candidate] ?? [])
+      : (classificationGroups[candidate] ?? ACCOUNT_ALIASES[candidate] ?? []);
+    aliases.forEach((alias) => {
       candidates.add(normalizeText(alias));
     });
   });
 
   names.forEach((name) => {
-    (classificationGroups[name] ?? ACCOUNT_ALIASES[name] ?? []).forEach((alias) => {
+    const aliases = MANAGED_CLASSIFICATION_KEY_SET.has(name)
+      ? (classificationGroups[name] ?? [])
+      : (classificationGroups[name] ?? ACCOUNT_ALIASES[name] ?? []);
+    aliases.forEach((alias) => {
       candidates.add(normalizeText(alias));
       const derived = resolveCanonicalAccountKey(alias, "기타", classificationGroups);
       candidates.add(normalizeText(derived));
@@ -788,13 +794,12 @@ function getPreferredCurrentLiabilities(context: MetricContext, periodKey: strin
 }
 
 function getPreferredQuickAssets(context: MetricContext, periodKey: string) {
-  const cash = getAdjustedMetricSum(context, periodKey, ["현금및현금성자산"]);
-  const receivables = getNetMetricValue(context, periodKey, ["매출채권"]);
-  const accruedReceivables = getNetMetricValue(context, periodKey, ["미수금"]);
-  const accruedIncome = getNetMetricValue(context, periodKey, ["미수수익"]);
-  const availableSecurities = getAdjustedMetricSum(context, periodKey, ["매도가능증권"]);
+  const cashLikeQuickAssets = getClassifiedMetricSum(context, periodKey, ["당좌자산"]);
+  const receivables = getClassifiedMetricSum(context, periodKey, ["매출채권"]);
+  const accruedReceivables = getClassifiedMetricSum(context, periodKey, ["미수금"]);
+  const accruedIncome = getClassifiedMetricSum(context, periodKey, ["미수수익"]);
 
-  const explicitQuickAssets = [cash, receivables, accruedReceivables, accruedIncome, availableSecurities]
+  const explicitQuickAssets = [cashLikeQuickAssets, receivables, accruedReceivables, accruedIncome]
     .filter((value): value is number => value !== null && value !== undefined);
 
   if (explicitQuickAssets.length) {
@@ -813,29 +818,24 @@ function getPreferredQuickAssets(context: MetricContext, periodKey: string) {
 function getQuickAssetBreakdown(context: MetricContext, periodKey: string) {
   const explicitBreakdown = compactCalculationInputs([
     {
-      label: "현금및현금성자산",
-      value: getAdjustedMetricSum(context, periodKey, ["현금및현금성자산"]),
-      components: getNetMetricBreakdown(context, periodKey, ["현금및현금성자산"])
+      label: "당좌자산",
+      value: getClassifiedMetricSum(context, periodKey, ["당좌자산"]),
+      components: getClassifiedMetricBreakdown(context, periodKey, ["당좌자산"])
     },
     {
       label: "매출채권 순액",
-      value: getNetMetricValue(context, periodKey, ["매출채권"]),
-      components: getNetMetricBreakdown(context, periodKey, ["매출채권"])
+      value: getClassifiedMetricSum(context, periodKey, ["매출채권"]),
+      components: getClassifiedMetricBreakdown(context, periodKey, ["매출채권"])
     },
     {
       label: "미수금 순액",
-      value: getNetMetricValue(context, periodKey, ["미수금"]),
-      components: getNetMetricBreakdown(context, periodKey, ["미수금"])
+      value: getClassifiedMetricSum(context, periodKey, ["미수금"]),
+      components: getClassifiedMetricBreakdown(context, periodKey, ["미수금"])
     },
     {
       label: "미수수익 순액",
-      value: getNetMetricValue(context, periodKey, ["미수수익"]),
-      components: getNetMetricBreakdown(context, periodKey, ["미수수익"])
-    },
-    {
-      label: "매도가능증권",
-      value: getAdjustedMetricSum(context, periodKey, ["매도가능증권"]),
-      components: getNetMetricBreakdown(context, periodKey, ["매도가능증권"])
+      value: getClassifiedMetricSum(context, periodKey, ["미수수익"]),
+      components: getClassifiedMetricBreakdown(context, periodKey, ["미수수익"])
     }
   ]);
 
@@ -904,7 +904,7 @@ function formatPeriodInputLabel(prefix: string, period: ReportPeriod | null) {
 function getMonthlySpendBase(current: MetricContext, period: ReportPeriod) {
   const sales = getAdjustedMetricValue(current, period.key, ["매출액"]);
   const operatingIncome = getAdjustedMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
-  const depreciation = getAdjustedMetricSum(current, period.key, DEPRECIATION_ALIASES);
+  const depreciation = getClassifiedMetricSum(current, period.key, DEPRECIATION_ALIASES);
 
   if ([sales, operatingIncome].some((value) => value === null)) {
     return {
@@ -1034,7 +1034,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     label: "EBITDA",
     amount: (period, current) => {
       const operatingIncome = getMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
-      const depreciation = getMetricSum(current, period.key, DEPRECIATION_ALIASES);
+      const depreciation = getClassifiedMetricSum(current, period.key, DEPRECIATION_ALIASES);
       if (operatingIncome === null) {
         return null;
       }
@@ -1042,7 +1042,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     amountDetail: (period, current, result) => {
       const operatingIncome = getMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
-      const depreciation = getMetricSum(current, period.key, DEPRECIATION_ALIASES);
+      const depreciation = getClassifiedMetricSum(current, period.key, DEPRECIATION_ALIASES);
       return createCalculationDetail(
         "영업이익 + 감가상각계",
         result,
@@ -1084,7 +1084,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const groupedRawValue = (period: ReportPeriod, current: MetricContext, names: string[]) => getRawMetricSum(current, period.key, names);
   const costStructureValue = (period: ReportPeriod, current: MetricContext, label: string) => {
     if (label === "총이자비용") {
-      return getAdjustedMetricSum(current, period.key, INTEREST_ALIASES, "영업외비용");
+        return getClassifiedMetricSum(current, period.key, ["이자비용"], "영업외비용");
     }
     return getAdjustedMetricSum(current, period.key, [label], "영업비용");
   };
@@ -1330,9 +1330,9 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "차입금 의존도",
-      ratio: (period, current) => safeDivide(getNetMetricValue(current, period.key, ["차입금", ...BORROWING_ALIASES]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getClassifiedMetricSum(current, period.key, ["차입금"]), getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const borrowings = getNetMetricValue(current, period.key, ["차입금", ...BORROWING_ALIASES]);
+        const borrowings = getClassifiedMetricSum(current, period.key, ["차입금"]);
         const assets = getPreferredTotalAssets(current, period.key);
         return createCalculationDetail("순차입금 / 자산 * 100", result, [
           { label: "순차입금", value: borrowings },
@@ -1342,10 +1342,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     },
     {
       label: "이자보상비율",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getMetricSum(current, period.key, INTEREST_ALIASES), 100),
+      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]), getClassifiedMetricSum(current, period.key, ["이자비용"]), 100),
       ratioDetail: (period, current, result) => {
         const operatingIncome = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
-        const interestExpense = getMetricSum(current, period.key, INTEREST_ALIASES);
+        const interestExpense = getClassifiedMetricSum(current, period.key, ["이자비용"]);
         return createCalculationDetail("영업이익 / 이자비용 * 100", result, [
           { label: "영업이익", value: operatingIncome },
           { label: "이자비용", value: interestExpense }
@@ -1458,14 +1458,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
         const averageReceivables = basePeriod
-          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권"]), getNetMetricValue(current, basePeriod.key, ["매출채권"]))
+          ? averageTwo(getClassifiedMetricSum(current, period.key, ["매출채권"]), getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
       },
       ratioDetail: (period, current, result) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
-        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권"]);
-        const baseReceivables = basePeriod ? getNetMetricValue(current, basePeriod.key, ["매출채권"]) : null;
+        const currentReceivables = getClassifiedMetricSum(current, period.key, ["매출채권"]);
+        const baseReceivables = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]) : null;
         const averageReceivables = basePeriod ? averageTwo(currentReceivables, baseReceivables) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         return createCalculationDetail("매출액 / 기초기말 평균매출채권", result, [
@@ -1481,15 +1481,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
         const averageReceivables = basePeriod
-          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권"]), getNetMetricValue(current, basePeriod.key, ["매출채권"]))
+          ? averageTwo(getClassifiedMetricSum(current, period.key, ["매출채권"]), getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]))
           : null;
         const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
         return turnover ? 365 / turnover : null;
       },
       amountDetail: (period, current, result) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
-        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권"]);
-        const baseReceivables = basePeriod ? getNetMetricValue(current, basePeriod.key, ["매출채권"]) : null;
+        const currentReceivables = getClassifiedMetricSum(current, period.key, ["매출채권"]);
+        const baseReceivables = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]) : null;
         const averageReceivables = basePeriod ? averageTwo(currentReceivables, baseReceivables) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const turnover = safeDivide(sales, averageReceivables, 1);
@@ -1507,14 +1507,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       ratio: (period, current) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
         const averageInventory = basePeriod
-          ? averageTwo(getNetMetricValue(current, period.key, ["재고자산"]), getNetMetricValue(current, basePeriod.key, ["재고자산"]))
+          ? averageTwo(getClassifiedMetricSum(current, period.key, ["재고자산"]), getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
       },
       ratioDetail: (period, current, result) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
-        const currentInventory = getNetMetricValue(current, period.key, ["재고자산"]);
-        const baseInventory = basePeriod ? getNetMetricValue(current, basePeriod.key, ["재고자산"]) : null;
+        const currentInventory = getClassifiedMetricSum(current, period.key, ["재고자산"]);
+        const baseInventory = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]) : null;
         const averageInventory = basePeriod ? averageTwo(currentInventory, baseInventory) : null;
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
         return createCalculationDetail("매출원가 / 기초기말 평균재고자산", result, [
@@ -1530,15 +1530,15 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
         const averageInventory = basePeriod
-          ? averageTwo(getNetMetricValue(current, period.key, ["재고자산"]), getNetMetricValue(current, basePeriod.key, ["재고자산"]))
+          ? averageTwo(getClassifiedMetricSum(current, period.key, ["재고자산"]), getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]))
           : null;
         const turnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
         return turnover ? 365 / turnover : null;
       },
       amountDetail: (period, current, result) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
-        const currentInventory = getNetMetricValue(current, period.key, ["재고자산"]);
-        const baseInventory = basePeriod ? getNetMetricValue(current, basePeriod.key, ["재고자산"]) : null;
+        const currentInventory = getClassifiedMetricSum(current, period.key, ["재고자산"]);
+        const baseInventory = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]) : null;
         const averageInventory = basePeriod ? averageTwo(currentInventory, baseInventory) : null;
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
         const turnover = safeDivide(costOfSales, averageInventory, 1);
@@ -1556,10 +1556,10 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       amount: (period, current) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
         const averageReceivables = basePeriod
-          ? averageTwo(getNetMetricValue(current, period.key, ["매출채권"]), getNetMetricValue(current, basePeriod.key, ["매출채권"]))
+          ? averageTwo(getClassifiedMetricSum(current, period.key, ["매출채권"]), getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]))
           : null;
         const averageInventory = basePeriod
-          ? averageTwo(getNetMetricValue(current, period.key, ["재고자산"]), getNetMetricValue(current, basePeriod.key, ["재고자산"]))
+          ? averageTwo(getClassifiedMetricSum(current, period.key, ["재고자산"]), getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]))
           : null;
         const receivableTurnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
         const inventoryTurnover = safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
@@ -1569,11 +1569,11 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       },
       amountDetail: (period, current, result) => {
         const basePeriod = getThreeQuarterPriorPeriod(current, period);
-        const currentReceivables = getNetMetricValue(current, period.key, ["매출채권"]);
-        const baseReceivables = basePeriod ? getNetMetricValue(current, basePeriod.key, ["매출채권"]) : null;
+        const currentReceivables = getClassifiedMetricSum(current, period.key, ["매출채권"]);
+        const baseReceivables = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]) : null;
         const averageReceivables = basePeriod ? averageTwo(currentReceivables, baseReceivables) : null;
-        const currentInventory = getNetMetricValue(current, period.key, ["재고자산"]);
-        const baseInventory = basePeriod ? getNetMetricValue(current, basePeriod.key, ["재고자산"]) : null;
+        const currentInventory = getClassifiedMetricSum(current, period.key, ["재고자산"]);
+        const baseInventory = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]) : null;
         const averageInventory = basePeriod ? averageTwo(currentInventory, baseInventory) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
