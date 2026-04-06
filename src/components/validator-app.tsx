@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_CLASSIFICATION_CATALOG,
   DEFAULT_CLASSIFICATION_GROUPS,
@@ -30,6 +30,7 @@ import {
   safeFloat,
   type SessionSignFixes
 } from "@/lib/validation/engine";
+import { type SharedStateResponse } from "@/lib/shared-state";
 import {
   buildCompanyReport,
   buildQuarterSnapshots,
@@ -644,6 +645,29 @@ function parseSavedDatasets(raw: string | null): SavedQuarterSnapshot[] {
   }
 }
 
+function configSnapshot(config: {
+  logicConfig: LogicConfig;
+  companyConfigs: CompanyConfigs;
+  classificationCatalog: ClassificationCatalogGroup[];
+  classificationGroups: ClassificationGroups;
+}) {
+  return JSON.stringify({
+    logicConfig: config.logicConfig,
+    companyConfigs: config.companyConfigs,
+    classificationCatalog: config.classificationCatalog,
+    classificationGroups: config.classificationGroups
+  });
+}
+
+function hasCustomConfig(config: {
+  logicConfig: LogicConfig;
+  companyConfigs: CompanyConfigs;
+  classificationCatalog: ClassificationCatalogGroup[];
+  classificationGroups: ClassificationGroups;
+}) {
+  return configSnapshot(config) !== configSnapshot(getDefaultPersistedState());
+}
+
 export function ValidatorApp() {
   const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
@@ -669,40 +693,136 @@ export function ValidatorApp() {
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
+  const [sharedStateReady, setSharedStateReady] = useState(false);
+  const [sharedStateError, setSharedStateError] = useState<string | null>(null);
+  const configSyncInitializedRef = useRef(false);
+  const datasetsSyncInitializedRef = useRef(false);
 
   useEffect(() => {
-    setMounted(true);
-    const persisted = parsePersistedState(window.localStorage.getItem(STORAGE_KEYS.config));
-    const saved = parseSavedDatasets(window.localStorage.getItem(STORAGE_KEYS.datasets));
-    setLogicConfig(cloneLogicConfig(persisted.logicConfig));
-    setCompanyConfigs(cloneCompanyConfigs(persisted.companyConfigs));
-    setClassificationGroups(cloneClassificationGroups(persisted.classificationGroups));
-    setClassificationCatalog(cloneClassificationCatalog(persisted.classificationCatalog));
-    setGlobalOverrideRows(overridesToRows(persisted.logicConfig.sectionSignOverrides));
-    setPasteSectionRows(objectEntriesToRows(persisted.logicConfig.pasteSectToParent));
-    setSavedDatasets(saved);
-    if (saved[0]?.id) {
-      setSelectedDatasetId(saved[0].id);
+    let cancelled = false;
+
+    async function loadSharedState() {
+      setMounted(true);
+
+      const localPersisted = parsePersistedState(window.localStorage.getItem(STORAGE_KEYS.config));
+      const localSaved = parseSavedDatasets(window.localStorage.getItem(STORAGE_KEYS.datasets));
+
+      let nextPersisted = localPersisted;
+      let nextSaved = localSaved;
+
+      try {
+        const response = await fetch("/api/shared-state", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("공용 데이터를 불러오지 못했습니다.");
+        }
+
+        const remote = await response.json() as SharedStateResponse;
+        const remotePersisted = parsePersistedState(JSON.stringify(remote.config));
+        const remoteSaved = parseSavedDatasets(JSON.stringify(remote.datasets));
+
+        const shouldMigrateLocal = !remoteSaved.length && localSaved.length;
+        const shouldMigrateLocalConfig = !hasCustomConfig(remotePersisted) && hasCustomConfig(localPersisted);
+
+        if (shouldMigrateLocal || shouldMigrateLocalConfig) {
+          await fetch("/api/shared-state", {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              config: shouldMigrateLocalConfig ? localPersisted : remotePersisted,
+              datasets: shouldMigrateLocal ? localSaved : remoteSaved
+            })
+          });
+
+          nextPersisted = shouldMigrateLocalConfig ? localPersisted : remotePersisted;
+          nextSaved = shouldMigrateLocal ? localSaved : remoteSaved;
+        } else {
+          nextPersisted = remotePersisted;
+          nextSaved = remoteSaved;
+        }
+      } catch (error) {
+        setSharedStateError(error instanceof Error ? error.message : "공용 데이터 연결 중 오류가 발생했습니다.");
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      setLogicConfig(cloneLogicConfig(nextPersisted.logicConfig));
+      setCompanyConfigs(cloneCompanyConfigs(nextPersisted.companyConfigs));
+      setClassificationGroups(cloneClassificationGroups(nextPersisted.classificationGroups));
+      setClassificationCatalog(cloneClassificationCatalog(nextPersisted.classificationCatalog));
+      setGlobalOverrideRows(overridesToRows(nextPersisted.logicConfig.sectionSignOverrides));
+      setPasteSectionRows(objectEntriesToRows(nextPersisted.logicConfig.pasteSectToParent));
+      const sortedDatasets = sortSavedDatasets(nextSaved);
+      setSavedDatasets(sortedDatasets);
+      setSelectedDatasetId(sortedDatasets[0]?.id ?? "");
+      setComparisonSelections(buildInitialComparisonSelections(sortedDatasets));
+      setSharedStateReady(true);
     }
-    setComparisonSelections(buildInitialComparisonSelections(saved));
+
+    loadSharedState();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!mounted) {
+    if (!mounted || !sharedStateReady) {
       return;
     }
+
     window.localStorage.setItem(
       STORAGE_KEYS.config,
       JSON.stringify({ logicConfig, companyConfigs, classificationCatalog, classificationGroups })
     );
-  }, [mounted, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
 
-  useEffect(() => {
-    if (!mounted) {
+    if (!configSyncInitializedRef.current) {
+      configSyncInitializedRef.current = true;
       return;
     }
+
+    const timeout = window.setTimeout(() => {
+      fetch("/api/shared-state", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          config: { logicConfig, companyConfigs, classificationCatalog, classificationGroups }
+        })
+      }).catch(() => setSharedStateError("공용 설정 저장에 실패했습니다. 새로고침 후 다시 시도해 주세요."));
+    }, 600);
+
+    return () => window.clearTimeout(timeout);
+  }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
+
+  useEffect(() => {
+    if (!mounted || !sharedStateReady) {
+      return;
+    }
+
     window.localStorage.setItem(STORAGE_KEYS.datasets, JSON.stringify(savedDatasets));
-  }, [mounted, savedDatasets]);
+
+    if (!datasetsSyncInitializedRef.current) {
+      datasetsSyncInitializedRef.current = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      fetch("/api/shared-state", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ datasets: savedDatasets })
+      }).catch(() => setSharedStateError("공용 데이터 저장에 실패했습니다. 다시 저장해 주세요."));
+    }, 300);
+
+    return () => window.clearTimeout(timeout);
+  }, [mounted, sharedStateReady, savedDatasets]);
 
   useEffect(() => {
     setComparisonSelections((prev) => {
@@ -1298,11 +1418,13 @@ export function ValidatorApp() {
       <section className="hero">
         <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
         <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
+        <p>{sharedStateReady ? "공용 Supabase 저장소와 동기화된 상태로 작업합니다." : "공용 Supabase 저장소를 불러오는 중입니다..."}</p>
         <div className="hero-meta">
           <span className="pill">1. 텍스트 붙여넣기</span>
           <span className="pill">2. 실패 항목 확인</span>
           <span className="pill">3. 값/부호 바로 수정</span>
         </div>
+        {sharedStateError ? <p className="save-feedback warning">{sharedStateError}</p> : null}
       </section>
 
       <section className="summary-strip">
