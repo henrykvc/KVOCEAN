@@ -2,6 +2,48 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isEmailAllowed } from "@/lib/auth/access";
 
+function renderHashBridgeHtml(nextPath: string) {
+  const escapedNextPath = JSON.stringify(nextPath);
+
+  return `<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>로그인 확인 중...</title>
+  </head>
+  <body style="font-family: sans-serif; padding: 24px;">
+    <p>로그인 정보를 확인하는 중입니다...</p>
+    <script>
+      (function () {
+        var hash = new URLSearchParams(window.location.hash.slice(1));
+        var query = new URLSearchParams(window.location.search);
+        var target = new URL(window.location.origin + "/auth/callback");
+        var nextPath = ${escapedNextPath};
+
+        if (nextPath && nextPath !== "/") {
+          target.searchParams.set("next", nextPath);
+        }
+
+        ["code", "token_hash", "type", "access_token", "refresh_token"].forEach(function (key) {
+          var value = query.get(key) || hash.get(key);
+          if (value) {
+            target.searchParams.set(key, value);
+          }
+        });
+
+        if (["code", "token_hash", "access_token"].some(function (key) { return target.searchParams.get(key); })) {
+          window.location.replace(target.toString());
+          return;
+        }
+
+        window.location.replace(window.location.origin + "/login?error=missing_code");
+      })();
+    </script>
+  </body>
+</html>`;
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
@@ -39,7 +81,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL(nextPath, request.url));
     }
 
-    return NextResponse.redirect(new URL("/login?error=missing_code", request.url));
+    return new Response(renderHashBridgeHtml(nextPath), {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store"
+      }
+    });
   }
 
   if (error) {
