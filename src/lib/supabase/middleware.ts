@@ -1,5 +1,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import type { User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
+import { isActiveAllowedUser } from "@/lib/supabase/access";
 import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/supabase/env";
 
 export async function updateSession(request: NextRequest) {
@@ -25,7 +27,22 @@ export async function updateSession(request: NextRequest) {
     }
   });
 
-  await supabase.auth.getUser();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
 
-  return response;
+  let allowedUser: User | null = null;
+  if (user?.email) {
+    try {
+      if (await isActiveAllowedUser(supabase, user.email)) {
+        allowedUser = user;
+      } else {
+        await supabase.auth.signOut();
+      }
+    } catch {
+      await supabase.auth.signOut();
+    }
+  }
+
+  return { response, user: allowedUser };
 }

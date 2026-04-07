@@ -21,7 +21,6 @@ import {
   type SignCode
 } from "@/lib/validation/defaults";
 import {
-  STORAGE_KEYS,
   buildCopyText,
   diagnoseDiff,
   formatNumber,
@@ -791,11 +790,8 @@ export function ValidatorApp() {
     async function loadSharedState() {
       setMounted(true);
 
-      const localPersisted = parsePersistedState(window.localStorage.getItem(STORAGE_KEYS.config));
-      const localSaved = parseSavedDatasets(window.localStorage.getItem(STORAGE_KEYS.datasets));
-
-      let nextPersisted = localPersisted;
-      let nextSaved = localSaved;
+      let nextPersisted = getDefaultPersistedState();
+      let nextSaved: SavedQuarterSnapshot[] = [];
 
       try {
         const response = await fetch("/api/shared-state", { cache: "no-store" });
@@ -806,7 +802,7 @@ export function ValidatorApp() {
         const remote = await response.json() as SharedStateResponse;
         const remotePersisted = parsePersistedState(JSON.stringify(remote.config));
         const remoteSaved = parseSavedDatasets(JSON.stringify(remote.datasets));
-        const recoveredPersisted = recoverClassificationConfigFromDatasets(remoteSaved.length ? remoteSaved : localSaved);
+        const recoveredPersisted = recoverClassificationConfigFromDatasets(remoteSaved);
         const shouldRecoverRemoteClassification = !hasCustomConfig(remotePersisted) && hasCustomConfig(recoveredPersisted);
         const { nextConfig: autoAssignedRemotePersisted, changed: autoAssignedChanged } = applyManagedAssignmentsFromSavedDatasets(
           shouldRecoverRemoteClassification
@@ -816,30 +812,32 @@ export function ValidatorApp() {
                 classificationGroups: recoveredPersisted.classificationGroups
               }
             : remotePersisted,
-          remoteSaved.length ? remoteSaved : localSaved
+          remoteSaved
         );
 
-        const shouldMigrateLocal = !remoteSaved.length && localSaved.length;
-        const shouldMigrateLocalConfig = !hasCustomConfig(remotePersisted) && hasCustomConfig(localPersisted);
+        if (shouldRecoverRemoteClassification || autoAssignedChanged) {
+          const mergedConfig = autoAssignedRemotePersisted;
 
-        if (shouldMigrateLocal || shouldMigrateLocalConfig || shouldRecoverRemoteClassification || autoAssignedChanged) {
-          const mergedConfig = shouldMigrateLocalConfig
-            ? localPersisted
-            : autoAssignedRemotePersisted;
-
-          await fetch("/api/shared-state", {
+          const migrationResponse = await fetch("/api/shared-state", {
             method: "PUT",
             headers: {
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
               config: mergedConfig,
-              datasets: shouldMigrateLocal ? localSaved : remoteSaved
+              datasets: remoteSaved
             })
           });
 
+          if (!migrationResponse.ok) {
+            const payload = await migrationResponse.json().catch(() => null) as { error?: string } | null;
+            throw new Error(payload?.error ?? "공용 데이터 마이그레이션에 실패했습니다.");
+          }
+
+          setSharedStateError(null);
+
           nextPersisted = mergedConfig;
-          nextSaved = shouldMigrateLocal ? localSaved : remoteSaved;
+          nextSaved = remoteSaved;
         } else {
           nextPersisted = remotePersisted;
           nextSaved = remoteSaved;
@@ -877,11 +875,6 @@ export function ValidatorApp() {
       return;
     }
 
-    window.localStorage.setItem(
-      STORAGE_KEYS.config,
-      JSON.stringify({ logicConfig, companyConfigs, classificationCatalog, classificationGroups })
-    );
-
     if (!configSyncInitializedRef.current) {
       configSyncInitializedRef.current = true;
       return;
@@ -896,7 +889,16 @@ export function ValidatorApp() {
         body: JSON.stringify({
           config: { logicConfig, companyConfigs, classificationCatalog, classificationGroups }
         })
-      }).catch(() => setSharedStateError("공용 설정 저장에 실패했습니다. 새로고침 후 다시 시도해 주세요."));
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null) as { error?: string } | null;
+            throw new Error(payload?.error ?? "공용 설정 저장에 실패했습니다. 새로고침 후 다시 시도해 주세요.");
+          }
+
+          setSharedStateError(null);
+        })
+        .catch((error) => setSharedStateError(error instanceof Error ? error.message : "공용 설정 저장에 실패했습니다. 새로고침 후 다시 시도해 주세요."));
     }, 600);
 
     return () => window.clearTimeout(timeout);
@@ -906,8 +908,6 @@ export function ValidatorApp() {
     if (!mounted || !sharedStateReady) {
       return;
     }
-
-    window.localStorage.setItem(STORAGE_KEYS.datasets, JSON.stringify(savedDatasets));
 
     if (!datasetsSyncInitializedRef.current) {
       datasetsSyncInitializedRef.current = true;
@@ -921,7 +921,16 @@ export function ValidatorApp() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({ datasets: savedDatasets })
-      }).catch(() => setSharedStateError("공용 데이터 저장에 실패했습니다. 다시 저장해 주세요."));
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null) as { error?: string } | null;
+            throw new Error(payload?.error ?? "공용 데이터 저장에 실패했습니다. 다시 저장해 주세요.");
+          }
+
+          setSharedStateError(null);
+        })
+        .catch((error) => setSharedStateError(error instanceof Error ? error.message : "공용 데이터 저장에 실패했습니다. 다시 저장해 주세요."));
     }, 300);
 
     return () => window.clearTimeout(timeout);

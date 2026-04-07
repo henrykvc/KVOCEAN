@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getAllowedUser } from "@/lib/supabase/access";
 import { deserializeSharedConfig, serializeSharedConfig, type SharedStateResponse } from "@/lib/shared-state";
 import type { SavedQuarterSnapshot } from "@/lib/validation/report";
 
 async function requireAuthorizedUser() {
   const supabase = createClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
+  const user = await getAllowedUser(supabase).catch(() => null);
 
-  if (!user?.email) {
+  if (!user) {
     return { supabase, user: null };
   }
 
@@ -80,6 +79,16 @@ export async function PUT(request: Request) {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    await supabase.from("change_logs").insert({
+      action: "config_updated",
+      target_type: "app_config",
+      target_id: "global",
+      payload: {
+        classificationCatalogCount: serializedConfig.classification_catalog.length
+      },
+      created_by: user.email
+    });
   }
 
   if (body.datasets) {
@@ -119,6 +128,16 @@ export async function PUT(request: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
     }
+
+    await supabase.from("change_logs").insert({
+      action: "datasets_synced",
+      target_type: "datasets",
+      payload: {
+        count: datasets.length,
+        removedCount: removableIds.length
+      },
+      created_by: user.email
+    });
   }
 
   return NextResponse.json({ ok: true });

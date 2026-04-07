@@ -12,10 +12,10 @@ function isPublicPath(pathname: string) {
 }
 
 export async function middleware(request: NextRequest) {
-  const response = await updateSession(request);
-  const hasAuthCookie = request.cookies.getAll().some((cookie) => cookie.name.includes("auth-token"));
+  const { response, user } = await updateSession(request);
+  const hasSession = Boolean(user?.email);
 
-  if (!hasAuthCookie && !isPublicPath(request.nextUrl.pathname)) {
+  if (!hasSession && !isPublicPath(request.nextUrl.pathname)) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     if (request.nextUrl.pathname !== "/") {
@@ -24,7 +24,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (hasAuthCookie && request.nextUrl.pathname === "/login") {
+  if (hasSession && request.nextUrl.pathname === "/login") {
     const homeUrl = request.nextUrl.clone();
     homeUrl.pathname = "/";
     homeUrl.search = "";
