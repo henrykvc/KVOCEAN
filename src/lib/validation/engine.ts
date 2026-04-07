@@ -23,6 +23,8 @@ export type ValidationResult = {
   parent: string;
   sect?: string;
   parent_val: number;
+  parent_row?: number;
+  parent_col?: number;
   computed: number;
   diff: number;
   passed: boolean;
@@ -320,6 +322,10 @@ function getAccountMatch(nameToValue: Record<string, { value: number | null; col
   return null;
 }
 
+function shouldSuggestOcrSignCorrection(accountName: string) {
+  return /누계|충당금|현할차/.test(accountName);
+}
+
 export function validatePasteSections(
   catRow: string[],
   nameRow: string[],
@@ -361,6 +367,7 @@ export function validatePasteSections(
       continue;
     }
     const parentVal = getAccountValue(nameToValue, parentName);
+    const parentMatch = getAccountMatch(nameToValue, parentName);
     if (parentVal === null) {
       continue;
     }
@@ -405,6 +412,8 @@ export function validatePasteSections(
       parent: parentName,
       sect,
       parent_val: parentVal,
+      parent_row: rowIndex,
+      parent_col: parentMatch?.col,
       computed,
       diff,
       passed: Math.abs(diff) <= tolerance,
@@ -415,6 +424,7 @@ export function validatePasteSections(
   }
 
   const capitalVal = getAccountValue(nameToValue, "자본");
+  const capitalMatch = getAccountMatch(nameToValue, "자본");
   if (capitalVal !== null) {
     const used: DetailRow[] = [];
     let computed = 0;
@@ -464,6 +474,8 @@ export function validatePasteSections(
         rule: "자본 = Σ 자본구성항목",
         parent: "자본",
         parent_val: capitalVal,
+        parent_row: rowIndex,
+        parent_col: capitalMatch?.col,
         computed,
         diff,
         passed: Math.abs(diff) <= tolerance,
@@ -508,6 +520,8 @@ export function validatePasteSections(
       parent: parentName,
       sect: ruleName,
       parent_val: parentVal,
+      parent_row: rowIndex,
+      parent_col: parentMatch.col,
       computed,
       diff,
       passed: Math.abs(diff) <= tolerance,
@@ -587,7 +601,7 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     const currentSign = signFromLabel(item.부호);
     const allowedSigns = item._allowedSigns ?? [0, 1, 2];
 
-    if (item._row !== undefined && item._col !== undefined && currentSign !== 2) {
+    if (item._row !== undefined && item._col !== undefined && currentSign !== 2 && shouldSuggestOcrSignCorrection(item.계정명)) {
       const ocrCandidates = [Math.abs(item.원본값), -Math.abs(item.원본값)]
         .filter((candidate, index, source) => source.indexOf(candidate) === index)
         .filter((candidate) => candidate !== item.원본값)

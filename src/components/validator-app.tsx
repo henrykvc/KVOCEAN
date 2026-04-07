@@ -29,6 +29,7 @@ import {
   pasteEditKey,
   runValidation,
   safeFloat,
+  type ValidationResult,
   type SessionSignFixes
 } from "@/lib/validation/engine";
 import { type SharedStateResponse } from "@/lib/shared-state";
@@ -1297,6 +1298,37 @@ export function ValidatorApp() {
     updateEditableValue(rowIndex, colIndex, rawValue, String(nextValue));
   }
 
+  function hasPendingResultAdjustments(result: ValidationResult) {
+    const resultSection = result.sect ?? result.parent;
+    const hasParentEdit = result.parent_row !== undefined
+      && result.parent_col !== undefined
+      && pasteEdits[pasteEditKey(result.parent_row, result.parent_col)] !== undefined;
+
+    if (hasParentEdit) {
+      return true;
+    }
+
+    return result.detail.some((detail) => {
+      const hasValueEdit = detail._row !== undefined
+        && detail._col !== undefined
+        && pasteEdits[pasteEditKey(detail._row, detail._col)] !== undefined;
+      const hasSignEdit = sessionSignFixes[resultSection]?.[detail.계정명] !== undefined;
+      return hasValueEdit || hasSignEdit;
+    });
+  }
+
+  function getResultStatus(result: ValidationResult) {
+    if (!result.passed) {
+      return { label: "실패", className: "status-fail" };
+    }
+
+    if (hasPendingResultAdjustments(result)) {
+      return { label: "수정 완료", className: "status-pass" };
+    }
+
+    return { label: "통과", className: "status-pass" };
+  }
+
   function applySessionFix(sect: string, acct: string, newSign: SignCode) {
     setSessionSignFixes((prev) => ({
       ...prev,
@@ -1721,18 +1753,23 @@ export function ValidatorApp() {
                         const actions = result.passed ? [] : diagnoseDiff(result);
                         const resultSection = result.sect ?? result.parent;
                         const cardKey = `${dateLabel}-${result.rule}-${resultIndex}`;
-                        const isOpen = resultOpenState[cardKey] ?? !result.passed;
+                        const resultStatus = getResultStatus(result);
+                        const hasPendingAdjustments = hasPendingResultAdjustments(result);
+                        const isOpen = resultOpenState[cardKey] ?? (!result.passed || hasPendingAdjustments);
+                        const currentParentValue = result.parent_row !== undefined && result.parent_col !== undefined && pasteEdits[pasteEditKey(result.parent_row, result.parent_col)] !== undefined
+                          ? pasteEdits[pasteEditKey(result.parent_row, result.parent_col)]
+                          : result.parent_val;
                         return (
                           <article className={`result-card ${isOpen ? "" : "collapsed"}`} key={cardKey}>
                             <div className="result-header">
                               <div>
-                                <div className={result.passed ? "status-pass" : "status-fail"}>{result.passed ? "통과" : "실패"}</div>
+                                <div className={resultStatus.className}>{resultStatus.label}</div>
                                 <strong>{result.rule}</strong>
                               </div>
                               <div className="result-header-actions">
                                 <div className="muted">차이</div>
                                 <strong className={result.passed ? "status-pass" : "status-fail"}>{formatNumber(result.diff)}원</strong>
-                                <button className="collapse-toggle" onClick={() => toggleResultCard(cardKey, !result.passed)} aria-expanded={isOpen}>
+                                <button className="collapse-toggle" onClick={() => toggleResultCard(cardKey, !result.passed || hasPendingAdjustments)} aria-expanded={isOpen}>
                                   {isOpen ? "접기" : "펼치기"}
                                 </button>
                               </div>
@@ -1813,7 +1850,19 @@ export function ValidatorApp() {
                               <div className="two-col">
                                 <div className="diagnosis-card">
                                   <strong>합계 비교</strong>
-                                  <p className="muted">OCR 합산 {formatNumber(result.computed)}원 / 재무제표 값 {formatNumber(result.parent_val)}원</p>
+                                  <p className="muted">OCR 합산 {formatNumber(result.computed)}원 / 재무제표 값 {formatNumber(currentParentValue)}원</p>
+                                  {result.parent_row !== undefined && result.parent_col !== undefined && (
+                                    <div className="inline-actions" style={{ marginTop: 12 }}>
+                                      <input
+                                        className="mini-input"
+                                        type="number"
+                                        step={1}
+                                        value={String(currentParentValue)}
+                                        onChange={(event) => updateEditableValue(result.parent_row!, result.parent_col!, result.parent_val, event.target.value)}
+                                      />
+                                      <span className="muted">재무제표 값 수정</span>
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="diagnosis-card">
                                   <strong>누락 계정</strong>
