@@ -116,7 +116,7 @@ function createCalculationDetail(
   return { formula, result, inputs, note };
 }
 
-const DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
+const DEPRECIATION_ALIASES = ["감가상각비계"];
 const COST_STRUCTURE_ITEMS = ["인건비", "광고선전비", "연구개발비", "접대비", "복리후생비", "지급수수료", "외주용역비", "임차료", "총이자비용"];
 const ASSET_LIABILITY_ITEMS = ["현금및현금성자산", "매도가능증권", "단기대여금", "개발비(자산)", "선급금", "가수금", "가지급금", "퇴직급여충당부채(자산)"];
 const VARIABLE_COST_ALIASES = ["변동비"];
@@ -1018,11 +1018,11 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
       const operatingIncome = getMetricValue(current, period.key, ["영업이익", "영업이익(손실)"]);
       const depreciation = getClassifiedMetricSum(current, period.key, DEPRECIATION_ALIASES);
       return createCalculationDetail(
-        "영업이익 + 감가상각계",
+        "영업이익 + 감가상각비계",
         result,
         [
           { label: "영업이익", value: operatingIncome },
-          { label: "감가상각계", value: depreciation }
+          { label: "감가상각비계", value: depreciation }
         ]
       );
     }
@@ -1040,12 +1040,12 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     amountDetail: (period, current, result) => {
       const monthlySpendBase = getMonthlySpendBase(current, period);
       return createCalculationDetail(
-        "(매출액 - 영업이익 - 감가상각계) / 경과월수",
+        "(매출액 - 영업이익 - 감가상각비계) / 경과월수",
         result,
         [
           { label: "매출액", value: monthlySpendBase.sales },
           { label: "영업이익", value: monthlySpendBase.operatingIncome },
-          { label: "감가상각계", value: monthlySpendBase.depreciation },
+          { label: "감가상각비계", value: monthlySpendBase.depreciation },
           { label: "누적 지출 추정", value: monthlySpendBase.totalSpend },
           { label: "경과월수", value: period.monthsElapsed },
           { label: "월 평균 지출액", value: monthlySpendBase.monthlySpend }

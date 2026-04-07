@@ -96,7 +96,7 @@ const ACCOUNT_DB_SECTIONS = {
 
 const RATIO_ONLY_SECTION_TITLES = new Set(["안정성 비율", "수익성 비율", "성장성 비율"]);
 
-const DETAIL_DEPRECIATION_ALIASES = ["감가상각비", "무형자산상각비", "사용권자산상각비"];
+const DETAIL_DEPRECIATION_ALIASES = ["감가상각비계"];
 const DETAIL_VARIABLE_COST_ALIASES = [
   "매출원가",
   "외주용역비",
@@ -177,7 +177,7 @@ function getInputAliasCandidates(label: string) {
     "유동부채": ["유동부채"],
     "영업이익": ["영업이익", "영업이익(손실)"],
     "계속사업당기순이익": ["계속사업당기순이익", "당기순이익", "당기순손실"],
-    "감가상각계": DETAIL_DEPRECIATION_ALIASES,
+    "감가상각비계": DETAIL_DEPRECIATION_ALIASES,
     "변동비합계": DETAIL_VARIABLE_COST_ALIASES,
     "순차입금": DETAIL_BORROWING_ALIASES,
     "이자비용": DETAIL_INTEREST_ALIASES,
@@ -470,7 +470,7 @@ function buildStatementSheetRows(rows: StatementMatrixRow[], periods: ReportingM
 function buildFormulaGuideRows() {
   return [
     { 항목: "런웨이(E)", 계산식: "현금및현금성자산 * 경과월수 / (매출원가 + 판관비 - 감가/상각비)" },
-    { 항목: "EBITDA", 계산식: "매출액 - 매출원가 - 판관비 + 감가상각비 + 무형자산상각비 + 사용권자산상각비" },
+    { 항목: "EBITDA", 계산식: "매출액 - 매출원가 - 판관비 + 감가상각비계" },
     { 항목: "유동비율", 계산식: "유동자산 / 유동부채 * 100" },
     { 항목: "당좌비율", 계산식: "(유동자산 - 재고자산) / 유동부채 * 100" },
     { 항목: "부채비율", 계산식: "부채 / 자본 * 100" },
@@ -517,8 +517,8 @@ function buildRequestedFormulaRows() {
     { 항목: "영업이익 증가율", 수식: "(당기 영업이익 - 전기 영업이익) / 전기 영업이익 * 100" },
     { 항목: "매도가능증권", 수식: "(매도가능증권/자산) * 100" },
     { 항목: "런웨이(E)", 수식: "현금및현금성자산 / 월 평균 지출액" },
-    { 항목: "EBITDA", 수식: "영업이익(손실) + 감가상각비 + 무형자산상각비 + 사용권자산상각비" },
-    { 항목: "월 평균 지출액", 수식: "(매출액 - 영업이익(손실) - 감가상각비 - 무형자산상각비 - 사용권자산상각비) / 경과월수" }
+    { 항목: "EBITDA", 수식: "영업이익(손실) + 감가상각비계" },
+    { 항목: "월 평균 지출액", 수식: "(매출액 - 영업이익(손실) - 감가상각비계) / 경과월수" }
   ];
 }
 
@@ -643,7 +643,8 @@ function inferManagedClassificationKey(accountName: string, sectionKey: string) 
     if (/단기대여금/.test(normalizedName)) return "단기대여금";
     if (/선급금/.test(normalizedName)) return "선급금";
     if (/개발비/.test(normalizedName)) return "개발비(자산)";
-    if (/현금|예금|예치금|단기매매증권|정기예적금|외화예금|매도가능증권|미수금|미수수익|부가세대급금/.test(normalizedName)) return "당좌자산";
+    if (/현금|예금|예치금|정기예적금|외화예금/.test(normalizedName)) return "현금및현금성자산";
+    if (/단기매매증권|매도가능증권|미수금|미수수익|부가세대급금/.test(normalizedName)) return "당좌자산";
   }
 
   if (["유동부채", "비유동부채"].includes(sectionKey)) {
@@ -654,9 +655,9 @@ function inferManagedClassificationKey(accountName: string, sectionKey: string) 
   }
 
   if (["영업비용", "판매비와관리비"].includes(sectionKey)) {
-    if (/사용권자산.*상각|리스.*감가상각/.test(normalizedName)) return "사용권자산상각비";
-    if (/무형.*상각|판권.*상각/.test(normalizedName)) return "무형자산상각비";
-    if (/감가상각비/.test(normalizedName)) return "감가상각비";
+    if (/사용권자산.*상각|리스.*감가상각/.test(normalizedName)) return "감가상각비계";
+    if (/무형.*상각|판권.*상각/.test(normalizedName)) return "감가상각비계";
+    if (/감가상각비/.test(normalizedName)) return "감가상각비계";
     if (/급여|상여|잡급|잡금|인건비|퇴직급여|주식보상비용/.test(normalizedName)) return "인건비";
     if (/연구|개발비/.test(normalizedName)) return "연구개발비";
     if (/접대비|업무추진비/.test(normalizedName)) return "접대비";

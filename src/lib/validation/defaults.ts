@@ -29,12 +29,11 @@ export type ClassificationCatalogGroup = {
 
 export const MANAGED_CLASSIFICATION_KEYS = [
   "당좌자산",
+  "현금및현금성자산",
   "차입금",
   "매출채권",
   "재고자산",
-  "감가상각비",
-  "무형자산상각비",
-  "사용권자산상각비",
+  "감가상각비계",
   "인건비",
   "연구개발비",
   "접대비",
@@ -85,6 +84,19 @@ const LEGACY_REMOVED_CLASSIFICATION_ALIASES = new Set<string>([
 ]);
 
 const SYSTEM_FIXED_CLASSIFICATION_KEY_SET = new Set<string>(SYSTEM_FIXED_CLASSIFICATION_KEYS);
+const CASH_EQUIVALENT_CANONICAL_KEY = "현금및현금성자산";
+const QUICK_ASSET_CANONICAL_KEY = "당좌자산";
+const CASH_EQUIVALENT_RAW_ALIASES = new Set([
+  "현금",
+  "보통예금",
+  "당좌예금",
+  "정기예적금",
+  "정기예금",
+  "정기적금",
+  "예금",
+  "예치금",
+  "외화예금"
+].map((alias) => alias.trim()));
 
 export const LAST_PATCH = "2026-03-19 17:55";
 
@@ -323,9 +335,7 @@ export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = {
     "저장품_재고충당금",
     "암호화폐(재고자산)"
   ],
-  감가상각비: ["감가상각비"],
-  무형자산상각비: ["무형자산상각비", "무형고정자산상각", "무형자산상각"],
-  사용권자산상각비: ["사용권자산상각비"]
+  "감가상각비계": ["감가상각비계", "감가상각비", "무형자산상각비", "무형고정자산상각", "무형자산상각", "사용권자산상각비"]
 };
 
 export function classificationGroupsToCatalog(groups: ClassificationGroups): ClassificationCatalogGroup[] {
@@ -419,10 +429,12 @@ export function mergeDefaultClassificationCatalog(catalog: ClassificationCatalog
       : structuredClone(defaultItem));
   });
 
-  return normalizedCatalog.map((item) => byCanonicalKey.get(item.canonicalKey) ?? item)
+  const mergedCatalog = normalizedCatalog.map((item) => byCanonicalKey.get(item.canonicalKey) ?? item)
     .concat(
       Array.from(byCanonicalKey.values()).filter((item) => !normalizedCatalog.some((catalogItem) => catalogItem.canonicalKey === item.canonicalKey))
     );
+
+  return normalizeCashHierarchyCatalog(mergedCatalog);
 }
 
 export function classificationCatalogToGroups(catalog: ClassificationCatalogGroup[]): ClassificationGroups {
@@ -438,6 +450,43 @@ export function classificationCatalogToGroups(catalog: ClassificationCatalogGrou
     ]));
     return acc;
   }, {});
+}
+
+function normalizeCashHierarchyCatalog(catalog: ClassificationCatalogGroup[]) {
+  const normalizedCatalog = catalog.map((item) => ({
+    ...item,
+    aliases: sanitizeClassificationAliases(item.aliases)
+  }));
+
+  const cashGroup = normalizedCatalog.find((item) => item.canonicalKey === CASH_EQUIVALENT_CANONICAL_KEY);
+  const quickAssetGroup = normalizedCatalog.find((item) => item.canonicalKey === QUICK_ASSET_CANONICAL_KEY);
+
+  if (!cashGroup || !quickAssetGroup) {
+    return normalizedCatalog;
+  }
+
+  const cashAliases = new Set(cashGroup.aliases);
+  const quickAssetAliases = new Set<string>();
+
+  quickAssetGroup.aliases.forEach((alias) => {
+    const normalizedAlias = alias.trim();
+    if (!normalizedAlias) {
+      return;
+    }
+
+    if (CASH_EQUIVALENT_RAW_ALIASES.has(normalizedAlias)) {
+      cashAliases.add(normalizedAlias);
+      return;
+    }
+
+    quickAssetAliases.add(normalizedAlias);
+  });
+
+  quickAssetAliases.add(CASH_EQUIVALENT_CANONICAL_KEY);
+  cashGroup.aliases = Array.from(cashAliases);
+  quickAssetGroup.aliases = Array.from(quickAssetAliases);
+
+  return normalizedCatalog;
 }
 
 export const COMPANY_LABELS = ["회사명", "회사", "법인명", "company", "Company"];
