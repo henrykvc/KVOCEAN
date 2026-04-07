@@ -190,16 +190,6 @@ function getInputAliasCandidates(label: string) {
   return (aliasMap[normalized] ?? [stripMetricPrefix(label)]).map(normalizeMetricLabel);
 }
 
-function upsertOverrideRow(rows: OverrideRow[], nextRow: OverrideRow) {
-  const foundIndex = rows.findIndex((row) => row.section === nextRow.section && row.keyword === nextRow.keyword);
-  if (foundIndex === -1) {
-    const cleanedRows = rows.filter((row) => row.section.trim() || row.keyword.trim());
-    return [...cleanedRows, nextRow];
-  }
-
-  return rows.map((row, index) => (index === foundIndex ? nextRow : row));
-}
-
 type MapRow = {
   section: string;
   parent: string;
@@ -769,7 +759,6 @@ export function ValidatorApp() {
   const [pasteEdits, setPasteEdits] = useState<Record<string, number>>({});
   const [sessionSignFixes, setSessionSignFixes] = useState<SessionSignFixes>({});
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
-  const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
@@ -972,12 +961,6 @@ export function ValidatorApp() {
     }
   }, [pastedText, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes, selectedCompany]);
 
-  useEffect(() => {
-    const company = selectedCompany.trim();
-    const rows = overridesToRows(companyConfigs[company]?.sectionSignOverrides ?? {});
-    setCompanyOverrideRows(rows.length ? rows : [{ section: "", keyword: "", sign: 0 }]);
-  }, [selectedCompany, companyConfigs]);
-
   const validation = useMemo(
     () =>
       runValidation({
@@ -1036,9 +1019,9 @@ export function ValidatorApp() {
     [accountDictionaryEntries, managedClassificationLookup]
   );
 
-  const companyKnown = selectedCompany.trim() && companyConfigs[selectedCompany.trim()];
   const sessionFixCount = countSessionFixes(sessionSignFixes);
   const editedValueCount = Object.keys(pasteEdits).length;
+  const canSaveCurrentDataset = Boolean(reporting.periods.length) && validation.stats.total > 0 && validation.stats.failed === 0;
   const previewGroups = useMemo(
     () => buildPreviewGroups(validation.parsed.catRow, validation.parsed.nameRow),
     [validation.parsed.catRow, validation.parsed.nameRow]
@@ -1111,7 +1094,7 @@ export function ValidatorApp() {
   }
 
   function saveCurrentDataset() {
-    if (validation.parsed.error || !reporting.periods.length) {
+    if (validation.parsed.error || !canSaveCurrentDataset) {
       return;
     }
     const snapshotArgs = {
@@ -1289,6 +1272,31 @@ export function ValidatorApp() {
     });
   }
 
+  function updateEditableSign(rowIndex: number, colIndex: number, rawValue: number, currentValue: number, nextMode: "raw" | "positive" | "negative") {
+    if (nextMode === "raw") {
+      updateEditableValue(rowIndex, colIndex, rawValue, String(rawValue));
+      return;
+    }
+
+    const magnitude = Math.abs(currentValue);
+    const nextValue = nextMode === "negative" ? -magnitude : magnitude;
+    updateEditableValue(rowIndex, colIndex, rawValue, String(nextValue));
+  }
+
+  function getEditableSignMode(rawValue: number, currentValue: number) {
+    if (Math.abs(currentValue - rawValue) < 0.5) {
+      return "raw" as const;
+    }
+
+    return currentValue < 0 ? "negative" as const : "positive" as const;
+  }
+
+  function applySuggestedEdit(rowIndex: number, colIndex: number, nextValue: number) {
+    const rawCell = validation.parsed.dataRows[rowIndex]?.[colIndex];
+    const rawValue = typeof rawCell === "number" ? rawCell : 0;
+    updateEditableValue(rowIndex, colIndex, rawValue, String(nextValue));
+  }
+
   function applySessionFix(sect: string, acct: string, newSign: SignCode) {
     setSessionSignFixes((prev) => ({
       ...prev,
@@ -1297,28 +1305,6 @@ export function ValidatorApp() {
         [acct]: newSign
       }
     }));
-  }
-
-  function saveCompanyFix(sect: string, acct: string, newSign: SignCode) {
-    const company = selectedCompany.trim();
-    if (!company) {
-      return;
-    }
-    setCompanyConfigs((prev) => ({
-      ...prev,
-      [company]: {
-        ...(prev[company] ?? {}),
-        sectionSignOverrides: {
-          ...(prev[company]?.sectionSignOverrides ?? {}),
-          [sect]: {
-            ...(prev[company]?.sectionSignOverrides?.[sect] ?? {}),
-            [acct]: newSign
-          }
-        }
-      }
-    }));
-    setCompanyOverrideRows((prev) => upsertOverrideRow(prev, { section: sect, keyword: acct, sign: newSign }));
-    applySessionFix(sect, acct, newSign);
   }
 
   function updateDetailSign(sect: string, acct: string, nextSign: SignCode) {
@@ -1420,17 +1406,6 @@ export function ValidatorApp() {
       pasteSectToParent: rowsToMap(pasteSectionRows),
       sectionSignOverrides: rowsToOverrides(globalOverrideRows)
     }));
-
-    const company = selectedCompany.trim();
-    if (company) {
-      setCompanyConfigs((prev) => ({
-        ...prev,
-        [company]: {
-          ...(prev[company] ?? {}),
-          sectionSignOverrides: rowsToOverrides(companyOverrideRows)
-        }
-      }));
-    }
 
     applyClassificationCatalog(classificationCatalog);
   }
@@ -1592,7 +1567,7 @@ export function ValidatorApp() {
                   <h2>검증할 데이터를 넣어 주세요</h2>
                   <p className="panel-desc">회사명과 허용 오차를 확인한 뒤 OCR 3행 텍스트를 그대로 붙여넣으면 됩니다.</p>
                 </div>
-                <span className={`tag ${companyKnown ? "pass" : ""}`}>{companyKnown ? "회사 규칙 적용 중" : "공통 규칙 사용"}</span>
+                <span className="tag pass">공통 규칙 사용</span>
               </div>
 
               <div className="field-grid">
@@ -1629,8 +1604,8 @@ export function ValidatorApp() {
                 <strong>입력 팁</strong>
                 <ul className="helper-list muted">
                   <li>행 1은 섹션명, 행 2는 계정명, 행 3부터 값입니다.</li>
-                  <li>회사명이 자동 감지되면 회사별 부호 규칙을 바로 불러옵니다.</li>
-                  <li>값 수정과 부호 수정은 검증 화면에서 바로 반영됩니다.</li>
+                  <li>회사명은 저장 데이터 구분용으로만 사용하고, 검증은 공통 규칙으로 처리합니다.</li>
+                  <li>값 수정과 OCR 부호 수정, 검증 부호 수정은 검증 화면에서 바로 반영됩니다.</li>
                 </ul>
               </div>
             </>
@@ -1671,7 +1646,7 @@ export function ValidatorApp() {
                       <div className="result-actions">
                         <span className="soft-badge">수정값 {editedValueCount}</span>
                         <span className="soft-badge">부호 변경 {sessionFixCount}</span>
-                        <button className="button" disabled={!reporting.periods.length} onClick={saveCurrentDataset}>저장하기</button>
+                        <button className="button" disabled={!canSaveCurrentDataset} onClick={saveCurrentDataset}>저장하기</button>
                         <button className="tiny-button" onClick={focusFailedResultCards}>실패만 펼치기</button>
                         <button className="tiny-button" onClick={openAllResultCards}>전체 펼치기</button>
                       </div>
@@ -1682,6 +1657,7 @@ export function ValidatorApp() {
                       <article className="metric-card"><span className="muted">실패</span><strong>{validation.stats.failed}</strong></article>
                       <article className="metric-card"><span className="muted">통과율</span><strong>{validation.stats.rate.toFixed(1)}%</strong></article>
                     </div>
+                    {validation.stats.failed > 0 && <div className="notice">통과율이 100%가 될 때만 저장할 수 있습니다. 실패 항목의 OCR 수정값과 검증 부호를 먼저 정리해 주세요.</div>}
                   </section>
 
                   <div className="preview-table-wrap">
@@ -1770,7 +1746,8 @@ export function ValidatorApp() {
                                         <th>계정명</th>
                                         <th>원본값</th>
                                         <th>OCR 수정값</th>
-                                        <th>검증 규칙</th>
+                                        <th>OCR 부호</th>
+                                        <th>검증 부호</th>
                                         <th>적용값</th>
                                       </tr>
                                     </thead>
@@ -1791,6 +1768,21 @@ export function ValidatorApp() {
                                               )}
                                             </td>
                                             <td>
+                                              {detail._row !== undefined && detail._col !== undefined ? (
+                                                <select
+                                                  className="mini-select"
+                                                  value={getEditableSignMode(detail.원본값, currentValue)}
+                                                  onChange={(event) => updateEditableSign(detail._row!, detail._col!, detail.원본값, currentValue, event.target.value as "raw" | "positive" | "negative")}
+                                                >
+                                                  <option value="raw">원본 유지</option>
+                                                  <option value="positive">양수(+)</option>
+                                                  <option value="negative">음수(-)</option>
+                                                </select>
+                                              ) : (
+                                                <span className="muted">자동 계산</span>
+                                              )}
+                                            </td>
+                                            <td>
                                               <div className="sign-editor">
                                                 <select
                                                   className="mini-select"
@@ -1801,13 +1793,6 @@ export function ValidatorApp() {
                                                   <option value="1">차감(−)</option>
                                                   <option value="2">제외</option>
                                                 </select>
-                                                <button
-                                                  className="tiny-button"
-                                                  disabled={!selectedCompany.trim()}
-                                                  onClick={() => saveCompanyFix(resultSection, detail.계정명, currentSign)}
-                                                >
-                                                  회사별 규칙 저장
-                                                </button>
                                               </div>
                                             </td>
                                             <td>{formatNumber(detail.적용값)}</td>
@@ -1821,7 +1806,7 @@ export function ValidatorApp() {
 
                               {result.detail.length > 0 && (
                                 <div className="rule-helper muted">
-                                  `OCR 수정값`은 복사/내보내기 되는 실제 데이터에 반영됩니다. `검증 규칙`은 이번 검증 해석과 회사별 규칙 저장에만 사용됩니다.
+                                  `OCR 수정값`과 `OCR 부호`는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증 해석에만 적용됩니다.
                                 </div>
                               )}
 
@@ -1839,18 +1824,22 @@ export function ValidatorApp() {
                               {!result.passed && actions.length > 0 && (
                                 <div className="diagnosis-card">
                                   <strong>원인 추정과 처리 방향</strong>
-                                  <p className="muted diagnosis-note">먼저 `OCR 수정값`을 확인하고, 반복되는 패턴만 `검증 규칙`으로 저장하는 흐름을 권장합니다.</p>
+                                  <p className="muted diagnosis-note">먼저 `OCR 수정값`과 `OCR 부호`를 확인하고, 숫자가 맞는데도 차이가 남을 때만 `검증 부호`를 조정해 주세요.</p>
                                   <div className="list-editor" style={{ marginTop: 12 }}>
                                     {actions.map((action, index) => (
                                       <div key={`${action.text}-${index}`} className="notice">
                                         <div className="pre diagnosis-copy">{renderDiagnosisText(action.text)}</div>
+                                        {action.edit ? (
+                                          <div className="inline-actions" style={{ marginTop: 12 }}>
+                                            <button className="secondary-button" onClick={() => applySuggestedEdit(action.edit!.row, action.edit!.col, action.edit!.value)}>
+                                              {action.editLabel}
+                                            </button>
+                                          </div>
+                                        ) : null}
                                         {action.fix ? (
                                           <div className="inline-actions" style={{ marginTop: 12 }}>
                                             <button className="secondary-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              이번 검증 규칙 적용: {action.label}
-                                            </button>
-                                            <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              {selectedCompany.trim() ? `[${selectedCompany.trim()}] 회사별 검증 규칙 저장` : "회사명 입력 필요"}
+                                              이번 검증 부호 적용: {action.label}
                                             </button>
                                           </div>
                                         ) : null}
@@ -2134,25 +2123,6 @@ export function ValidatorApp() {
                   </div>
                 </section>
 
-                <section className="config-card">
-                  <h3>회사별 부호 재정의</h3>
-                  <p className="muted">회사명을 입력한 뒤 편집하면 브라우저 저장소에 유지됩니다.</p>
-                  <div className="list-editor">
-                    {companyOverrideRows.map((row, index) => (
-                      <div className="override-row" key={`company-override-${index}`}>
-                        <input className="input" value={row.section} placeholder="섹션명" onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item))} />
-                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item))} />
-                        <select className="select" value={String(row.sign)} onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item))}>
-                          <option value="0">가산(+)</option>
-                          <option value="1">차감(−)</option>
-                          <option value="2">제외</option>
-                        </select>
-                        <button className="danger-button" onClick={() => setCompanyOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
-                      </div>
-                    ))}
-                    <button className="ghost-button" onClick={() => setCompanyOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }])}>회사 규칙 추가</button>
-                  </div>
-                </section>
               </div>
 
               <section className="config-card">

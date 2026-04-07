@@ -194,11 +194,7 @@ export const DEFAULT_LOGIC_CONFIG: LogicConfig = {
   }
 };
 
-export const DEFAULT_COMPANY_CONFIGS: CompanyConfigs = {
-  알피: { sectionSignOverrides: { 유동자산: { 보통예금보조금: 2 } } },
-  소셜빈: { sectionSignOverrides: { 유동자산: { 외상매출금_대손충당금: 2, 임차보증금: 2, 임차보증금현할차: 2 } } },
-  에이슬립: { sectionSignOverrides: { 비유동자산: { 기계장치_감가상각: 0, 기계장치: 2, 시설장치_감가상각: 0, 시설장치: 2 } } }
-};
+export const DEFAULT_COMPANY_CONFIGS: CompanyConfigs = {};
 
 export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = {
   유동자산: ["유동자산"],

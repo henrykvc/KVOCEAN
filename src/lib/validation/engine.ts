@@ -35,6 +35,12 @@ export type ValidationResult = {
 export type DiagnosisAction = {
   text: string;
   label?: string;
+  editLabel?: string;
+  edit?: {
+    row: number;
+    col: number;
+    value: number;
+  };
   fix?: {
     sect: string;
     acct: string;
@@ -238,17 +244,11 @@ export function resultSortKey(parentName: string): number {
   return idx >= 0 ? idx : RESULT_ORDER.length + 100;
 }
 
-function getEffectiveSectionOverrides(logicConfig: LogicConfig, companyConfigs: CompanyConfigs, companyName: string | null) {
+function getEffectiveSectionOverrides(logicConfig: LogicConfig, _companyConfigs: CompanyConfigs, _companyName: string | null) {
   const merged: Record<string, Record<string, SignCode>> = {};
 
   for (const [sect, overrides] of Object.entries(logicConfig.sectionSignOverrides)) {
     merged[sect] = { ...overrides };
-  }
-
-  if (companyName && companyConfigs[companyName]?.sectionSignOverrides) {
-    for (const [sect, overrides] of Object.entries(companyConfigs[companyName].sectionSignOverrides ?? {})) {
-      merged[sect] = { ...(merged[sect] ?? {}), ...overrides };
-    }
   }
 
   return merged;
@@ -565,6 +565,16 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     return "이 계정 하나의 부호 해석을 바꾸면 현재 차이가 대부분 해소됩니다.";
   };
 
+  const buildOcrReason = (item: DetailRow, nextValue: number) => {
+    if (item.계정명.includes("누계") || item.계정명.includes("충당금") || item.계정명.includes("현할차")) {
+      return "누계액/충당금류는 OCR 음수와 검증 차감이 겹쳐 이중 반전이 자주 생깁니다.";
+    }
+
+    return nextValue < 0
+      ? "OCR 숫자 부호가 음수로 다시 들어가 합계 방향이 반대로 적용된 것으로 보입니다."
+      : "OCR 숫자 부호를 양수로 바로잡으면 검증 규칙 방향과 맞습니다.";
+  };
+
   const actions: DiagnosisAction[] = [];
   const sect = result.sect ?? result.parent;
 
@@ -577,6 +587,37 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     const currentSign = signFromLabel(item.부호);
     const allowedSigns = item._allowedSigns ?? [0, 1, 2];
 
+    if (item._row !== undefined && item._col !== undefined && currentSign !== 2) {
+      const ocrCandidates = [Math.abs(item.원본값), -Math.abs(item.원본값)]
+        .filter((candidate, index, source) => source.indexOf(candidate) === index)
+        .filter((candidate) => candidate !== item.원본값)
+        .map((candidate) => {
+          const candidateApplied = applySign(candidate, currentSign as 0 | 1);
+          const nextComputed = result.computed - item.적용값 + candidateApplied;
+          const nextDiff = result.parent_val - nextComputed;
+          return {
+            candidate,
+            nextDiff,
+            nextAbsDiff: Math.abs(nextDiff)
+          };
+        })
+        .sort((a, b) => a.nextAbsDiff - b.nextAbsDiff);
+
+      const bestOcr = ocrCandidates[0];
+      if (bestOcr && (bestOcr.nextAbsDiff <= 1 || (absDiff > 0 && (absDiff - bestOcr.nextAbsDiff) / absDiff >= 0.5))) {
+        const nextDirection = bestOcr.candidate < 0 ? "음수(-)" : "양수(+)";
+        actions.push({
+          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): OCR 숫자 부호를 **${nextDirection}**로 바로잡으면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(bestOcr.nextDiff)}원으로 줄어듭니다. ${buildOcrReason(item, bestOcr.candidate)}`,
+          editLabel: `OCR 값을 ${nextDirection}로 수정: ${item.계정명}`,
+          edit: {
+            row: item._row,
+            col: item._col,
+            value: bestOcr.candidate
+          }
+        });
+      }
+    }
+
     if (currentSign === 1 && item.원본값 < 0 && allowedSigns.includes(0)) {
       const plusApplied = applySign(item.원본값, 0);
       const plusComputed = result.computed - item.적용값 + plusApplied;
@@ -585,7 +626,7 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
 
       if (plusAbsDiff <= 1 || (absDiff > 0 && (absDiff - plusAbsDiff) / absDiff >= 0.5)) {
         actions.push({
-          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 차감 계정인데 값이 이미 **음수(-)**로 들어왔습니다. 먼저 **가산(+)**으로 바꿔서 확인하는 것이 가장 정확합니다. 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(plusDiff)}원으로 줄어듭니다.`,
+          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 차감 계정인데 값이 이미 **음수(-)**로 들어왔습니다. OCR 수정값 부호를 먼저 확인하고, 숫자가 맞다면 검증 부호를 **가산(+)**으로 바꿔 보세요. 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(plusDiff)}원으로 줄어듭니다.`,
           label: `가산(+)으로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 0 }
         });
@@ -611,7 +652,7 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     const best = candidates[0];
     if (best && (best.nextAbsDiff <= 1 || (absDiff > 0 && (absDiff - best.nextAbsDiff) / absDiff >= 0.85))) {
       actions.push({
-        text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **${signName(currentSign)}** → **${signName(best.candidate)}**로 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(best.nextDiff)}원으로 줄어듭니다. ${buildReason(item, currentSign, best.candidate)} 반복되면 회사별 로직 추가로 고정하세요.`,
+        text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **${signName(currentSign)}** → **${signName(best.candidate)}**로 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(best.nextDiff)}원으로 줄어듭니다. ${buildReason(item, currentSign, best.candidate)}`,
         label: `${signName(best.candidate)}으로 수정: ${item.계정명}`,
         fix: { sect, acct: item.계정명, newSign: best.candidate }
       });
@@ -665,7 +706,7 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
 
   if (!actions.length) {
     actions.push({
-      text: `⚠️ 차이 ${diff > 0 ? "+" : ""}${formatNumber(diff)}원 — 단일 계정으로 설명되지 않습니다. 복합 오류이거나 OCR 인식 오류일 수 있습니다.`
+      text: `⚠️ 차이 ${diff > 0 ? "+" : ""}${formatNumber(diff)}원 — 단일 계정으로 설명되지 않습니다. 먼저 큰 금액 계정의 OCR 수정값 부호를 확인하고, 그다음 검증 부호를 조정해 주세요.`
     });
   }
 

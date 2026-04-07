@@ -386,16 +386,10 @@ function buildPeriods(nameRow: string[], dataRows: Array<Array<string | number |
   });
 }
 
-function getEffectiveOverrides(logicConfig: LogicConfig, companyConfigs: CompanyConfigs, companyName: string | null) {
+function getEffectiveOverrides(logicConfig: LogicConfig, _companyConfigs: CompanyConfigs, _companyName: string | null) {
   const merged: Record<string, Record<string, SignCode>> = {};
   for (const [section, overrides] of Object.entries(logicConfig.sectionSignOverrides)) {
     merged[section] = { ...overrides };
-  }
-
-  if (companyName && companyConfigs[companyName]?.sectionSignOverrides) {
-    for (const [section, overrides] of Object.entries(companyConfigs[companyName].sectionSignOverrides ?? {})) {
-      merged[section] = { ...(merged[section] ?? {}), ...overrides };
-    }
   }
   return merged;
 }
