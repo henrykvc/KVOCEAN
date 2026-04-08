@@ -246,11 +246,17 @@ export function resultSortKey(parentName: string): number {
   return idx >= 0 ? idx : RESULT_ORDER.length + 100;
 }
 
-function getEffectiveSectionOverrides(logicConfig: LogicConfig, _companyConfigs: CompanyConfigs, _companyName: string | null) {
+function getEffectiveSectionOverrides(logicConfig: LogicConfig, companyConfigs: CompanyConfigs, companyName: string | null) {
   const merged: Record<string, Record<string, SignCode>> = {};
 
   for (const [sect, overrides] of Object.entries(logicConfig.sectionSignOverrides)) {
     merged[sect] = { ...overrides };
+  }
+
+  if (companyName && companyConfigs[companyName]?.sectionSignOverrides) {
+    for (const [sect, overrides] of Object.entries(companyConfigs[companyName].sectionSignOverrides ?? {})) {
+      merged[sect] = { ...(merged[sect] ?? {}), ...overrides };
+    }
   }
 
   return merged;

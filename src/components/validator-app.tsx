@@ -390,6 +390,22 @@ function rowsToOverrides(rows: OverrideRow[]) {
   }, {});
 }
 
+function upsertOverrideRow(rows: OverrideRow[], nextRow: OverrideRow) {
+  const section = nextRow.section.trim();
+  const keyword = nextRow.keyword.trim();
+
+  if (!section || !keyword) {
+    return rows;
+  }
+
+  const index = rows.findIndex((row) => row.section.trim() === section && row.keyword.trim() === keyword);
+  if (index === -1) {
+    return [...rows, { section, keyword, sign: nextRow.sign }];
+  }
+
+  return rows.map((row, rowIndex) => (rowIndex === index ? { section, keyword, sign: nextRow.sign } : row));
+}
+
 function cloneClassificationCatalog(catalog: ClassificationCatalogGroup[]) {
   try {
     return structuredClone(catalog);
@@ -760,6 +776,7 @@ export function ValidatorApp() {
   const [pasteEdits, setPasteEdits] = useState<Record<string, number>>({});
   const [sessionSignFixes, setSessionSignFixes] = useState<SessionSignFixes>({});
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
+  const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
@@ -928,6 +945,12 @@ export function ValidatorApp() {
   }, [mounted, sharedStateReady, savedDatasets]);
 
   useEffect(() => {
+    const company = selectedCompany.trim();
+    const rows = overridesToRows(companyConfigs[company]?.sectionSignOverrides ?? {});
+    setCompanyOverrideRows(rows);
+  }, [selectedCompany, companyConfigs]);
+
+  useEffect(() => {
     setComparisonSelections((prev) => {
       const fallback = buildInitialComparisonSelections(savedDatasets);
       return fallback.map((item, index) => {
@@ -1020,6 +1043,7 @@ export function ValidatorApp() {
     [accountDictionaryEntries, managedClassificationLookup]
   );
 
+  const companyKnown = Boolean(selectedCompany.trim() && companyConfigs[selectedCompany.trim()]);
   const sessionFixCount = countSessionFixes(sessionSignFixes);
   const editedValueCount = Object.keys(pasteEdits).length;
   const canSaveCurrentDataset = Boolean(reporting.periods.length) && validation.stats.total > 0 && validation.stats.failed === 0;
@@ -1339,6 +1363,44 @@ export function ValidatorApp() {
     }));
   }
 
+  function saveGlobalFix(sect: string, acct: string, newSign: SignCode) {
+    setLogicConfig((prev) => ({
+      ...prev,
+      sectionSignOverrides: {
+        ...prev.sectionSignOverrides,
+        [sect]: {
+          ...(prev.sectionSignOverrides[sect] ?? {}),
+          [acct]: newSign
+        }
+      }
+    }));
+    setGlobalOverrideRows((prev) => upsertOverrideRow(prev, { section: sect, keyword: acct, sign: newSign }));
+    applySessionFix(sect, acct, newSign);
+  }
+
+  function saveCompanyFix(sect: string, acct: string, newSign: SignCode) {
+    const company = selectedCompany.trim();
+    if (!company) {
+      return;
+    }
+
+    setCompanyConfigs((prev) => ({
+      ...prev,
+      [company]: {
+        ...(prev[company] ?? {}),
+        sectionSignOverrides: {
+          ...(prev[company]?.sectionSignOverrides ?? {}),
+          [sect]: {
+            ...(prev[company]?.sectionSignOverrides?.[sect] ?? {}),
+            [acct]: newSign
+          }
+        }
+      }
+    }));
+    setCompanyOverrideRows((prev) => upsertOverrideRow(prev, { section: sect, keyword: acct, sign: newSign }));
+    applySessionFix(sect, acct, newSign);
+  }
+
   function updateDetailSign(sect: string, acct: string, nextSign: SignCode) {
     applySessionFix(sect, acct, nextSign);
   }
@@ -1438,6 +1500,25 @@ export function ValidatorApp() {
       pasteSectToParent: rowsToMap(pasteSectionRows),
       sectionSignOverrides: rowsToOverrides(globalOverrideRows)
     }));
+
+    const company = selectedCompany.trim();
+    if (company) {
+      const nextOverrides = rowsToOverrides(companyOverrideRows);
+      setCompanyConfigs((prev) => {
+        const next = { ...prev };
+
+        if (Object.keys(nextOverrides).length === 0) {
+          delete next[company];
+          return next;
+        }
+
+        next[company] = {
+          ...(next[company] ?? {}),
+          sectionSignOverrides: nextOverrides
+        };
+        return next;
+      });
+    }
 
     applyClassificationCatalog(classificationCatalog);
   }
@@ -1599,7 +1680,7 @@ export function ValidatorApp() {
                   <h2>검증할 데이터를 넣어 주세요</h2>
                   <p className="panel-desc">회사명과 허용 오차를 확인한 뒤 OCR 3행 텍스트를 그대로 붙여넣으면 됩니다.</p>
                 </div>
-                <span className="tag pass">공통 규칙 사용</span>
+                <span className={`tag ${companyKnown ? "pass" : ""}`}>{companyKnown ? "회사 규칙 적용 중" : "공통 규칙 사용"}</span>
               </div>
 
               <div className="field-grid">
@@ -1637,7 +1718,7 @@ export function ValidatorApp() {
                 <ul className="helper-list muted">
                   <li>행 1은 섹션명, 행 2는 계정명, 행 3부터 값입니다.</li>
                   <li>회사명은 저장 데이터 구분용으로만 사용하고, 검증은 공통 규칙으로 처리합니다.</li>
-                  <li>값 수정과 OCR 부호 수정, 검증 부호 수정은 검증 화면에서 바로 반영됩니다.</li>
+                  <li>검증 부호는 이번 검증만 적용하거나, 공통 규칙 또는 회사별 규칙으로 바로 저장할 수 있습니다.</li>
                 </ul>
               </div>
             </>
@@ -1843,7 +1924,7 @@ export function ValidatorApp() {
 
                               {result.detail.length > 0 && (
                                 <div className="rule-helper muted">
-                                  `OCR 수정값`과 `OCR 부호`는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증 해석에만 적용됩니다.
+                                  `OCR 수정값`과 `OCR 부호`는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증에만 적용하거나 공통/회사 규칙으로 저장할 수 있습니다.
                                 </div>
                               )}
 
@@ -1873,7 +1954,7 @@ export function ValidatorApp() {
                               {!result.passed && actions.length > 0 && (
                                 <div className="diagnosis-card">
                                   <strong>원인 추정과 처리 방향</strong>
-                                  <p className="muted diagnosis-note">먼저 `OCR 수정값`과 `OCR 부호`를 확인하고, 숫자가 맞는데도 차이가 남을 때만 `검증 부호`를 조정해 주세요.</p>
+                                  <p className="muted diagnosis-note">먼저 `OCR 수정값`과 `OCR 부호`를 확인하고, 숫자가 맞는데도 차이가 남을 때만 `검증 부호`를 조정해 주세요. 반복되면 공통 또는 회사별 규칙으로 저장하면 됩니다.</p>
                                   <div className="list-editor" style={{ marginTop: 12 }}>
                                     {actions.map((action, index) => (
                                       <div key={`${action.text}-${index}`} className="notice">
@@ -1888,7 +1969,13 @@ export function ValidatorApp() {
                                         {action.fix ? (
                                           <div className="inline-actions" style={{ marginTop: 12 }}>
                                             <button className="secondary-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              이번 검증 부호 적용: {action.label}
+                                              이번 검증만 적용: {action.label}
+                                            </button>
+                                            <button className="ghost-button" onClick={() => saveGlobalFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
+                                              검증 규칙에 적용: {action.label}
+                                            </button>
+                                            <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
+                                              {selectedCompany.trim() ? `회사별 규칙 적용: ${action.label}` : "회사명 입력 필요"}
                                             </button>
                                           </div>
                                         ) : null}
@@ -2169,6 +2256,26 @@ export function ValidatorApp() {
                       </div>
                     ))}
                     <button className="ghost-button" onClick={() => setGlobalOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }])}>전역 규칙 추가</button>
+                  </div>
+                </section>
+
+                <section className="config-card">
+                  <h3>회사별 섹션별 부호 재정의</h3>
+                  <p className="muted" style={{ marginTop: 0 }}>{selectedCompany.trim() ? `현재 회사: ${selectedCompany.trim()}` : "검증 탭에서 회사명을 입력하면 회사별 규칙을 편집할 수 있습니다."}</p>
+                  <div className="list-editor">
+                    {companyOverrideRows.map((row, index) => (
+                      <div className="override-row" key={`company-override-${selectedCompany || "empty"}-${index}`}>
+                        <input className="input" value={row.section} placeholder="섹션명" disabled={!selectedCompany.trim()} onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item))} />
+                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" disabled={!selectedCompany.trim()} onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item))} />
+                        <select className="select" value={String(row.sign)} disabled={!selectedCompany.trim()} onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item))}>
+                          <option value="0">가산(+)</option>
+                          <option value="1">차감(−)</option>
+                          <option value="2">제외</option>
+                        </select>
+                        <button className="danger-button" disabled={!selectedCompany.trim()} onClick={() => setCompanyOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                      </div>
+                    ))}
+                    <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => setCompanyOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }])}>회사 규칙 추가</button>
                   </div>
                 </section>
 
