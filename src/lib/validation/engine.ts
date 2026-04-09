@@ -57,6 +57,7 @@ export type ValidationRun = {
   parsed: ParsedPaste;
   detectedCompany: string | null;
   previewRow: Array<string | number | null>;
+  editableNameRow: string[];
   editableRow: Array<string | number | null>;
   allResults: ValidationResult[];
   resultsByDate: Record<string, ValidationResult[]>;
@@ -71,6 +72,16 @@ export type ValidationRun = {
 
 export function pasteEditKey(rowIndex: number, colIndex: number) {
   return `${rowIndex}:${colIndex}`;
+}
+
+export function resolveEditedNameRow(
+  nameRow: string[],
+  nameEdits: Record<string, string>
+) {
+  return nameRow.map((name, index) => {
+    const edited = nameEdits[pasteEditKey(0, index)];
+    return edited !== undefined ? edited : name;
+  });
 }
 
 export type PersistedState = {
@@ -771,8 +782,10 @@ export function buildCopyText(
   catRow: string[],
   nameRow: string[],
   dataRows: Array<Array<string | number | null>>,
-  pasteEdits: Record<string, number>
+  pasteEdits: Record<string, number>,
+  nameEdits: Record<string, string> = {}
 ) {
+  const effectiveNameRow = resolveEditedNameRow(nameRow, nameEdits);
   const valueLines = dataRows.map((rawRow, rowIndex) => nameRow.map((_, colIndex) => {
     const edited = pasteEdits[pasteEditKey(rowIndex, colIndex)];
     if (edited !== undefined) {
@@ -782,7 +795,7 @@ export function buildCopyText(
     return raw === null || raw === undefined ? "" : String(raw);
   }).join("\t"));
 
-  return [catRow.join("\t"), nameRow.join("\t"), ...valueLines].join("\n");
+  return [catRow.join("\t"), effectiveNameRow.join("\t"), ...valueLines].join("\n");
 }
 
 export function runValidation(args: {
@@ -792,11 +805,13 @@ export function runValidation(args: {
   logicConfig: LogicConfig;
   companyConfigs: CompanyConfigs;
   pasteEdits: Record<string, number>;
+  nameEdits: Record<string, string>;
   sessionSignFixes: SessionSignFixes;
 }): ValidationRun {
   const parsed = parsePastedText(args.pastedText);
   const detectedCompany = detectCompanyFromPaste(args.pastedText);
   const rawFirst = parsed.dataRows[0] ?? [];
+  const editableNameRow = resolveEditedNameRow(parsed.nameRow, args.nameEdits);
   const editableRow = rawFirst.map((value, index) => {
     const edited = args.pasteEdits[pasteEditKey(0, index)];
     return edited !== undefined ? edited : value;
@@ -808,6 +823,7 @@ export function runValidation(args: {
       parsed,
       detectedCompany,
       previewRow: rawFirst,
+      editableNameRow,
       editableRow,
       allResults: [],
       resultsByDate: {},
@@ -827,7 +843,7 @@ export function runValidation(args: {
     const label = dateIdx >= 0 && effectiveRow[dateIdx] ? String(effectiveRow[dateIdx]) : `데이터${rowIndex + 1}`;
     const results = validatePasteSections(
       parsed.catRow,
-      parsed.nameRow,
+      editableNameRow,
       effectiveRow,
       rowIndex,
       args.tolerance,
@@ -851,6 +867,7 @@ export function runValidation(args: {
     parsed,
     detectedCompany,
     previewRow: rawFirst,
+    editableNameRow,
     editableRow,
     allResults,
     resultsByDate,
@@ -860,7 +877,7 @@ export function runValidation(args: {
       failed,
       rate: allResults.length ? (passed / allResults.length) * 100 : 0
     },
-    copyText: buildCopyText(parsed.catRow, parsed.nameRow, parsed.dataRows, args.pasteEdits)
+    copyText: buildCopyText(parsed.catRow, parsed.nameRow, parsed.dataRows, args.pasteEdits, args.nameEdits)
   };
 }
 

@@ -256,6 +256,10 @@ function normalizeAccountDictionaryKey(value: string) {
   return value.trim().replace(/\s+/g, "").toLowerCase();
 }
 
+function isLockedPreviewNameCell(value: string) {
+  return ["회사명", "회사", "법인명", "날짜", "date", "Date"].includes(value.trim());
+}
+
 function resolveAccountDbSection(sectionKey: string) {
   const normalizedSectionKey = normalizeAccountDictionaryKey(sectionKey);
 
@@ -621,6 +625,8 @@ function parseSavedDatasets(raw: string | null): SavedQuarterSnapshot[] {
       ...item,
         source: {
           ...item.source,
+          pasteEdits: { ...((item.source as { pasteEdits?: Record<string, number> }).pasteEdits ?? {}) },
+          nameEdits: { ...((item.source as { nameEdits?: Record<string, string> }).nameEdits ?? {}) },
           logicConfig: cloneLogicConfig((item.source as { logicConfig?: LogicConfig }).logicConfig ?? DEFAULT_LOGIC_CONFIG),
           companyConfigs: cloneCompanyConfigs((item.source as { companyConfigs?: CompanyConfigs }).companyConfigs ?? DEFAULT_COMPANY_CONFIGS),
           classificationGroups: cloneClassificationGroups(sanitizeClassificationGroups((item.source as { classificationGroups?: ClassificationGroups }).classificationGroups ?? DEFAULT_CLASSIFICATION_GROUPS)),
@@ -825,6 +831,7 @@ export function ValidatorApp() {
   const [classificationGroups, setClassificationGroups] = useState<ClassificationGroups>(cloneClassificationGroups(DEFAULT_CLASSIFICATION_GROUPS));
   const [classificationCatalog, setClassificationCatalog] = useState<ClassificationCatalogGroup[]>(cloneClassificationCatalog(DEFAULT_CLASSIFICATION_CATALOG));
   const [pasteEdits, setPasteEdits] = useState<Record<string, number>>({});
+  const [nameEdits, setNameEdits] = useState<Record<string, string>>({});
   const [sessionSignFixes, setSessionSignFixes] = useState<SessionSignFixes>({});
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
@@ -1032,13 +1039,14 @@ export function ValidatorApp() {
         logicConfig,
         companyConfigs,
         pasteEdits,
+        nameEdits,
         sessionSignFixes
       }).detectedCompany;
 
     if (autoCompany && autoCompany !== selectedCompany.trim()) {
       setSelectedCompany(autoCompany);
     }
-  }, [pastedText, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes, selectedCompany]);
+  }, [pastedText, tolerance, logicConfig, companyConfigs, pasteEdits, nameEdits, sessionSignFixes, selectedCompany]);
 
   const validation = useMemo(
     () =>
@@ -1049,9 +1057,10 @@ export function ValidatorApp() {
         logicConfig,
         companyConfigs,
         pasteEdits,
+        nameEdits,
         sessionSignFixes
       }),
-    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, sessionSignFixes]
+    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, nameEdits, sessionSignFixes]
   );
   const accountDictionaryEntries = useMemo(() => extractAccountDictionaryEntries(savedDatasets), [savedDatasets]);
   const managedClassificationLookup = useMemo(
@@ -1072,11 +1081,12 @@ export function ValidatorApp() {
         companyConfigs,
         classificationGroups,
         pasteEdits,
+        nameEdits,
         sessionSignFixes
       };
       return buildReportingModel(reportArgs);
     },
-    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, classificationGroups, pasteEdits, sessionSignFixes]
+    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, classificationGroups, pasteEdits, nameEdits, sessionSignFixes]
   );
   const accountDictionarySectionGroups = useMemo(
     () => {
@@ -1101,6 +1111,7 @@ export function ValidatorApp() {
   const companyKnown = Boolean(selectedCompany.trim() && companyConfigs[selectedCompany.trim()]);
   const sessionFixCount = countSessionFixes(sessionSignFixes);
   const editedValueCount = Object.keys(pasteEdits).length;
+  const editedNameCount = Object.keys(nameEdits).length;
   const canSaveCurrentDataset = Boolean(reporting.periods.length) && validation.stats.total > 0 && validation.stats.failed === 0;
   const previewGroups = useMemo(
     () => buildPreviewGroups(validation.parsed.catRow, validation.parsed.nameRow),
@@ -1170,6 +1181,7 @@ export function ValidatorApp() {
 
   function resetAdjustments() {
     setPasteEdits({});
+    setNameEdits({});
     setSessionSignFixes({});
   }
 
@@ -1185,6 +1197,7 @@ export function ValidatorApp() {
       companyConfigs,
       classificationGroups,
       pasteEdits,
+      nameEdits,
       sessionSignFixes
     };
     const snapshots = buildQuarterSnapshots(snapshotArgs);
@@ -1226,6 +1239,7 @@ export function ValidatorApp() {
     setTolerance(dataset.source.tolerance);
     setSelectedCompany(dataset.companyName);
     setPasteEdits({ ...dataset.source.pasteEdits });
+    setNameEdits({ ...(dataset.source.nameEdits ?? {}) });
     setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
@@ -1347,6 +1361,20 @@ export function ValidatorApp() {
         delete next[key];
       } else {
         next[key] = parsed;
+      }
+      return next;
+    });
+  }
+
+  function updateEditableName(colIndex: number, rawName: string, nextName: string) {
+    const normalized = nextName.trim();
+    setNameEdits((prev) => {
+      const next = { ...prev };
+      const key = pasteEditKey(0, colIndex);
+      if (!normalized || normalized === rawName.trim()) {
+        delete next[key];
+      } else {
+        next[key] = normalized;
       }
       return next;
     });
@@ -1526,7 +1554,8 @@ export function ValidatorApp() {
       validation.parsed.catRow,
       validation.parsed.nameRow,
       validation.parsed.dataRows,
-      pasteEdits
+      pasteEdits,
+      nameEdits
     );
     navigator.clipboard.writeText(text).catch(() => undefined);
   }
@@ -1762,6 +1791,7 @@ export function ValidatorApp() {
                   onChange={(event) => {
                     setPastedText(event.target.value);
                     setPasteEdits({});
+                    setNameEdits({});
                     setSessionSignFixes({});
                   }}
                   placeholder={"행1: 기타\t재무상태표\t유동자산\t...\n행2: 회사명\t날짜\t...\n행3: 에이슬립\t2024-12-31\t..."}
@@ -1818,6 +1848,7 @@ export function ValidatorApp() {
                       </div>
                       <div className="result-actions">
                         <span className="soft-badge">수정값 {editedValueCount}</span>
+                        <span className="soft-badge">계정명 수정 {editedNameCount}</span>
                         <span className="soft-badge">부호 변경 {sessionFixCount}</span>
                         <button className="button" disabled={!canSaveCurrentDataset} onClick={saveCurrentDataset}>저장하기</button>
                         <button className="tiny-button" onClick={focusFailedResultCards}>실패만 펼치기</button>
@@ -1859,7 +1890,17 @@ export function ValidatorApp() {
                             <th className="preview-row-label">계정명</th>
                             {validation.parsed.nameRow.map((name, index) => (
                               <td key={`${name}-${index}`} className={`preview-name-cell tone-${previewGroups.tones[index] ?? 0}`}>
-                                {name || `열${index}`}
+                                {isLockedPreviewNameCell(name) ? (
+                                  validation.editableNameRow[index] || `열${index}`
+                                ) : (
+                                  <input
+                                    className="mini-input"
+                                    type="text"
+                                    value={validation.editableNameRow[index] ?? ""}
+                                    onChange={(event) => updateEditableName(index, name, event.target.value)}
+                                    placeholder={`열${index}`}
+                                  />
+                                )}
                               </td>
                             ))}
                           </tr>

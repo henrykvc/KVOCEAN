@@ -1,5 +1,5 @@
 import { ACCOUNT_ALIASES, DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, MANAGED_CLASSIFICATION_KEY_SET, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
-import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, pasteEditKey, safeFloat, type SessionSignFixes } from "./engine";
+import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, pasteEditKey, resolveEditedNameRow, safeFloat, type SessionSignFixes } from "./engine";
 
 export type ReportPeriod = {
   key: string;
@@ -74,6 +74,7 @@ export type SavedQuarterSnapshot = {
     pastedText: string;
     tolerance: number;
     pasteEdits: Record<string, number>;
+    nameEdits: Record<string, string>;
     sessionSignFixes: SessionSignFixes;
     logicConfig: LogicConfig;
     companyConfigs: CompanyConfigs;
@@ -1625,6 +1626,7 @@ export function buildReportingModel(args: {
   companyConfigs: CompanyConfigs;
   classificationGroups: ClassificationGroups;
   pasteEdits: Record<string, number>;
+  nameEdits: Record<string, string>;
   sessionSignFixes: SessionSignFixes;
 }) {
   const parsed = parsePastedText(args.pastedText);
@@ -1643,7 +1645,8 @@ export function buildReportingModel(args: {
   const detectedCompany = detectCompanyFromPaste(args.pastedText);
   const companyName = args.selectedCompany?.trim() || detectedCompany || null;
   const periods = buildPeriods(parsed.nameRow, parsed.dataRows);
-  const metaRows = resolveRowMeta(parsed.catRow, parsed.nameRow, args.logicConfig, args.companyConfigs, args.classificationGroups, companyName, args.sessionSignFixes);
+  const effectiveNameRow = resolveEditedNameRow(parsed.nameRow, args.nameEdits);
+  const metaRows = resolveRowMeta(parsed.catRow, effectiveNameRow, args.logicConfig, args.companyConfigs, args.classificationGroups, companyName, args.sessionSignFixes);
   const rawStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, args.pasteEdits, false);
   const adjustedStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, args.pasteEdits, true);
   const context: MetricContext = {
@@ -1673,6 +1676,7 @@ export function buildQuarterSnapshots(args: {
   companyConfigs: CompanyConfigs;
   classificationGroups: ClassificationGroups;
   pasteEdits: Record<string, number>;
+  nameEdits: Record<string, string>;
   sessionSignFixes: SessionSignFixes;
 }) {
   const reporting = buildReportingModel(args);
@@ -1704,6 +1708,7 @@ export function buildQuarterSnapshots(args: {
       pastedText: args.pastedText,
       tolerance: args.tolerance,
       pasteEdits: { ...args.pasteEdits },
+      nameEdits: { ...args.nameEdits },
       sessionSignFixes: structuredClone(args.sessionSignFixes),
       logicConfig: structuredClone(args.logicConfig),
       companyConfigs: structuredClone(args.companyConfigs),
