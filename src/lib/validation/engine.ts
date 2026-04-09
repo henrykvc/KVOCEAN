@@ -355,6 +355,10 @@ function getAccountMatch(nameToValue: Record<string, { value: number | null; col
   return null;
 }
 
+function normalizeAccountName(name: string) {
+  return name.replace(/\s+/g, "").trim();
+}
+
 function shouldSuggestOcrSignCorrection(accountName: string) {
   return /누계|충당금|현할차/.test(accountName);
 }
@@ -405,12 +409,15 @@ export function validatePasteSections(
       continue;
     }
 
-    const parentAliases = new Set(ACCOUNT_ALIASES[parentName] ?? [parentName]);
     const used: DetailRow[] = [];
     let computed = 0;
 
     for (const child of childrenRaw) {
-      if (parentAliases.has(child.name)) {
+      const isParentAccount = parentMatch
+        ? child.col === parentMatch.col || normalizeAccountName(child.name) === normalizeAccountName(parentMatch.alias)
+        : normalizeAccountName(child.name) === normalizeAccountName(parentName);
+
+      if (isParentAccount) {
         continue;
       }
       if (parentName === "자본" && logicConfig.capitalMemoAccounts.includes(child.name)) {
