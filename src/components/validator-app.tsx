@@ -56,6 +56,16 @@ type OverrideRow = {
   sign: SignCode;
 };
 
+type CapitalRuleRow = {
+  account: string;
+  sign: 0 | 1;
+  parent: string;
+};
+
+type CapitalMemoRow = {
+  account: string;
+};
+
 type ComparisonColumn = {
   slotId: string;
   datasetId: string;
@@ -368,6 +378,18 @@ function overridesToRows(record: Record<string, Record<string, SignCode>>): Over
   );
 }
 
+function capitalRulesToRows(signs: Record<string, boolean>, parents: Record<string, string>): CapitalRuleRow[] {
+  return Object.entries(signs).map(([account, isPositive]) => ({
+    account,
+    sign: isPositive ? 0 : 1,
+    parent: parents[account] ?? ""
+  }));
+}
+
+function capitalMemoAccountsToRows(accounts: string[]): CapitalMemoRow[] {
+  return accounts.map((account) => ({ account }));
+}
+
 function rowsToMap(rows: MapRow[]) {
   return rows.reduce<Record<string, string>>((acc, row) => {
     if (row.section.trim() && row.parent.trim()) {
@@ -388,6 +410,35 @@ function rowsToOverrides(rows: OverrideRow[]) {
     acc[section][keyword] = row.sign;
     return acc;
   }, {});
+}
+
+function rowsToCapitalSigns(rows: CapitalRuleRow[]) {
+  return rows.reduce<Record<string, boolean>>((acc, row) => {
+    const account = row.account.trim();
+    if (!account) {
+      return acc;
+    }
+    acc[account] = row.sign === 0;
+    return acc;
+  }, {});
+}
+
+function rowsToCapitalParents(rows: CapitalRuleRow[]) {
+  return rows.reduce<Record<string, string>>((acc, row) => {
+    const account = row.account.trim();
+    const parent = row.parent.trim();
+    if (!account || !parent) {
+      return acc;
+    }
+    acc[account] = parent;
+    return acc;
+  }, {});
+}
+
+function rowsToCapitalMemoAccounts(rows: CapitalMemoRow[]) {
+  return rows
+    .map((row) => row.account.trim())
+    .filter(Boolean);
 }
 
 function upsertOverrideRow(rows: OverrideRow[], nextRow: OverrideRow) {
@@ -778,6 +829,8 @@ export function ValidatorApp() {
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
   const [pasteSectionRows, setPasteSectionRows] = useState<MapRow[]>(objectEntriesToRows(DEFAULT_LOGIC_CONFIG.pasteSectToParent));
+  const [capitalRuleRows, setCapitalRuleRows] = useState<CapitalRuleRow[]>(capitalRulesToRows(DEFAULT_LOGIC_CONFIG.capitalL1Signs, DEFAULT_LOGIC_CONFIG.capitalL1Parent));
+  const [capitalMemoRows, setCapitalMemoRows] = useState<CapitalMemoRow[]>(capitalMemoAccountsToRows(DEFAULT_LOGIC_CONFIG.capitalMemoAccounts));
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
@@ -864,6 +917,8 @@ export function ValidatorApp() {
       setClassificationCatalog(cloneClassificationCatalog(nextPersisted.classificationCatalog));
       setGlobalOverrideRows(overridesToRows(nextPersisted.logicConfig.sectionSignOverrides));
       setPasteSectionRows(objectEntriesToRows(nextPersisted.logicConfig.pasteSectToParent));
+      setCapitalRuleRows(capitalRulesToRows(nextPersisted.logicConfig.capitalL1Signs, nextPersisted.logicConfig.capitalL1Parent));
+      setCapitalMemoRows(capitalMemoAccountsToRows(nextPersisted.logicConfig.capitalMemoAccounts));
       const sortedDatasets = sortSavedDatasets(nextSaved);
       setSavedDatasets(sortedDatasets);
       setSelectedDatasetId(sortedDatasets[0]?.id ?? "");
@@ -1491,12 +1546,17 @@ export function ValidatorApp() {
     setClassificationCatalog(cloneClassificationCatalog(defaults.classificationCatalog));
     setGlobalOverrideRows(overridesToRows(defaults.logicConfig.sectionSignOverrides));
     setPasteSectionRows(objectEntriesToRows(defaults.logicConfig.pasteSectToParent));
+    setCapitalRuleRows(capitalRulesToRows(defaults.logicConfig.capitalL1Signs, defaults.logicConfig.capitalL1Parent));
+    setCapitalMemoRows(capitalMemoAccountsToRows(defaults.logicConfig.capitalMemoAccounts));
     setClassificationHistory([]);
   }
 
   function saveConfigEditors() {
     setLogicConfig((prev) => ({
       ...prev,
+      capitalL1Signs: rowsToCapitalSigns(capitalRuleRows),
+      capitalL1Parent: rowsToCapitalParents(capitalRuleRows),
+      capitalMemoAccounts: rowsToCapitalMemoAccounts(capitalMemoRows),
       pasteSectToParent: rowsToMap(pasteSectionRows),
       sectionSignOverrides: rowsToOverrides(globalOverrideRows)
     }));
@@ -2237,6 +2297,25 @@ export function ValidatorApp() {
                     <button className="ghost-button" onClick={() => setPasteSectionRows((prev) => [...prev, { section: "", parent: "" }])}>섹션 규칙 추가</button>
                   </div>
                 </section>
+
+                <section className="config-card">
+                  <h3>자본 구성항목 규칙</h3>
+                  <p className="muted" style={{ marginTop: 0 }}>자본 검증에서 어떤 계정을 포함하고, 가산/차감과 상위 항목 관계를 어떻게 볼지 설정합니다.</p>
+                  <div className="list-editor">
+                    {capitalRuleRows.map((row, index) => (
+                      <div className="override-row" key={`capital-rule-${index}`}>
+                        <input className="input" value={row.account} placeholder="계정명" onChange={(event) => setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, account: event.target.value } : item))} />
+                        <select className="select" value={String(row.sign)} onChange={(event) => setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as 0 | 1 } : item))}>
+                          <option value="0">가산(+)</option>
+                          <option value="1">차감(-)</option>
+                        </select>
+                        <input className="input" value={row.parent} placeholder="상위 항목이 있으면 제외" onChange={(event) => setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, parent: event.target.value } : item))} />
+                        <button className="danger-button" onClick={() => setCapitalRuleRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                      </div>
+                    ))}
+                    <button className="ghost-button" onClick={() => setCapitalRuleRows((prev) => [...prev, { account: "", sign: 0, parent: "" }])}>자본 규칙 추가</button>
+                  </div>
+                </section>
               </div>
 
               <div className="two-col">
@@ -2276,6 +2355,20 @@ export function ValidatorApp() {
                       </div>
                     ))}
                     <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => setCompanyOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }])}>회사 규칙 추가</button>
+                  </div>
+                </section>
+
+                <section className="config-card">
+                  <h3>자본 검증 제외 항목</h3>
+                  <p className="muted" style={{ marginTop: 0 }}>당기순이익 같은 메모성 항목은 자본 합계 검증에서 제외할 수 있습니다.</p>
+                  <div className="list-editor">
+                    {capitalMemoRows.map((row, index) => (
+                      <div className="map-row" key={`capital-memo-${index}`}>
+                        <input className="input" value={row.account} placeholder="제외할 계정명" onChange={(event) => setCapitalMemoRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, account: event.target.value } : item))} />
+                        <button className="danger-button" onClick={() => setCapitalMemoRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                      </div>
+                    ))}
+                    <button className="ghost-button" onClick={() => setCapitalMemoRows((prev) => [...prev, { account: "" }])}>제외 항목 추가</button>
                   </div>
                 </section>
 

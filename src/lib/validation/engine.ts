@@ -134,6 +134,33 @@ function mergeClassificationGroups(defaults: ClassificationGroups, persisted: Cl
   return normalizeClassificationGroups(merged);
 }
 
+function mergeLogicConfig(defaults: LogicConfig, persisted?: Partial<LogicConfig>): LogicConfig {
+  return {
+    ...defaults,
+    ...(persisted ?? {}),
+    plusOverrideKeywords: persisted?.plusOverrideKeywords ?? defaults.plusOverrideKeywords,
+    minusKeywords: persisted?.minusKeywords ?? defaults.minusKeywords,
+    plusCostKeywords: persisted?.plusCostKeywords ?? defaults.plusCostKeywords,
+    capitalMemoAccounts: persisted?.capitalMemoAccounts ?? defaults.capitalMemoAccounts,
+    capitalL1Signs: {
+      ...defaults.capitalL1Signs,
+      ...(persisted?.capitalL1Signs ?? {})
+    },
+    capitalL1Parent: {
+      ...defaults.capitalL1Parent,
+      ...(persisted?.capitalL1Parent ?? {})
+    },
+    pasteSectToParent: {
+      ...defaults.pasteSectToParent,
+      ...(persisted?.pasteSectToParent ?? {})
+    },
+    sectionSignOverrides: {
+      ...defaults.sectionSignOverrides,
+      ...(persisted?.sectionSignOverrides ?? {})
+    }
+  };
+}
+
 export function parsePersistedState(raw: string | null): PersistedState {
   const fallback = getDefaultPersistedState();
   if (!raw) {
@@ -153,7 +180,7 @@ export function parsePersistedState(raw: string | null): PersistedState {
       ? classificationCatalogToGroups(classificationCatalog)
       : legacyGroups;
     return {
-      logicConfig: { ...fallback.logicConfig, ...(parsed.logicConfig ?? {}) },
+      logicConfig: mergeLogicConfig(fallback.logicConfig, parsed.logicConfig),
       companyConfigs: { ...fallback.companyConfigs, ...(parsed.companyConfigs ?? {}) },
       classificationCatalog,
       classificationGroups
