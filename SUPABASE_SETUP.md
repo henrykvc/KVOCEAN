@@ -21,8 +21,9 @@
 ## 3. SQL 실행
 
 1. Supabase에서 `SQL Editor`를 엽니다.
-2. 저장소의 `supabase/001_auth_and_shared_data.sql` 내용을 그대로 실행합니다.
-3. 이 스크립트는 공용 설정, 데이터셋, 변경 이력 테이블과 기본 RLS 정책을 생성합니다.
+2. 저장소의 `supabase/001_auth_and_shared_data.sql` 내용을 먼저 실행합니다.
+3. 이어서 `supabase/002_access_control.sql`, `supabase/003_dataset_trash.sql`도 순서대로 실행합니다.
+4. 이 스크립트들은 공용 설정, 데이터셋, 변경 이력 테이블과 접근 제어, 휴지통용 소프트 삭제 컬럼을 생성합니다.
 
 ## 4. 환경변수 설정
 
@@ -64,7 +65,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
 
 ## 8. 아직 남아 있는 작업
 
-현재는 인증 연결까지 끝난 상태입니다. 실제 데이터는 아직 `localStorage`를 쓰고 있으므로 다음 단계에서 아래를 Supabase로 옮겨야 합니다.
+현재는 인증 연결까지 끝난 상태입니다. 앱 설정과 검증 데이터는 모두 Supabase에 저장하고, 인증도 Supabase를 그대로 사용합니다.
 
 - `savedDatasets`
 - `logicConfig`

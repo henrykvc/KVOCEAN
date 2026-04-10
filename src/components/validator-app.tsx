@@ -48,7 +48,7 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "validate" | "data" | "report" | "config" | "classify" | "formulas" | "account-db";
+type TabKey = "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db";
 
 type OverrideRow = {
   section: string;
@@ -65,6 +65,18 @@ type CapitalRuleRow = {
 type CapitalMemoRow = {
   account: string;
 };
+
+type DatasetApiResponse = {
+  datasets: SavedQuarterSnapshot[];
+  trashedDatasets: SavedQuarterSnapshot[];
+};
+
+function parseDatasetApiResponse(raw: DatasetApiResponse) {
+  return {
+    datasets: sortSavedDatasets(parseSavedDatasets(JSON.stringify(raw.datasets))),
+    trashedDatasets: sortSavedDatasets(parseSavedDatasets(JSON.stringify(raw.trashedDatasets)))
+  };
+}
 
 type ComparisonColumn = {
   slotId: string;
@@ -841,6 +853,7 @@ export function ValidatorApp() {
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
+  const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [comparisonSelections, setComparisonSelections] = useState<ComparisonSelection[]>(buildInitialComparisonSelections([]));
   const [sameCompanyMode, setSameCompanyMode] = useState(false);
@@ -850,7 +863,6 @@ export function ValidatorApp() {
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState<string | null>(null);
   const configSyncInitializedRef = useRef(false);
-  const datasetsSyncInitializedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -860,16 +872,27 @@ export function ValidatorApp() {
 
       let nextPersisted = getDefaultPersistedState();
       let nextSaved: SavedQuarterSnapshot[] = [];
+      let nextTrashed: SavedQuarterSnapshot[] = [];
 
       try {
-        const response = await fetch("/api/shared-state", { cache: "no-store" });
-        if (!response.ok) {
+        const [configResponse, datasetsResponse] = await Promise.all([
+          fetch("/api/shared-state", { cache: "no-store" }),
+          fetch("/api/datasets", { cache: "no-store" })
+        ]);
+
+        if (!configResponse.ok) {
           throw new Error("공용 데이터를 불러오지 못했습니다.");
         }
+        if (!datasetsResponse.ok) {
+          throw new Error("검증 저장 데이터를 불러오지 못했습니다.");
+        }
 
-        const remote = await response.json() as SharedStateResponse;
+        const remote = await configResponse.json() as SharedStateResponse;
+        const remoteDatasets = await datasetsResponse.json() as DatasetApiResponse;
         const remotePersisted = parsePersistedState(JSON.stringify(remote.config));
-        const remoteSaved = parseSavedDatasets(JSON.stringify(remote.datasets));
+        const parsedDatasetResponse = parseDatasetApiResponse(remoteDatasets);
+        const remoteSaved = parsedDatasetResponse.datasets;
+        nextTrashed = parsedDatasetResponse.trashedDatasets;
         const recoveredPersisted = recoverClassificationConfigFromDatasets(remoteSaved);
         const shouldRecoverRemoteClassification = !hasCustomConfig(remotePersisted) && hasCustomConfig(recoveredPersisted);
         const { nextConfig: autoAssignedRemotePersisted, changed: autoAssignedChanged } = applyManagedAssignmentsFromSavedDatasets(
@@ -892,8 +915,7 @@ export function ValidatorApp() {
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              config: mergedConfig,
-              datasets: remoteSaved
+              config: mergedConfig
             })
           });
 
@@ -928,6 +950,7 @@ export function ValidatorApp() {
       setCapitalMemoRows(capitalMemoAccountsToRows(nextPersisted.logicConfig.capitalMemoAccounts));
       const sortedDatasets = sortSavedDatasets(nextSaved);
       setSavedDatasets(sortedDatasets);
+      setTrashedDatasets(nextTrashed);
       setSelectedDatasetId(sortedDatasets[0]?.id ?? "");
       setComparisonSelections(buildInitialComparisonSelections(sortedDatasets));
       setSharedStateReady(true);
@@ -973,38 +996,6 @@ export function ValidatorApp() {
 
     return () => window.clearTimeout(timeout);
   }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
-
-  useEffect(() => {
-    if (!mounted || !sharedStateReady) {
-      return;
-    }
-
-    if (!datasetsSyncInitializedRef.current) {
-      datasetsSyncInitializedRef.current = true;
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      fetch("/api/shared-state", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ datasets: savedDatasets })
-      })
-        .then(async (response) => {
-          if (!response.ok) {
-            const payload = await response.json().catch(() => null) as { error?: string } | null;
-            throw new Error(payload?.error ?? "공용 데이터 저장에 실패했습니다. 다시 저장해 주세요.");
-          }
-
-          setSharedStateError(null);
-        })
-        .catch((error) => setSharedStateError(error instanceof Error ? error.message : "공용 데이터 저장에 실패했습니다. 다시 저장해 주세요."));
-    }, 300);
-
-    return () => window.clearTimeout(timeout);
-  }, [mounted, sharedStateReady, savedDatasets]);
 
   useEffect(() => {
     const company = selectedCompany.trim();
@@ -1185,7 +1176,7 @@ export function ValidatorApp() {
     setSessionSignFixes({});
   }
 
-  function saveCurrentDataset() {
+  async function saveCurrentDataset() {
     if (validation.parsed.error || !canSaveCurrentDataset) {
       return;
     }
@@ -1202,20 +1193,34 @@ export function ValidatorApp() {
     };
     const snapshots = buildQuarterSnapshots(snapshotArgs);
 
-    setSavedDatasets((prev) => {
-      const next = [...prev];
-      snapshots.forEach((snapshot) => {
-        const index = next.findIndex((item) => item.companyName === snapshot.companyName && item.quarterKey === snapshot.quarterKey);
-        if (index >= 0) {
-          next[index] = snapshot;
-        } else {
-          next.push(snapshot);
-        }
+    try {
+      const response = await fetch("/api/datasets", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          snapshots,
+          validatedText: validation.copyText
+        })
       });
-      return sortSavedDatasets(next);
-    });
-    setSelectedDatasetId(snapshots[0]?.id ?? "");
-    setActiveTab("data");
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error ?? "데이터 저장에 실패했습니다.");
+      }
+
+      const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
+      const nextSaved = payload.datasets;
+      setSavedDatasets(nextSaved);
+      setTrashedDatasets(payload.trashedDatasets);
+      setSelectedDatasetId(snapshots[0]?.id ?? "");
+      setComparisonSelections(buildInitialComparisonSelections(nextSaved));
+      setSharedStateError(null);
+      setActiveTab("data");
+    } catch (error) {
+      setSharedStateError(error instanceof Error ? error.message : "데이터 저장에 실패했습니다.");
+    }
   }
 
   function isRatioOnlySection(title: string) {
@@ -1245,27 +1250,101 @@ export function ValidatorApp() {
     setActiveTab("validate");
   }
 
-  function deleteDataset(datasetId: string) {
-    setSavedDatasets((prev) => {
-      const next = prev.filter((item) => item.id !== datasetId);
-      if (selectedDatasetId === datasetId) {
+  async function deleteDataset(dataset: SavedQuarterSnapshot) {
+    try {
+      const response = await fetch("/api/datasets", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          id: dataset.id,
+          companyName: dataset.companyName,
+          quarterKey: dataset.quarterKey
+        })
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error ?? "데이터 삭제에 실패했습니다.");
+      }
+
+      const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
+      const next = payload.datasets;
+      setSavedDatasets(next);
+      setTrashedDatasets(payload.trashedDatasets);
+      if (selectedDatasetId === dataset.id) {
         setSelectedDatasetId(next[0]?.id ?? "");
       }
-      return next;
-    });
-    setComparisonSelections((prev) => prev.map((selection) => {
-      if (selection.datasetId !== datasetId) {
-        return selection;
+      setComparisonSelections(buildInitialComparisonSelections(next));
+      setSharedStateError(null);
+    } catch (error) {
+      setSharedStateError(error instanceof Error ? error.message : "데이터 삭제에 실패했습니다.");
+    }
+  }
+
+  async function restoreDataset(dataset: SavedQuarterSnapshot) {
+    try {
+      const response = await fetch("/api/datasets/restore", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          id: dataset.id,
+          companyName: dataset.companyName,
+          quarterKey: dataset.quarterKey
+        })
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error ?? "데이터 복구에 실패했습니다.");
       }
-      const fallback = savedDatasets.find((item) => item.id !== datasetId && item.companyName === selection.companyName)
-        ?? savedDatasets.find((item) => item.id !== datasetId)
-        ?? null;
-      return {
-        ...selection,
-        companyName: fallback?.companyName ?? "",
-        datasetId: fallback?.id ?? ""
-      };
-    }));
+
+      const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
+      setSavedDatasets(payload.datasets);
+      setTrashedDatasets(payload.trashedDatasets);
+      setSelectedDatasetId(dataset.id);
+      setComparisonSelections(buildInitialComparisonSelections(payload.datasets));
+      setSharedStateError(null);
+    } catch (error) {
+      setSharedStateError(error instanceof Error ? error.message : "데이터 복구에 실패했습니다.");
+    }
+  }
+
+  async function purgeDataset(dataset: SavedQuarterSnapshot) {
+    const confirmed = window.confirm(`${dataset.companyName} ${dataset.quarterLabel} 데이터를 완전삭제할까요? 이 작업은 되돌릴 수 없습니다.`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/datasets/purge", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          id: dataset.id,
+          companyName: dataset.companyName,
+          quarterKey: dataset.quarterKey
+        })
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error ?? "데이터 완전삭제에 실패했습니다.");
+      }
+
+      const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
+      setSavedDatasets(payload.datasets);
+      setTrashedDatasets(payload.trashedDatasets);
+      setComparisonSelections(buildInitialComparisonSelections(payload.datasets));
+      setSharedStateError(null);
+    } catch (error) {
+      setSharedStateError(error instanceof Error ? error.message : "데이터 완전삭제에 실패했습니다.");
+    }
   }
 
   function updateComparisonCompany(slotId: string, companyName: string) {
@@ -1754,6 +1833,7 @@ export function ValidatorApp() {
               <button className={`side-nav-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>1. OCR검증</button>
               <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>1-1. 검증 규칙관리</button>
               <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
+              <button className={`side-nav-item ${activeTab === "trash" ? "active" : ""}`} onClick={() => setActiveTab("trash")}>2-1. 휴지통</button>
               <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
               <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>3-1. 분류</button>
               <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>3-2. 수식</button>
@@ -1814,10 +1894,12 @@ export function ValidatorApp() {
             </>
           ) : (
             <div className="notice input-helper">
-                      <strong>{activeTab === "data" ? "데이터 안내" : activeTab === "report" ? "결과물 안내" : "보조 기능"}</strong>
+                      <strong>{activeTab === "data" ? "데이터 안내" : activeTab === "trash" ? "휴지통 안내" : activeTab === "report" ? "결과물 안내" : "보조 기능"}</strong>
                       <p className="muted" style={{ marginTop: 8 }}>
                         {activeTab === "data"
                           ? `저장된 검증 데이터 ${savedDatasets.length}건이 누적되어 있습니다. 필요한 항목을 선택해 다시 불러오거나 결과물로 보낼 수 있습니다.`
+                          : activeTab === "trash"
+                            ? `삭제된 데이터 ${trashedDatasets.length}건이 휴지통에 있습니다. 필요하면 복구하고, 정말 필요 없을 때만 완전삭제하세요.`
                           : activeTab === "report"
                             ? `${selectedDataset ? `${selectedDataset.companyName} ${selectedDataset.quarterLabel}` : "저장된 데이터"} 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
                             : activeTab === "classify"
@@ -2156,7 +2238,7 @@ export function ValidatorApp() {
                                 <span className="soft-badge">선택 분기 {activeDataset.quarterLabel}</span>
                                 <button className="secondary-button" onClick={() => { setSelectedDatasetId(activeDataset.id); setActiveTab("report"); }}>결과물 보기</button>
                                 <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeDataset)}>검증기로 불러오기</button>
-                                <button className="danger-button" onClick={() => deleteDataset(activeDataset.id)}>삭제</button>
+                                <button className="danger-button" onClick={() => deleteDataset(activeDataset)}>삭제</button>
                               </div>
                             )}
                           </article>
@@ -2165,6 +2247,51 @@ export function ValidatorApp() {
                     </div>
                   </section>
                 </>
+              )}
+            </>
+          )}
+
+          {activeTab === "trash" && (
+            <>
+              <section className="overview-card report-hero-card">
+                <div className="section-title">
+                  <div>
+                    <span className="section-kicker">2-1. 휴지통</span>
+                    <h3>삭제된 검증 데이터</h3>
+                    <p className="result-meta">삭제된 데이터는 여기서 복구하거나, 완전히 지울 수 있습니다.</p>
+                  </div>
+                  <span className="soft-badge">총 {trashedDatasets.length}건</span>
+                </div>
+              </section>
+
+              {!trashedDatasets.length && <div className="notice">휴지통이 비어 있습니다.</div>}
+
+              {!!trashedDatasets.length && (
+                <section className="config-card">
+                  <div className="section-title">
+                    <div>
+                      <h3>휴지통 목록</h3>
+                      <p className="result-meta">복구하면 데이터 탭으로 돌아가고, 완전삭제하면 되돌릴 수 없습니다.</p>
+                    </div>
+                  </div>
+                  <div className="data-list grouped-data-list">
+                    {trashedDatasets.map((dataset) => (
+                      <article className="data-company-card" key={`trash-${dataset.id}`}>
+                        <div className="data-company-row">
+                          <strong>{dataset.companyName}</strong>
+                          <div className="data-quarter-chip-list">
+                            <span className="data-quarter-chip active">{dataset.quarterLabel}</span>
+                          </div>
+                        </div>
+                        <div className="data-row-actions">
+                          <span className="soft-badge">삭제됨</span>
+                          <button className="secondary-button" onClick={() => restoreDataset(dataset)}>복구하기</button>
+                          <button className="danger-button" onClick={() => purgeDataset(dataset)}>완전삭제</button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
               )}
             </>
           )}
