@@ -2055,11 +2055,15 @@ export function ValidatorApp() {
                               {!result.passed && actions.length > 0 && (
                                 <div className="diagnosis-card">
                                   <strong>원인 추정과 처리 방향</strong>
-                                  <p className="muted diagnosis-note">먼저 `OCR 수정값`과 `OCR 부호`를 확인하고, 숫자가 맞는데도 차이가 남을 때만 `검증 부호`를 조정해 주세요. 반복되면 공통 또는 회사별 규칙으로 저장하면 됩니다.</p>
+                                  <p className="muted diagnosis-note">차이를 0원으로 만드는 후보를 먼저 보여줍니다. 특히 `음수 OCR + 차감`은 이중차감을 먼저 의심해 주세요.</p>
                                   <div className="list-editor" style={{ marginTop: 12 }}>
                                     {actions.map((action, index) => (
                                       <div key={`${action.text}-${index}`} className="notice">
-                                        <div className="pre diagnosis-copy">{renderDiagnosisText(action.text)}</div>
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                          <strong>{index === 0 ? "우선 확인" : "다음 후보"}</strong>
+                                          {action.badge ? <span className="soft-badge">{action.badge}</span> : null}
+                                        </div>
+                                        <div className="pre diagnosis-copy">{renderDiagnosisText(action.shortText ?? action.text)}</div>
                                         {action.edit ? (
                                           <div className="inline-actions" style={{ marginTop: 12 }}>
                                             <button className="secondary-button" onClick={() => applySuggestedEdit(action.edit!.row, action.edit!.col, action.edit!.value)}>

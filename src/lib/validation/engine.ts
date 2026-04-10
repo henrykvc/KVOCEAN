@@ -36,6 +36,11 @@ export type ValidationResult = {
 
 export type DiagnosisAction = {
   text: string;
+  shortText?: string;
+  priority?: number;
+  nextDiff?: number;
+  nextAbsDiff?: number;
+  badge?: string;
   label?: string;
   editLabel?: string;
   edit?: {
@@ -371,7 +376,21 @@ function normalizeAccountName(name: string) {
 }
 
 function shouldSuggestOcrSignCorrection(accountName: string) {
-  return /누계|충당금|현할차/.test(accountName);
+  return /누계|충당금|현할차|대손|조정|차감|평가|상각누계|감액/.test(accountName);
+}
+
+function buildDiagnosisPriority(nextAbsDiff: number, options?: { doubleNegative?: boolean; ocrEdit?: boolean }) {
+  let priority = nextAbsDiff <= 1 ? 1000 : Math.max(0, 400 - nextAbsDiff);
+
+  if (options?.doubleNegative) {
+    priority += 300;
+  }
+
+  if (options?.ocrEdit) {
+    priority += 120;
+  }
+
+  return priority;
 }
 
 export function validatePasteSections(
@@ -671,8 +690,14 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
       const bestOcr = ocrCandidates[0];
       if (bestOcr && (bestOcr.nextAbsDiff <= 1 || (absDiff > 0 && (absDiff - bestOcr.nextAbsDiff) / absDiff >= 0.5))) {
         const nextDirection = bestOcr.candidate < 0 ? "음수(-)" : "양수(+)";
+        const isDoubleNegative = currentSign === 1 && item.원본값 < 0;
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): OCR 숫자 부호를 **${nextDirection}**로 바로잡으면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(bestOcr.nextDiff)}원으로 줄어듭니다. ${buildOcrReason(item, bestOcr.candidate)}`,
+          shortText: `${item.계정명} OCR 부호를 ${nextDirection}로 수정 → 차이 ${formatNumber(bestOcr.nextDiff)}원`,
+          badge: bestOcr.nextAbsDiff <= 1 ? "차이 0원" : isDoubleNegative ? "이중차감 의심" : "OCR 부호 우선",
+          priority: buildDiagnosisPriority(bestOcr.nextAbsDiff, { doubleNegative: isDoubleNegative, ocrEdit: true }),
+          nextDiff: bestOcr.nextDiff,
+          nextAbsDiff: bestOcr.nextAbsDiff,
           editLabel: `OCR 값을 ${nextDirection}로 수정: ${item.계정명}`,
           edit: {
             row: item._row,
@@ -692,6 +717,11 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
       if (plusAbsDiff <= 1 || (absDiff > 0 && (absDiff - plusAbsDiff) / absDiff >= 0.5)) {
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 차감 계정인데 값이 이미 **음수(-)**로 들어왔습니다. OCR 수정값 부호를 먼저 확인하고, 숫자가 맞다면 검증 부호를 **가산(+)**으로 바꿔 보세요. 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(plusDiff)}원으로 줄어듭니다.`,
+          shortText: `${item.계정명} 검증 부호를 가산(+)으로 변경 → 차이 ${formatNumber(plusDiff)}원`,
+          badge: plusAbsDiff <= 1 ? "차이 0원" : "이중차감 의심",
+          priority: buildDiagnosisPriority(plusAbsDiff, { doubleNegative: true }),
+          nextDiff: plusDiff,
+          nextAbsDiff: plusAbsDiff,
           label: `가산(+)으로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 0 }
         });
@@ -718,6 +748,11 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     if (best && (best.nextAbsDiff <= 1 || (absDiff > 0 && (absDiff - best.nextAbsDiff) / absDiff >= 0.85))) {
       actions.push({
         text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **${signName(currentSign)}** → **${signName(best.candidate)}**로 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(best.nextDiff)}원으로 줄어듭니다. ${buildReason(item, currentSign, best.candidate)}`,
+        shortText: `${item.계정명} 검증 부호를 ${signName(best.candidate)}로 변경 → 차이 ${formatNumber(best.nextDiff)}원`,
+        badge: best.nextAbsDiff <= 1 ? "차이 0원" : undefined,
+        priority: buildDiagnosisPriority(best.nextAbsDiff),
+        nextDiff: best.nextDiff,
+        nextAbsDiff: best.nextAbsDiff,
         label: `${signName(best.candidate)}으로 수정: ${item.계정명}`,
         fix: { sect, acct: item.계정명, newSign: best.candidate }
       });
@@ -728,24 +763,44 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
       if (item.부호 === "−" && diff > 0) {
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **차감** 중 → **제외**로 바꾸면 차이 해소 가능 (OCR이 이미 NET값 제공)`,
+          shortText: `${item.계정명} 검증 부호를 제외로 변경 → 차이 0원 가능`,
+          badge: "차이 0원",
+          priority: buildDiagnosisPriority(0),
+          nextDiff: 0,
+          nextAbsDiff: 0,
           label: `제외로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 2 }
         });
       } else if (item.부호 === "+" && diff < 0) {
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **가산** 중 → **제외**로 바꾸면 차이 해소 가능 (이중 집계 의심)`,
+          shortText: `${item.계정명} 검증 부호를 제외로 변경 → 차이 0원 가능`,
+          badge: "차이 0원",
+          priority: buildDiagnosisPriority(0),
+          nextDiff: 0,
+          nextAbsDiff: 0,
           label: `제외로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 2 }
         });
       } else if (item.부호 === "제외" && diff > 0) {
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **제외** 중 → **가산(+)**하면 차이 해소 가능`,
+          shortText: `${item.계정명} 검증 부호를 가산(+)으로 변경 → 차이 0원 가능`,
+          badge: "차이 0원",
+          priority: buildDiagnosisPriority(0),
+          nextDiff: 0,
+          nextAbsDiff: 0,
           label: `가산(+)으로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 0 }
         });
       } else if (item.부호 === "제외" && diff < 0) {
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **제외** 중 → **차감(−)**하면 차이 해소 가능`,
+          shortText: `${item.계정명} 검증 부호를 차감(-)으로 변경 → 차이 0원 가능`,
+          badge: "차이 0원",
+          priority: buildDiagnosisPriority(0),
+          nextDiff: 0,
+          nextAbsDiff: 0,
           label: `차감(−)으로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 1 }
         });
@@ -756,12 +811,22 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
       if (item.부호 === "−" && diff > 0) {
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **차감** → **가산(+)**으로 바꾸면 차이 해소 가능 (부호 완전 반전)`,
+          shortText: `${item.계정명} 검증 부호를 가산(+)으로 변경 → 차이 0원 가능`,
+          badge: "차이 0원",
+          priority: buildDiagnosisPriority(0, { doubleNegative: item.원본값 < 0 }),
+          nextDiff: 0,
+          nextAbsDiff: 0,
           label: `가산(+)으로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 0 }
         });
       } else if (item.부호 === "+" && diff < 0) {
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **가산** → **차감(−)**으로 바꾸면 차이 해소 가능 (부호 완전 반전)`,
+          shortText: `${item.계정명} 검증 부호를 차감(-)으로 변경 → 차이 0원 가능`,
+          badge: "차이 0원",
+          priority: buildDiagnosisPriority(0),
+          nextDiff: 0,
+          nextAbsDiff: 0,
           label: `차감(−)으로 수정: ${item.계정명}`,
           fix: { sect, acct: item.계정명, newSign: 1 }
         });
@@ -769,13 +834,22 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     }
   }
 
+  actions.sort((a, b) => {
+    const priorityDiff = (b.priority ?? 0) - (a.priority ?? 0);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+
+    return (a.nextAbsDiff ?? Number.POSITIVE_INFINITY) - (b.nextAbsDiff ?? Number.POSITIVE_INFINITY);
+  });
+
   if (!actions.length) {
     actions.push({
       text: `⚠️ 차이 ${diff > 0 ? "+" : ""}${formatNumber(diff)}원 — 단일 계정으로 설명되지 않습니다. 먼저 큰 금액 계정의 OCR 수정값 부호를 확인하고, 그다음 검증 부호를 조정해 주세요.`
     });
   }
 
-  return actions;
+  return actions.slice(0, 2);
 }
 
 export function buildCopyText(
