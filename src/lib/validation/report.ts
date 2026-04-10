@@ -1071,23 +1071,23 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     ratio: (period: ReportPeriod, current: MetricContext) => {
       const value = costStructureValue(period, current, label);
       const expenseTotal = (getPreferredAdjustedMetric(current, period.key, ["매출원가"]) ?? 0)
-        + (getPreferredAdjustedMetric(current, period.key, ["판매비와관리비", "영업비용"]) ?? 0)
+        + (getPreferredAdjustedMetric(current, period.key, ["판매비와관리비"]) ?? 0)
         + (getPreferredAdjustedMetric(current, period.key, ["영업외비용"]) ?? 0);
       return safeDivide(value, expenseTotal, 100);
     },
     ratioDetail: (period: ReportPeriod, current: MetricContext, result: number | null) => {
       const value = costStructureValue(period, current, label);
       const costOfSales = getPreferredAdjustedMetric(current, period.key, ["매출원가"]);
-      const operatingExpense = getPreferredAdjustedMetric(current, period.key, ["판매비와관리비", "영업비용"]);
+      const operatingExpense = getPreferredAdjustedMetric(current, period.key, ["판매비와관리비"]);
       const nonOperatingExpense = getPreferredAdjustedMetric(current, period.key, ["영업외비용"]);
       const expenseTotal = (costOfSales ?? 0) + (operatingExpense ?? 0) + (nonOperatingExpense ?? 0);
       return createCalculationDetail(
-        `${label} / (매출원가 + 영업비용 + 영업외비용) * 100`,
+        `${label} / (매출원가 + 판매비와관리비 + 영업외비용) * 100`,
         result,
         [
           { label, value },
           { label: "매출원가", value: costOfSales },
-          { label: "영업비용", value: operatingExpense },
+          { label: "판매비와관리비", value: operatingExpense },
           { label: "영업외비용", value: nonOperatingExpense },
           { label: "총비용", value: expenseTotal }
         ],
