@@ -103,6 +103,11 @@ type SectionAccountDbEntry = {
   sampleCompany: string;
   sampleQuarter: string;
   occurrences: number;
+  sources: Array<{
+    datasetId: string;
+    companyName: string;
+    quarterLabel: string;
+  }>;
 };
 
 const ACCOUNT_DB_SECTIONS = {
@@ -357,9 +362,17 @@ function extractAccountDictionaryEntries(savedDatasets: SavedQuarterSnapshot[]) 
       const existing = entries.get(entryKey);
 
       if (existing) {
+        const nextSources = existing.sources.some((source) => source.datasetId === dataset.id)
+          ? existing.sources
+          : [...existing.sources, {
+              datasetId: dataset.id,
+              companyName: dataset.companyName,
+              quarterLabel: dataset.quarterLabel
+            }];
         entries.set(entryKey, {
           ...existing,
-          occurrences: existing.occurrences + 1
+          occurrences: existing.occurrences + 1,
+          sources: nextSources
         });
         return;
       }
@@ -371,7 +384,12 @@ function extractAccountDictionaryEntries(savedDatasets: SavedQuarterSnapshot[]) 
         accountName: row.accountName,
         sampleCompany: dataset.companyName,
         sampleQuarter: dataset.quarterLabel,
-        occurrences: 1
+        occurrences: 1,
+        sources: [{
+          datasetId: dataset.id,
+          companyName: dataset.companyName,
+          quarterLabel: dataset.quarterLabel
+        }]
       });
     });
   });
@@ -854,6 +872,7 @@ export function ValidatorApp() {
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>([]);
+  const [activeAccountDbSourceKey, setActiveAccountDbSourceKey] = useState<string | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [comparisonSelections, setComparisonSelections] = useState<ComparisonSelection[]>(buildInitialComparisonSelections([]));
   const [sameCompanyMode, setSameCompanyMode] = useState(false);
@@ -1004,6 +1023,28 @@ export function ValidatorApp() {
     const rows = overridesToRows(companyConfigs[company]?.sectionSignOverrides ?? {});
     setCompanyOverrideRows(rows);
   }, [selectedCompany, companyConfigs]);
+
+  useEffect(() => {
+    if (!activeAccountDbSourceKey) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      if (target.closest("[data-account-db-source-wrap='true']")) {
+        return;
+      }
+
+      setActiveAccountDbSourceKey(null);
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [activeAccountDbSourceKey]);
 
   useEffect(() => {
     setComparisonSelections((prev) => {
@@ -1253,6 +1294,17 @@ export function ValidatorApp() {
     setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
+  }
+
+  function openAccountDbSourceDataset(datasetId: string) {
+    const dataset = savedDatasets.find((item) => item.id === datasetId);
+    if (!dataset) {
+      return;
+    }
+
+    loadDatasetIntoValidator(dataset);
+    setTopView("menu");
+    setActiveAccountDbSourceKey(null);
   }
 
   async function deleteDataset(dataset: SavedQuarterSnapshot) {
@@ -2725,6 +2777,7 @@ export function ValidatorApp() {
                               <tr>
                                 <th>상위 항목</th>
                                 <th>하위 계정명</th>
+                                <th>출처</th>
                                 <th>현재 분류</th>
                                 <th>분류 지정</th>
                               </tr>
@@ -2732,11 +2785,43 @@ export function ValidatorApp() {
                             <tbody>
                               {entries.map((entry) => {
                                 const currentClassification = resolveManagedClassification(entry.accountName, managedClassificationLookup);
+                                const isSourceOpen = activeAccountDbSourceKey === entry.entryKey;
 
                                 return (
                                   <tr key={`account-db-entry-${entry.entryKey}`}>
                                     <td>{entry.sectionKey}</td>
                                     <td>{entry.accountName}</td>
+                                    <td>
+                                      <div className="account-db-source-wrap" data-account-db-source-wrap="true">
+                                        <button
+                                          className={`account-db-source-button ${isSourceOpen ? "active" : ""}`.trim()}
+                                          type="button"
+                                          onClick={() => setActiveAccountDbSourceKey((prev) => prev === entry.entryKey ? null : entry.entryKey)}
+                                          aria-label={`${entry.accountName} 출처 보기`}
+                                        >
+                                          💬
+                                        </button>
+                                        {isSourceOpen && (
+                                          <div className="account-db-source-popover">
+                                            <strong>출처 데이터</strong>
+                                            <p>{entry.accountName}이(가) 들어온 회사/분기입니다.</p>
+                                            <div className="account-db-source-list">
+                                              {entry.sources.map((source) => (
+                                                <button
+                                                  key={`${entry.entryKey}-${source.datasetId}`}
+                                                  className="account-db-source-link"
+                                                  type="button"
+                                                  onClick={() => openAccountDbSourceDataset(source.datasetId)}
+                                                >
+                                                  <span>{source.companyName}</span>
+                                                  <strong>{source.quarterLabel}</strong>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </td>
                                     <td>{currentClassification || <span className="muted">미분류</span>}</td>
                                     <td>
                                       <select
