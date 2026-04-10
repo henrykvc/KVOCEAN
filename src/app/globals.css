@@ -445,8 +445,32 @@ a {
 
 .layout-grid {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 280px 248px minmax(0, 1fr);
   gap: 20px;
+}
+
+.memo-sidebar {
+  padding: 16px;
+  position: sticky;
+  top: 16px;
+  height: fit-content;
+  background: linear-gradient(180deg, rgba(255, 251, 227, 0.78), rgba(255, 255, 255, 0.95));
+}
+
+.memo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.memo-textarea {
+  min-height: 72vh;
+  resize: vertical;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 250, 230, 0.92)),
+    repeating-linear-gradient(180deg, transparent 0 30px, rgba(49, 130, 246, 0.08) 30px 31px);
+  line-height: 1.75;
 }
 
 .panel {

@@ -866,6 +866,7 @@ export function ValidatorApp() {
   const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
   const [mounted, setMounted] = useState(false);
+  const [workspaceMemo, setWorkspaceMemo] = useState("");
   const [pastedText, setPastedText] = useState("");
   const [tolerance, setTolerance] = useState(1);
   const [selectedCompany, setSelectedCompany] = useState("");
@@ -898,6 +899,25 @@ export function ValidatorApp() {
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState<string | null>(null);
   const configSyncInitializedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const savedMemo = window.localStorage.getItem("kvocean-workspace-memo");
+    if (savedMemo) {
+      setWorkspaceMemo(savedMemo);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("kvocean-workspace-memo", workspaceMemo);
+  }, [workspaceMemo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1912,6 +1932,24 @@ export function ValidatorApp() {
       </section>
 
       {topView === "menu" && <section className="layout-grid">
+        <aside className="panel memo-sidebar">
+          <div className="memo-card">
+            <div className="section-title">
+              <div>
+                <span className="section-kicker">Memo</span>
+                <strong className="summary-title">작업 메모장</strong>
+              </div>
+              <span className="soft-badge">자동 저장</span>
+            </div>
+            <p className="muted">확인할 계정, 회사별 이슈, 다음 작업을 바로 적어두세요.</p>
+            <textarea
+              className="textarea memo-textarea"
+              value={workspaceMemo}
+              onChange={(event) => setWorkspaceMemo(event.target.value)}
+              placeholder={"예시\n- 스탠다임 영업비용 구조 재확인\n- 스마트레이더시스템 계정 DB 분류\n- 휴지통 복구 시나리오 점검"}
+            />
+          </div>
+        </aside>
         <aside className="panel sidebar">
           <div className="sidebar-brand-block">
             <div className="sidebar-brand-mark">KV</div>
