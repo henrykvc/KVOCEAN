@@ -860,6 +860,8 @@ export function ValidatorApp() {
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
+  const [datasetActionState, setDatasetActionState] = useState<"idle" | "saving" | "deleting" | "restoring" | "purging">("idle");
+  const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState<string | null>(null);
   const configSyncInitializedRef = useRef(false);
@@ -1180,6 +1182,7 @@ export function ValidatorApp() {
     if (validation.parsed.error || !canSaveCurrentDataset) {
       return;
     }
+    setDatasetActionState("saving");
     const snapshotArgs = {
       pastedText,
       selectedCompany: selectedCompany.trim() || null,
@@ -1220,6 +1223,8 @@ export function ValidatorApp() {
       setActiveTab("data");
     } catch (error) {
       setSharedStateError(error instanceof Error ? error.message : "데이터 저장에 실패했습니다.");
+    } finally {
+      setDatasetActionState("idle");
     }
   }
 
@@ -1251,6 +1256,7 @@ export function ValidatorApp() {
   }
 
   async function deleteDataset(dataset: SavedQuarterSnapshot) {
+    setDatasetActionState("deleting");
     try {
       const response = await fetch("/api/datasets", {
         method: "DELETE",
@@ -1280,10 +1286,13 @@ export function ValidatorApp() {
       setSharedStateError(null);
     } catch (error) {
       setSharedStateError(error instanceof Error ? error.message : "데이터 삭제에 실패했습니다.");
+    } finally {
+      setDatasetActionState("idle");
     }
   }
 
   async function restoreDataset(dataset: SavedQuarterSnapshot) {
+    setDatasetActionState("restoring");
     try {
       const response = await fetch("/api/datasets/restore", {
         method: "POST",
@@ -1310,6 +1319,8 @@ export function ValidatorApp() {
       setSharedStateError(null);
     } catch (error) {
       setSharedStateError(error instanceof Error ? error.message : "데이터 복구에 실패했습니다.");
+    } finally {
+      setDatasetActionState("idle");
     }
   }
 
@@ -1319,6 +1330,7 @@ export function ValidatorApp() {
       return;
     }
 
+    setDatasetActionState("purging");
     try {
       const response = await fetch("/api/datasets/purge", {
         method: "DELETE",
@@ -1344,6 +1356,8 @@ export function ValidatorApp() {
       setSharedStateError(null);
     } catch (error) {
       setSharedStateError(error instanceof Error ? error.message : "데이터 완전삭제에 실패했습니다.");
+    } finally {
+      setDatasetActionState("idle");
     }
   }
 
@@ -1660,6 +1674,7 @@ export function ValidatorApp() {
   }
 
   function saveConfigEditors() {
+    setConfigApplyState("applying");
     setLogicConfig((prev) => ({
       ...prev,
       capitalL1Signs: rowsToCapitalSigns(capitalRuleRows),
@@ -1689,6 +1704,8 @@ export function ValidatorApp() {
     }
 
     applyClassificationCatalog(classificationCatalog);
+    window.setTimeout(() => setConfigApplyState("applied"), 250);
+    window.setTimeout(() => setConfigApplyState("idle"), 1800);
   }
 
   function assignAccountDbClassification(accountName: string, nextCanonicalKey: string) {
@@ -1827,17 +1844,27 @@ export function ValidatorApp() {
 
       {topView === "menu" && <section className="layout-grid">
         <aside className="panel sidebar">
+          <div className="sidebar-brand-block">
+            <div className="sidebar-brand-mark">KV</div>
+            <div>
+              <strong>Kakao Ventures</strong>
+              <p>KV OCEAN Workspace</p>
+            </div>
+          </div>
           <div className="side-nav-card">
-            <span className="section-kicker">메뉴</span>
+            <span className="section-kicker">Workspace</span>
             <div className="side-nav-list">
               <button className={`side-nav-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>1. OCR검증</button>
               <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>1-1. 검증 규칙관리</button>
               <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
-              <button className={`side-nav-item ${activeTab === "trash" ? "active" : ""}`} onClick={() => setActiveTab("trash")}>2-1. 휴지통</button>
               <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
               <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>3-1. 분류</button>
               <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>3-2. 수식</button>
               <button className={`side-nav-item ${activeTab === "account-db" ? "active" : ""}`} onClick={() => setActiveTab("account-db")}>4. 계정 DB</button>
+            </div>
+            <div className="side-nav-divider" />
+            <div className="side-nav-utils">
+              <button className={`side-nav-item side-nav-item-trash ${activeTab === "trash" ? "active" : ""}`} onClick={() => setActiveTab("trash")}>🗑️ 휴지통</button>
             </div>
           </div>
 
@@ -1932,7 +1959,7 @@ export function ValidatorApp() {
                         <span className="soft-badge">수정값 {editedValueCount}</span>
                         <span className="soft-badge">계정명 수정 {editedNameCount}</span>
                         <span className="soft-badge">부호 변경 {sessionFixCount}</span>
-                        <button className="button" disabled={!canSaveCurrentDataset} onClick={saveCurrentDataset}>저장하기</button>
+                        <button className={`button ${datasetActionState === "saving" ? "is-loading" : ""}`.trim()} disabled={!canSaveCurrentDataset || datasetActionState === "saving"} onClick={saveCurrentDataset}>{datasetActionState === "saving" ? "저장 중..." : "저장하기"}</button>
                         <button className="tiny-button" onClick={focusFailedResultCards}>실패만 펼치기</button>
                         <button className="tiny-button" onClick={openAllResultCards}>전체 펼치기</button>
                       </div>
@@ -2238,7 +2265,7 @@ export function ValidatorApp() {
                                 <span className="soft-badge">선택 분기 {activeDataset.quarterLabel}</span>
                                 <button className="secondary-button" onClick={() => { setSelectedDatasetId(activeDataset.id); setActiveTab("report"); }}>결과물 보기</button>
                                 <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeDataset)}>검증기로 불러오기</button>
-                                <button className="danger-button" onClick={() => deleteDataset(activeDataset)}>삭제</button>
+                                 <button className={`danger-button ${datasetActionState === "deleting" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "deleting"} onClick={() => deleteDataset(activeDataset)}>{datasetActionState === "deleting" ? "이동 중..." : "삭제"}</button>
                               </div>
                             )}
                           </article>
@@ -2254,10 +2281,10 @@ export function ValidatorApp() {
           {activeTab === "trash" && (
             <>
               <section className="overview-card report-hero-card">
-                <div className="section-title">
-                  <div>
-                    <span className="section-kicker">2-1. 휴지통</span>
-                    <h3>삭제된 검증 데이터</h3>
+                    <div className="section-title">
+                      <div>
+                        <span className="section-kicker">휴지통</span>
+                        <h3>삭제된 검증 데이터</h3>
                     <p className="result-meta">삭제된 데이터는 여기서 복구하거나, 완전히 지울 수 있습니다.</p>
                   </div>
                   <span className="soft-badge">총 {trashedDatasets.length}건</span>
@@ -2285,8 +2312,8 @@ export function ValidatorApp() {
                         </div>
                         <div className="data-row-actions">
                           <span className="soft-badge">삭제됨</span>
-                          <button className="secondary-button" onClick={() => restoreDataset(dataset)}>복구하기</button>
-                          <button className="danger-button" onClick={() => purgeDataset(dataset)}>완전삭제</button>
+                          <button className={`secondary-button ${datasetActionState === "restoring" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "restoring"} onClick={() => restoreDataset(dataset)}>{datasetActionState === "restoring" ? "복구 중..." : "복구하기"}</button>
+                          <button className={`danger-button ${datasetActionState === "purging" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "purging"} onClick={() => purgeDataset(dataset)}>{datasetActionState === "purging" ? "삭제 중..." : "완전삭제"}</button>
                         </div>
                       </article>
                     ))}
@@ -2435,7 +2462,7 @@ export function ValidatorApp() {
                 </div>
                 <div className="inline-actions">
                   <button className="ghost-button" onClick={resetConfig}>기본값 복원</button>
-                  <button className="button" onClick={saveConfigEditors}>편집값 반영</button>
+                  <button className={`button ${configApplyState === "applied" ? "is-saved" : ""} ${configApplyState === "applying" ? "is-loading" : ""}`.trim()} onClick={saveConfigEditors}>{configApplyState === "applying" ? "반영 중..." : configApplyState === "applied" ? "반영 완료" : "편집값 반영"}</button>
                 </div>
               </div>
 
