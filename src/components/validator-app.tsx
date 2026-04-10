@@ -1897,7 +1897,6 @@ export function ValidatorApp() {
           <div className="section-title">
             <div>
               <span className="section-kicker">Memo</span>
-              <strong className="summary-title">작업 메모장</strong>
             </div>
             <span className="soft-badge">자동 저장</span>
           </div>
@@ -1912,7 +1911,7 @@ export function ValidatorApp() {
       </aside>
 
       <section className="page-shell">
-      <section className="hero">
+        <section className="hero">
         <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
         <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
         <p>{sharedStateReady ? "공용 Supabase 저장소와 동기화된 상태로 작업합니다." : "공용 Supabase 저장소를 불러오는 중입니다..."}</p>
@@ -1951,7 +1950,7 @@ export function ValidatorApp() {
         </button>
       </section>
 
-      {topView === "menu" && <section className="layout-grid">
+        {topView === "menu" && <section className="layout-grid">
         <aside className="panel sidebar">
           <div className="sidebar-brand-block">
             <div className="sidebar-brand-mark">KV</div>
@@ -3045,7 +3044,7 @@ export function ValidatorApp() {
             </div>
           )}
         </section>
-      )}
+        )}
       </section>
     </main>
   );
