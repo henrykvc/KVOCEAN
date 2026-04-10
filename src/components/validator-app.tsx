@@ -2055,7 +2055,7 @@ export function ValidatorApp() {
                               {!result.passed && actions.length > 0 && (
                                 <div className="diagnosis-card">
                                   <strong>원인 추정과 처리 방향</strong>
-                                  <p className="muted diagnosis-note">차이를 0원으로 만드는 후보를 먼저 보여줍니다. 특히 `음수 OCR + 차감`은 이중차감을 먼저 의심해 주세요.</p>
+                                  <p className="muted diagnosis-note">차이를 0원으로 만드는 후보를 먼저 보여줍니다. 특히 `음수 OCR + 차감`은 검증 부호보다 `OCR 수정값`을 먼저 바로잡도록 안내합니다.</p>
                                   <div className="list-editor" style={{ marginTop: 12 }}>
                                     {actions.map((action, index) => (
                                       <div key={`${action.text}-${index}`} className="notice">

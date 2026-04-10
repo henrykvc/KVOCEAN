@@ -670,8 +670,9 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
 
     const currentSign = signFromLabel(item.부호);
     const allowedSigns = item._allowedSigns ?? [0, 1, 2];
+    const isDoubleNegative = currentSign === 1 && item.원본값 < 0;
 
-    if (item._row !== undefined && item._col !== undefined && currentSign !== 2 && shouldSuggestOcrSignCorrection(item.계정명)) {
+    if (item._row !== undefined && item._col !== undefined && currentSign !== 2 && (shouldSuggestOcrSignCorrection(item.계정명) || isDoubleNegative)) {
       const ocrCandidates = [Math.abs(item.원본값), -Math.abs(item.원본값)]
         .filter((candidate, index, source) => source.indexOf(candidate) === index)
         .filter((candidate) => candidate !== item.원본값)
@@ -690,7 +691,6 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
       const bestOcr = ocrCandidates[0];
       if (bestOcr && (bestOcr.nextAbsDiff <= 1 || (absDiff > 0 && (absDiff - bestOcr.nextAbsDiff) / absDiff >= 0.5))) {
         const nextDirection = bestOcr.candidate < 0 ? "음수(-)" : "양수(+)";
-        const isDoubleNegative = currentSign === 1 && item.원본값 < 0;
         actions.push({
           text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): OCR 숫자 부호를 **${nextDirection}**로 바로잡으면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(bestOcr.nextDiff)}원으로 줄어듭니다. ${buildOcrReason(item, bestOcr.candidate)}`,
           shortText: `${item.계정명} OCR 부호를 ${nextDirection}로 수정 → 차이 ${formatNumber(bestOcr.nextDiff)}원`,
@@ -708,25 +708,8 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
       }
     }
 
-    if (currentSign === 1 && item.원본값 < 0 && allowedSigns.includes(0)) {
-      const plusApplied = applySign(item.원본값, 0);
-      const plusComputed = result.computed - item.적용값 + plusApplied;
-      const plusDiff = result.parent_val - plusComputed;
-      const plusAbsDiff = Math.abs(plusDiff);
-
-      if (plusAbsDiff <= 1 || (absDiff > 0 && (absDiff - plusAbsDiff) / absDiff >= 0.5)) {
-        actions.push({
-          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 차감 계정인데 값이 이미 **음수(-)**로 들어왔습니다. OCR 수정값 부호를 먼저 확인하고, 숫자가 맞다면 검증 부호를 **가산(+)**으로 바꿔 보세요. 바꾸면 차이가 ${formatNumber(result.diff)}원에서 ${formatNumber(plusDiff)}원으로 줄어듭니다.`,
-          shortText: `${item.계정명} 검증 부호를 가산(+)으로 변경 → 차이 ${formatNumber(plusDiff)}원`,
-          badge: plusAbsDiff <= 1 ? "차이 0원" : "이중차감 의심",
-          priority: buildDiagnosisPriority(plusAbsDiff, { doubleNegative: true }),
-          nextDiff: plusDiff,
-          nextAbsDiff: plusAbsDiff,
-          label: `가산(+)으로 수정: ${item.계정명}`,
-          fix: { sect, acct: item.계정명, newSign: 0 }
-        });
-        continue;
-      }
+    if (isDoubleNegative) {
+      continue;
     }
 
     const candidates = allowedSigns
