@@ -1943,7 +1943,7 @@ export function ValidatorApp() {
           <div className="section-title">
             <div>
               <span className="summary-label">최종결과물</span>
-              <strong className="summary-title">기업별 · 분기별 비교</strong>
+              <strong className="summary-title">결과물 비교</strong>
             </div>
             <span className="soft-badge">항목 + 4개 결과물</span>
           </div>
@@ -2052,7 +2052,7 @@ export function ValidatorApp() {
         <section className="panel main-panel">
           {activeTab === "validate" && (
             <>
-              {!pastedText.trim() && <div className="notice">사이드바에 OCR 3행 텍스트를 붙여넣으면 검증 결과가 나타납니다.</div>}
+              {!pastedText.trim() && <div className="notice input-helper">OCR 3행 텍스트를 왼쪽 입력창에 붙여넣으면 검증 결과가 나타납니다.</div>}
               {validation.parsed.error && pastedText.trim() && <div className="notice">{validation.parsed.error}</div>}
 
               {!validation.parsed.error && validation.parsed.nameRow.length > 0 && (

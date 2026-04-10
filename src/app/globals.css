@@ -232,7 +232,7 @@ a {
   max-width: 1840px;
   margin: 8px auto 32px;
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -291,12 +291,12 @@ a {
 
 .summary-strip {
   display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 12px;
 }
 
 .summary-card {
-  padding: 18px;
+  padding: 15px 16px;
   border-radius: var(--radius-md);
   background: #fff;
   border: 1px solid var(--line);
@@ -305,14 +305,14 @@ a {
 
 .summary-card strong {
   display: block;
-  margin-top: 8px;
-  font-size: 26px;
-  line-height: 1.2;
+  margin-top: 6px;
+  font-size: 22px;
+  line-height: 1.15;
 }
 
 .summary-title {
-  margin-top: 6px;
-  font-size: 22px;
+  margin-top: 4px;
+  font-size: 18px;
 }
 
 .summary-card p {
@@ -459,7 +459,7 @@ a {
 
 .layout-grid {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 14px;
   align-items: start;
 }
@@ -1716,6 +1716,8 @@ a {
 
 .input-helper {
   background: #f9fafb;
+  padding: 12px 14px;
+  font-size: 13px;
 }
 
 .helper-list {
