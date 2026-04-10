@@ -1891,7 +1891,27 @@ export function ValidatorApp() {
   }
 
   return (
-    <main className="page-shell">
+    <main className="workspace-shell">
+      <aside className="panel memo-sidebar workspace-memo-rail">
+        <div className="memo-card">
+          <div className="section-title">
+            <div>
+              <span className="section-kicker">Memo</span>
+              <strong className="summary-title">작업 메모장</strong>
+            </div>
+            <span className="soft-badge">자동 저장</span>
+          </div>
+          <p className="muted">확인할 계정, 회사별 이슈, 다음 작업을 바로 적어두세요.</p>
+          <textarea
+            className="textarea memo-textarea"
+            value={workspaceMemo}
+            onChange={(event) => setWorkspaceMemo(event.target.value)}
+            placeholder={"예시\n- 스탠다임 영업비용 구조 재확인\n- 스마트레이더시스템 계정 DB 분류\n- 휴지통 복구 시나리오 점검"}
+          />
+        </div>
+      </aside>
+
+      <section className="page-shell">
       <section className="hero">
         <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
         <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
@@ -1932,24 +1952,6 @@ export function ValidatorApp() {
       </section>
 
       {topView === "menu" && <section className="layout-grid">
-        <aside className="panel memo-sidebar">
-          <div className="memo-card">
-            <div className="section-title">
-              <div>
-                <span className="section-kicker">Memo</span>
-                <strong className="summary-title">작업 메모장</strong>
-              </div>
-              <span className="soft-badge">자동 저장</span>
-            </div>
-            <p className="muted">확인할 계정, 회사별 이슈, 다음 작업을 바로 적어두세요.</p>
-            <textarea
-              className="textarea memo-textarea"
-              value={workspaceMemo}
-              onChange={(event) => setWorkspaceMemo(event.target.value)}
-              placeholder={"예시\n- 스탠다임 영업비용 구조 재확인\n- 스마트레이더시스템 계정 DB 분류\n- 휴지통 복구 시나리오 점검"}
-            />
-          </div>
-        </aside>
         <aside className="panel sidebar">
           <div className="sidebar-brand-block">
             <div className="sidebar-brand-mark">KV</div>
@@ -3044,6 +3046,7 @@ export function ValidatorApp() {
           )}
         </section>
       )}
+      </section>
     </main>
   );
 }

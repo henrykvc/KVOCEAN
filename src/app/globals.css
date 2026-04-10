@@ -217,12 +217,20 @@ a {
 }
 
 .page-shell {
-  width: calc(100vw - 12px);
-  max-width: none;
-  margin: 8px auto 32px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.workspace-shell {
+  width: calc(100vw - 28px);
+  max-width: 1880px;
+  margin: 8px auto 32px;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
 }
 
 .hero {
@@ -447,7 +455,7 @@ a {
 
 .layout-grid {
   display: grid;
-  grid-template-columns: 220px 196px minmax(0, 1fr);
+  grid-template-columns: 188px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -460,6 +468,10 @@ a {
   display: flex;
   flex-direction: column;
   background: linear-gradient(180deg, rgba(255, 248, 208, 0.84), rgba(255, 255, 255, 0.96));
+}
+
+.workspace-memo-rail {
+  border-radius: 24px;
 }
 
 .memo-card {
@@ -1709,9 +1721,16 @@ a {
 }
 
 @media (max-width: 1180px) {
+  .workspace-shell,
   .summary-strip,
   .layout-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-shell {
+    width: calc(100vw - 18px);
+    max-width: none;
+    gap: 12px;
   }
 
   .account-db-layout.with-preview {
@@ -1734,7 +1753,7 @@ a {
 
 @media (max-width: 720px) {
   .workspace-bar,
-  .page-shell {
+  .workspace-shell {
     width: calc(100vw - 16px);
     max-width: none;
     margin-top: 8px;
