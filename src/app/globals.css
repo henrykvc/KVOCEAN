@@ -44,7 +44,8 @@ body {
 }
 
 .workspace-bar {
-  width: min(1720px, calc(100vw - 32px));
+  width: calc(100vw - 20px);
+  max-width: 1920px;
   margin: 16px auto 0;
   padding: 14px 18px;
   border: 1px solid rgba(49, 130, 246, 0.14);
@@ -216,7 +217,8 @@ a {
 }
 
 .page-shell {
-  width: min(1720px, calc(100vw - 32px));
+  width: calc(100vw - 20px);
+  max-width: 1920px;
   margin: 16px auto 40px;
   display: flex;
   flex-direction: column;
@@ -277,7 +279,7 @@ a {
 
 .summary-strip {
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -445,12 +447,12 @@ a {
 
 .layout-grid {
   display: grid;
-  grid-template-columns: 280px 248px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 240px 210px minmax(0, 1fr);
+  gap: 16px;
 }
 
 .memo-sidebar {
-  padding: 16px;
+  padding: 14px;
   position: sticky;
   top: 16px;
   height: fit-content;
@@ -464,7 +466,7 @@ a {
 }
 
 .memo-textarea {
-  min-height: 72vh;
+  min-height: 74vh;
   resize: vertical;
   border-radius: 18px;
   background:
@@ -482,7 +484,7 @@ a {
 }
 
 .sidebar {
-  padding: 18px 16px;
+  padding: 16px 14px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -752,7 +754,7 @@ a {
 }
 
 .main-panel {
-  padding: 24px;
+  padding: 22px 20px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -1724,8 +1726,10 @@ a {
 }
 
 @media (max-width: 720px) {
+  .workspace-bar,
   .page-shell {
-    width: min(100vw - 16px, 1720px);
+    width: calc(100vw - 16px);
+    max-width: none;
     margin-top: 8px;
   }
 
