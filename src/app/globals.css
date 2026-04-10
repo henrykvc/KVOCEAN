@@ -1441,6 +1441,57 @@ a {
   font-size: 12px;
 }
 
+.account-db-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.account-db-layout.with-preview {
+  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
+  align-items: start;
+}
+
+.account-db-preview-panel {
+  position: sticky;
+  top: 16px;
+  padding: 18px;
+  max-height: calc(100vh - 110px);
+  overflow: auto;
+}
+
+.account-db-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.account-db-preview-section {
+  border: 1px solid rgba(229, 232, 235, 0.96);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.account-db-preview-section-title {
+  padding: 10px 12px;
+  background: #f7f9fc;
+  border-bottom: 1px solid rgba(229, 232, 235, 0.96);
+  font-size: 12px;
+  font-weight: 800;
+  color: #1358bd;
+}
+
+.account-db-preview-table th:last-child,
+.account-db-preview-table td:last-child {
+  text-align: right;
+}
+
+.account-db-preview-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
 .data-list {
   display: flex;
   flex-direction: column;
@@ -1627,6 +1678,10 @@ a {
 @media (max-width: 1180px) {
   .summary-strip,
   .layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-db-layout.with-preview {
     grid-template-columns: 1fr;
   }
 

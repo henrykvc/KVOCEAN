@@ -186,6 +186,19 @@ function formatCalculationResult(kind: "amount" | "ratio" | "growthRate", row: F
   return `${detail.result.toFixed(1)}%`;
 }
 
+function groupPreviewRowsBySection(rows: SavedQuarterSnapshot["adjustedStatementRows"]) {
+  const grouped = new Map<string, SavedQuarterSnapshot["adjustedStatementRows"]>();
+
+  rows.forEach((row) => {
+    const sectionKey = row.sectionKey.trim() || row.section.trim() || "기타";
+    const current = grouped.get(sectionKey) ?? [];
+    current.push(row);
+    grouped.set(sectionKey, current);
+  });
+
+  return Array.from(grouped.entries());
+}
+
 function normalizeMetricLabel(value: string) {
   return value.replace(/\s+/g, "").trim();
 }
@@ -873,6 +886,7 @@ export function ValidatorApp() {
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>([]);
   const [activeAccountDbSourceKey, setActiveAccountDbSourceKey] = useState<string | null>(null);
+  const [activeAccountDbPreview, setActiveAccountDbPreview] = useState<{ datasetId: string; accountName: string } | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [comparisonSelections, setComparisonSelections] = useState<ComparisonSelection[]>(buildInitialComparisonSelections([]));
   const [sameCompanyMode, setSameCompanyMode] = useState(false);
@@ -1141,6 +1155,10 @@ export function ValidatorApp() {
     () => accountDictionaryEntries.filter((entry) => resolveManagedClassification(entry.accountName, managedClassificationLookup)).length,
     [accountDictionaryEntries, managedClassificationLookup]
   );
+  const activeAccountDbPreviewDataset = useMemo(
+    () => savedDatasets.find((item) => item.id === activeAccountDbPreview?.datasetId) ?? null,
+    [activeAccountDbPreview, savedDatasets]
+  );
 
   const companyKnown = Boolean(selectedCompany.trim() && companyConfigs[selectedCompany.trim()]);
   const sessionFixCount = countSessionFixes(sessionSignFixes);
@@ -1296,14 +1314,13 @@ export function ValidatorApp() {
     setActiveTab("validate");
   }
 
-  function openAccountDbSourceDataset(datasetId: string) {
+  function openAccountDbSourceDataset(datasetId: string, accountName: string) {
     const dataset = savedDatasets.find((item) => item.id === datasetId);
     if (!dataset) {
       return;
     }
 
-    loadDatasetIntoValidator(dataset);
-    setTopView("menu");
+    setActiveAccountDbPreview({ datasetId: dataset.id, accountName });
     setActiveAccountDbSourceKey(null);
   }
 
@@ -2757,93 +2774,135 @@ export function ValidatorApp() {
               {!accountDictionaryEntries.length && <div className="notice">아직 표시할 손익 계정 DB가 없습니다. `저장하기`로 회사별 분기 데이터를 먼저 쌓아 주세요.</div>}
 
               {!!accountDictionaryEntries.length && (
-                <section className="config-card">
-                  <div className="section-title">
-                    <div>
-                      <h3>상위 항목별 하위 계정</h3>
-                    <p className="muted">새로 쌓이는 하위 계정을 여기서 바로 대표 분류에 연결합니다. 상위항목 직접 참조값은 제외하고, 합산 관리가 필요한 분류만 선택지로 보여줍니다.</p>
+                <section className={`account-db-layout ${activeAccountDbPreviewDataset ? "with-preview" : ""}`.trim()}>
+                  <section className="config-card">
+                    <div className="section-title">
+                      <div>
+                        <h3>상위 항목별 하위 계정</h3>
+                        <p className="muted">새로 쌓이는 하위 계정을 여기서 바로 대표 분류에 연결합니다. 출처 말풍선에서 회사를 누르면 오른쪽에 수정 반영된 3줄 데이터를 새 양식으로 바로 확인할 수 있습니다.</p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="data-list grouped-data-list">
-                    {accountDictionarySectionGroups.map(([sectionKey, entries]) => (
-                      <article className="data-company-card" key={`account-db-section-${sectionKey}`}>
-                        <div className="data-company-row">
-                          <strong>{sectionKey}</strong>
-                          <span className="soft-badge">{entries.length}건</span>
-                        </div>
-                        <div className="report-table-wrap">
-                          <table className="table report-table formula-table">
-                            <thead>
-                              <tr>
-                                <th>상위 항목</th>
-                                <th>하위 계정명</th>
-                                <th>출처</th>
-                                <th>현재 분류</th>
-                                <th>분류 지정</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {entries.map((entry) => {
-                                const currentClassification = resolveManagedClassification(entry.accountName, managedClassificationLookup);
-                                const isSourceOpen = activeAccountDbSourceKey === entry.entryKey;
+                    <div className="data-list grouped-data-list">
+                      {accountDictionarySectionGroups.map(([sectionKey, entries]) => (
+                        <article className="data-company-card" key={`account-db-section-${sectionKey}`}>
+                          <div className="data-company-row">
+                            <strong>{sectionKey}</strong>
+                            <span className="soft-badge">{entries.length}건</span>
+                          </div>
+                          <div className="report-table-wrap">
+                            <table className="table report-table formula-table">
+                              <thead>
+                                <tr>
+                                  <th>상위 항목</th>
+                                  <th>하위 계정명</th>
+                                  <th>출처</th>
+                                  <th>현재 분류</th>
+                                  <th>분류 지정</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {entries.map((entry) => {
+                                  const currentClassification = resolveManagedClassification(entry.accountName, managedClassificationLookup);
+                                  const isSourceOpen = activeAccountDbSourceKey === entry.entryKey;
 
-                                return (
-                                  <tr key={`account-db-entry-${entry.entryKey}`}>
-                                    <td>{entry.sectionKey}</td>
-                                    <td>{entry.accountName}</td>
-                                    <td>
-                                      <div className="account-db-source-wrap" data-account-db-source-wrap="true">
-                                        <button
-                                          className={`account-db-source-button ${isSourceOpen ? "active" : ""}`.trim()}
-                                          type="button"
-                                          onClick={() => setActiveAccountDbSourceKey((prev) => prev === entry.entryKey ? null : entry.entryKey)}
-                                          aria-label={`${entry.accountName} 출처 보기`}
-                                        >
-                                          💬
-                                        </button>
-                                        {isSourceOpen && (
-                                          <div className="account-db-source-popover">
-                                            <strong>출처 데이터</strong>
-                                            <p>{entry.accountName}이(가) 들어온 회사/분기입니다.</p>
-                                            <div className="account-db-source-list">
-                                              {entry.sources.map((source) => (
-                                                <button
-                                                  key={`${entry.entryKey}-${source.datasetId}`}
-                                                  className="account-db-source-link"
-                                                  type="button"
-                                                  onClick={() => openAccountDbSourceDataset(source.datasetId)}
-                                                >
-                                                  <span>{source.companyName}</span>
-                                                  <strong>{source.quarterLabel}</strong>
-                                                </button>
-                                              ))}
+                                  return (
+                                    <tr key={`account-db-entry-${entry.entryKey}`}>
+                                      <td>{entry.sectionKey}</td>
+                                      <td>{entry.accountName}</td>
+                                      <td>
+                                        <div className="account-db-source-wrap" data-account-db-source-wrap="true">
+                                          <button
+                                            className={`account-db-source-button ${isSourceOpen ? "active" : ""}`.trim()}
+                                            type="button"
+                                            onClick={() => setActiveAccountDbSourceKey((prev) => prev === entry.entryKey ? null : entry.entryKey)}
+                                            aria-label={`${entry.accountName} 출처 보기`}
+                                          >
+                                            💬
+                                          </button>
+                                          {isSourceOpen && (
+                                            <div className="account-db-source-popover">
+                                              <strong>출처 데이터</strong>
+                                              <p>{entry.accountName}이(가) 들어온 회사/분기입니다.</p>
+                                              <div className="account-db-source-list">
+                                                {entry.sources.map((source) => (
+                                                  <button
+                                                    key={`${entry.entryKey}-${source.datasetId}`}
+                                                    className="account-db-source-link"
+                                                    type="button"
+                                                    onClick={() => openAccountDbSourceDataset(source.datasetId, entry.accountName)}
+                                                  >
+                                                    <span>{source.companyName}</span>
+                                                    <strong>{source.quarterLabel}</strong>
+                                                  </button>
+                                                ))}
+                                              </div>
                                             </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td>{currentClassification || <span className="muted">미분류</span>}</td>
-                                    <td>
-                                      <select
-                                        className="select"
-                                        value={currentClassification}
-                                        onChange={(event) => assignAccountDbClassification(entry.accountName, event.target.value)}
-                                      >
-                                        <option value="">미분류</option>
-                                        {managedClassificationOptions.map((option) => (
-                                          <option key={`${entry.entryKey}-${option}`} value={option}>{option}</option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td>{currentClassification || <span className="muted">미분류</span>}</td>
+                                      <td>
+                                        <select
+                                          className="select"
+                                          value={currentClassification}
+                                          onChange={(event) => assignAccountDbClassification(entry.accountName, event.target.value)}
+                                        >
+                                          <option value="">미분류</option>
+                                          {managedClassificationOptions.map((option) => (
+                                            <option key={`${entry.entryKey}-${option}`} value={option}>{option}</option>
+                                          ))}
+                                        </select>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+
+                  {activeAccountDbPreviewDataset && (
+                    <aside className="panel account-db-preview-panel">
+                      <div className="section-title">
+                        <div>
+                          <span className="section-kicker">출처 3줄 미리보기</span>
+                          <h3>{activeAccountDbPreviewDataset.companyName}</h3>
+                          <p className="result-meta">{activeAccountDbPreviewDataset.quarterLabel} · {activeAccountDbPreview?.accountName ?? "선택 계정"}</p>
                         </div>
-                      </article>
-                    ))}
-                  </div>
+                        <div className="inline-actions">
+                          <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeAccountDbPreviewDataset)}>검증기로 열기</button>
+                          <button className="ghost-button" onClick={() => setActiveAccountDbPreview(null)}>닫기</button>
+                        </div>
+                      </div>
+
+                      <div className="account-db-preview-body">
+                        {groupPreviewRowsBySection(activeAccountDbPreviewDataset.adjustedStatementRows).map(([previewSectionKey, previewRows]) => (
+                          <div className="account-db-preview-section" key={`preview-${activeAccountDbPreviewDataset.id}-${previewSectionKey}`}>
+                            <div className="account-db-preview-section-title">{previewSectionKey}</div>
+                            <table className="table account-db-preview-table">
+                              <thead>
+                                <tr>
+                                  <th>계정명</th>
+                                  <th>수정 반영 값</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {previewRows.map((row, index) => (
+                                  <tr key={`preview-row-${activeAccountDbPreviewDataset.id}-${previewSectionKey}-${row.accountName}-${index}`}>
+                                    <td>{row.accountName}</td>
+                                    <td className="account-db-preview-value">{row.value === null || row.value === undefined ? "-" : formatNumber(row.value)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ))}
+                      </div>
+                    </aside>
+                  )}
                 </section>
               )}
             </>
