@@ -232,7 +232,7 @@ a {
   max-width: 1840px;
   margin: 8px auto 32px;
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 180px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -459,7 +459,7 @@ a {
 
 .layout-grid {
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 14px;
   align-items: start;
 }
@@ -515,6 +515,7 @@ a {
   top: 8px;
   height: fit-content;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 249, 252, 0.96));
+  min-width: 0;
 }
 
 .sidebar-brand-block {
@@ -574,7 +575,15 @@ a {
   background: transparent;
   color: var(--muted);
   font-weight: 700;
+  white-space: nowrap;
   transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.panel-title-wrap .tag,
+.field span,
+.button-row button,
+.input-helper strong {
+  white-space: nowrap;
 }
 
 .side-nav-item:hover {
