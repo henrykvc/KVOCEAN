@@ -427,6 +427,18 @@ a {
   min-width: 180px;
 }
 
+.comparison-company-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.comparison-company-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
 .comparison-table th + th,
 .comparison-table td + td {
   border-left: 1px solid rgba(215, 223, 232, 0.92);
@@ -1643,6 +1655,49 @@ a {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
+  flex-wrap: wrap;
+}
+
+.data-company-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.data-company-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.data-company-custom-industry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.industry-badge-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #1358bd;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.industry-badge-wrap.compact {
+  width: fit-content;
+}
+
+.industry-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .data-quarter-chip-list {
@@ -1886,13 +1941,17 @@ a {
   .final-detail-card-head,
   .metric-detail-head,
   .metric-detail-input,
-  .final-metric-heading {
+  .final-metric-heading,
+  .data-company-controls,
+  .data-company-custom-industry {
     align-items: flex-start;
   }
 
   .final-detail-card-head,
   .metric-detail-head,
-  .metric-detail-input {
+  .metric-detail-input,
+  .data-company-controls,
+  .data-company-custom-industry {
     flex-direction: column;
   }
 

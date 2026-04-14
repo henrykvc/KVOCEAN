@@ -95,6 +95,8 @@ type ComparisonSelection = {
 
 type TopViewKey = "menu" | "final-output";
 
+const DEFAULT_INDUSTRY_OPTIONS = ["서비스", "게임", "기술", "헬스케어", "크립토"] as const;
+
 type SectionAccountDbEntry = {
   entryKey: string;
   section: string;
@@ -656,6 +658,36 @@ function getReportMetricHelpText(label: string) {
     ?? null;
 }
 
+function normalizeIndustryLabel(value: string) {
+  return value.trim();
+}
+
+function getIndustryIcon(industry: string) {
+  const normalized = normalizeIndustryLabel(industry);
+
+  if (normalized === "서비스") return "💼";
+  if (normalized === "게임") return "🎮";
+  if (normalized === "기술") return "⚙️";
+  if (normalized === "헬스케어") return "🩺";
+  if (normalized === "크립토") return "₿";
+  if (!normalized || normalized === "미분류") return "🏷️";
+  return "🧩";
+}
+
+function formatCompactQuarterLabel(value: string) {
+  const match = value.trim().match(/^(\d{4})-(\d{2})/);
+  if (match) {
+    return `${match[1].slice(2)}${match[2]}`;
+  }
+
+  const digits = value.replace(/\D/g, "");
+  if (digits.length >= 6) {
+    return `${digits.slice(2, 4)}${digits.slice(4, 6)}`;
+  }
+
+  return value;
+}
+
 function buildInitialComparisonSelections(items: SavedQuarterSnapshot[]): ComparisonSelection[] {
   return Array.from({ length: 4 }, (_, index) => {
     const dataset = items[index];
@@ -923,6 +955,7 @@ export function ValidatorApp() {
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [activeMetricHelpKey, setActiveMetricHelpKey] = useState<string | null>(null);
+  const [customIndustryInputs, setCustomIndustryInputs] = useState<Record<string, string>>({});
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
   const [datasetActionState, setDatasetActionState] = useState<"idle" | "saving" | "deleting" | "restoring" | "purging">("idle");
   const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
@@ -1280,6 +1313,18 @@ export function ValidatorApp() {
       .filter(({ group }) => MANAGED_CLASSIFICATION_KEY_SET.has(group.canonicalKey.trim())),
     [classificationCatalog]
   );
+  const industryOptions = useMemo(() => {
+    const options = new Set<string>(DEFAULT_INDUSTRY_OPTIONS);
+
+    Object.values(companyConfigs).forEach((config) => {
+      const industry = normalizeIndustryLabel(config.industry ?? "");
+      if (industry) {
+        options.add(industry);
+      }
+    });
+
+    return Array.from(options);
+  }, [companyConfigs]);
   const classificationParentLabels = useMemo(() => {
     const relations = new Map<string, string[]>();
 
@@ -1805,6 +1850,34 @@ export function ValidatorApp() {
 
   function toggleMetricHelp(metricKey: string) {
     setActiveMetricHelpKey((prev) => (prev === metricKey ? null : metricKey));
+  }
+
+  function getCompanyIndustry(companyName: string) {
+    return normalizeIndustryLabel(companyConfigs[companyName]?.industry ?? "");
+  }
+
+  function setCompanyIndustry(companyName: string, industry: string) {
+    const normalizedIndustry = normalizeIndustryLabel(industry);
+    setCompanyConfigs((prev) => ({
+      ...prev,
+      [companyName]: {
+        ...(prev[companyName] ?? {}),
+        industry: normalizedIndustry || undefined
+      }
+    }));
+  }
+
+  function applyCustomIndustry(companyName: string) {
+    const nextIndustry = normalizeIndustryLabel(customIndustryInputs[companyName] ?? "");
+    if (!nextIndustry) {
+      return;
+    }
+
+    setCompanyIndustry(companyName, nextIndustry);
+    setCustomIndustryInputs((prev) => ({
+      ...prev,
+      [companyName]: ""
+    }));
   }
 
   function resetConfig() {
@@ -2410,10 +2483,50 @@ export function ValidatorApp() {
                     <div className="data-list grouped-data-list">
                       {groupedSavedDatasets.map(([companyName, datasets]) => {
                         const activeDataset = datasets.find((dataset) => dataset.id === selectedDatasetId) ?? null;
+                        const companyIndustry = getCompanyIndustry(companyName);
+                        const companyIndustryLabel = companyIndustry || "미분류";
+                        const companyIndustryIcon = getIndustryIcon(companyIndustryLabel);
+                        const customIndustryValue = customIndustryInputs[companyName] ?? "";
                         return (
                           <article className={`data-company-card ${activeDataset ? "selected" : ""}`} key={`company-group-${companyName}`}>
                             <div className="data-company-row">
-                              <strong>{companyName}</strong>
+                              <div className="data-company-main">
+                                <div className="industry-badge-wrap">
+                                  <span className="industry-icon" aria-hidden="true">{companyIndustryIcon}</span>
+                                  <span>{companyIndustryLabel}</span>
+                                </div>
+                                <strong>{companyName}</strong>
+                              </div>
+                              <div className="data-company-controls">
+                                <select
+                                  className="mini-select"
+                                  value={companyIndustry || ""}
+                                  onChange={(event) => setCompanyIndustry(companyName, event.target.value)}
+                                >
+                                  <option value="">미분류</option>
+                                  {industryOptions.map((option) => (
+                                    <option key={`${companyName}-${option}`} value={option}>{`${getIndustryIcon(option)} ${option}`}</option>
+                                  ))}
+                                </select>
+                                <div className="data-company-custom-industry">
+                                  <input
+                                    className="mini-input"
+                                    value={customIndustryValue}
+                                    placeholder="산업분야 추가"
+                                    onChange={(event) => setCustomIndustryInputs((prev) => ({
+                                      ...prev,
+                                      [companyName]: event.target.value
+                                    }))}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        applyCustomIndustry(companyName);
+                                      }
+                                    }}
+                                  />
+                                  <button className="tiny-button" type="button" onClick={() => applyCustomIndustry(companyName)}>추가</button>
+                                </div>
+                              </div>
                               <div className="data-quarter-chip-list">
                                 {datasets.map((dataset) => (
                                   <button
@@ -2421,14 +2534,14 @@ export function ValidatorApp() {
                                     className={`data-quarter-chip ${selectedDatasetId === dataset.id ? "active" : ""}`}
                                     onClick={() => setSelectedDatasetId((prev) => prev === dataset.id ? "" : dataset.id)}
                                   >
-                                    {dataset.quarterLabel}
+                                    {formatCompactQuarterLabel(dataset.quarterLabel)}
                                   </button>
                                 ))}
                               </div>
                             </div>
                             {activeDataset && (
                               <div className="data-row-actions">
-                                <span className="soft-badge">선택 분기 {activeDataset.quarterLabel}</span>
+                                <span className="soft-badge">선택 분기 {formatCompactQuarterLabel(activeDataset.quarterLabel)}</span>
                                 <button className="secondary-button" onClick={() => { setSelectedDatasetId(activeDataset.id); setActiveTab("report"); }}>결과물 보기</button>
                                 <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeDataset)}>검증기로 불러오기</button>
                                  <button className={`danger-button ${datasetActionState === "deleting" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "deleting"} onClick={() => deleteDataset(activeDataset)}>{datasetActionState === "deleting" ? "이동 중..." : "삭제"}</button>
@@ -2471,9 +2584,15 @@ export function ValidatorApp() {
                     {trashedDatasets.map((dataset) => (
                       <article className="data-company-card" key={`trash-${dataset.id}`}>
                         <div className="data-company-row">
-                          <strong>{dataset.companyName}</strong>
+                          <div className="data-company-main">
+                            <div className="industry-badge-wrap">
+                              <span className="industry-icon" aria-hidden="true">{getIndustryIcon(getCompanyIndustry(dataset.companyName) || "미분류")}</span>
+                              <span>{getCompanyIndustry(dataset.companyName) || "미분류"}</span>
+                            </div>
+                            <strong>{dataset.companyName}</strong>
+                          </div>
                           <div className="data-quarter-chip-list">
-                            <span className="data-quarter-chip active">{dataset.quarterLabel}</span>
+                            <span className="data-quarter-chip active">{formatCompactQuarterLabel(dataset.quarterLabel)}</span>
                           </div>
                         </div>
                         <div className="data-row-actions">
@@ -3048,10 +3167,21 @@ export function ValidatorApp() {
                     <th>항목</th>
                     {comparisonSelections.map((selection, index) => {
                       const quarterOptions = savedDatasets.filter((item) => item.companyName === selection.companyName);
+                      const selectedIndustry = getCompanyIndustry(selection.companyName);
+                      const selectedIndustryLabel = selectedIndustry || "미분류";
                       return (
                         <th key={`compare-head-${selection.slotId}`}>
                           <div className="comparison-head-cell">
                             <strong>{`결과물 ${index + 1}`}</strong>
+                            {selection.companyName && (
+                              <div className="comparison-company-meta">
+                                <span className="industry-badge-wrap compact">
+                                  <span className="industry-icon" aria-hidden="true">{getIndustryIcon(selectedIndustryLabel)}</span>
+                                  <span>{selectedIndustryLabel}</span>
+                                </span>
+                                <span className="comparison-company-name">{selection.companyName}</span>
+                              </div>
+                            )}
                             <select
                               className="select"
                               value={selection.companyName}
@@ -3060,7 +3190,7 @@ export function ValidatorApp() {
                             >
                               <option value="">기업 선택</option>
                               {comparisonCompanyOptions.map((company) => (
-                                <option key={`${selection.slotId}-${company}`} value={company}>{company}</option>
+                                <option key={`${selection.slotId}-${company}`} value={company}>{`${getIndustryIcon(getCompanyIndustry(company) || "미분류")} ${getCompanyIndustry(company) || "미분류"} · ${company}`}</option>
                               ))}
                             </select>
                             <select
@@ -3071,7 +3201,7 @@ export function ValidatorApp() {
                             >
                               <option value="">분기 선택</option>
                               {quarterOptions.map((dataset) => (
-                                <option key={`${selection.slotId}-${dataset.id}`} value={dataset.id}>{dataset.quarterLabel}</option>
+                                <option key={`${selection.slotId}-${dataset.id}`} value={dataset.id}>{formatCompactQuarterLabel(dataset.quarterLabel)}</option>
                               ))}
                             </select>
                           </div>

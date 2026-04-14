@@ -12,6 +12,7 @@ export type LogicConfig = {
 };
 
 export type CompanyConfig = {
+  industry?: string;
   sectionSignOverrides?: Record<string, Record<string, SignCode>>;
 };
 
