@@ -476,6 +476,53 @@ function buildStatementRows(
     });
 }
 
+export function normalizePasteEditsForValidation(args: {
+  pastedText: string;
+  selectedCompany: string | null;
+  logicConfig: LogicConfig;
+  companyConfigs: CompanyConfigs;
+  classificationGroups: ClassificationGroups;
+  pasteEdits: Record<string, number>;
+  nameEdits: Record<string, string>;
+  sessionSignFixes: SessionSignFixes;
+}) {
+  const parsed = parsePastedText(args.pastedText);
+  if (parsed.error || !parsed.nameRow.length || !parsed.dataRows.length) {
+    return { ...args.pasteEdits };
+  }
+
+  const companyName = args.selectedCompany?.trim() || detectCompanyFromPaste(args.pastedText) || null;
+  const periods = buildPeriods(parsed.nameRow, parsed.dataRows);
+  const effectiveNameRow = resolveEditedNameRow(parsed.nameRow, args.nameEdits);
+  const metaRows = resolveRowMeta(parsed.catRow, effectiveNameRow, args.logicConfig, args.companyConfigs, args.classificationGroups, companyName, args.sessionSignFixes);
+  const nextPasteEdits = { ...args.pasteEdits };
+
+  metaRows.forEach((meta) => {
+    if (meta.signCode !== 1) {
+      return;
+    }
+
+    periods.forEach((period) => {
+      const key = pasteEditKey(period.rowIndex, meta.sourceCol);
+      const rawValue = safeFloat(parsed.dataRows[period.rowIndex]?.[meta.sourceCol]);
+      const currentValue = nextPasteEdits[key] !== undefined ? nextPasteEdits[key] : rawValue;
+
+      if (currentValue === null || currentValue === undefined) {
+        return;
+      }
+
+      const normalizedValue = Math.abs(currentValue);
+      if (rawValue !== null && Math.abs(normalizedValue - rawValue) < 0.5) {
+        delete nextPasteEdits[key];
+      } else {
+        nextPasteEdits[key] = normalizedValue;
+      }
+    });
+  });
+
+  return nextPasteEdits;
+}
+
 function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
   const canonicalCandidates = candidates.flatMap((candidate) => {
     const base = [candidate];
@@ -1647,8 +1694,9 @@ export function buildReportingModel(args: {
   const periods = buildPeriods(parsed.nameRow, parsed.dataRows);
   const effectiveNameRow = resolveEditedNameRow(parsed.nameRow, args.nameEdits);
   const metaRows = resolveRowMeta(parsed.catRow, effectiveNameRow, args.logicConfig, args.companyConfigs, args.classificationGroups, companyName, args.sessionSignFixes);
-  const rawStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, args.pasteEdits, false);
-  const adjustedStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, args.pasteEdits, true);
+  const normalizedPasteEdits = normalizePasteEditsForValidation(args);
+  const rawStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, normalizedPasteEdits, false);
+  const adjustedStatementRows = buildStatementRows(metaRows, periods, parsed.dataRows, normalizedPasteEdits, true);
   const context: MetricContext = {
     periods,
       rawRows: rawStatementRows,
@@ -1681,6 +1729,7 @@ export function buildQuarterSnapshots(args: {
 }) {
   const reporting = buildReportingModel(args);
   const companyName = args.selectedCompany?.trim() || reporting.companyName || reporting.detectedCompany || "미지정 회사";
+  const normalizedPasteEdits = normalizePasteEditsForValidation(args);
 
   return reporting.periods.map((period) => ({
     id: `${companyName}__${period.label}`,
@@ -1707,7 +1756,7 @@ export function buildQuarterSnapshots(args: {
     source: {
       pastedText: args.pastedText,
       tolerance: args.tolerance,
-      pasteEdits: { ...args.pasteEdits },
+      pasteEdits: { ...normalizedPasteEdits },
       nameEdits: { ...args.nameEdits },
       sessionSignFixes: structuredClone(args.sessionSignFixes),
       logicConfig: structuredClone(args.logicConfig),
@@ -1715,6 +1764,53 @@ export function buildQuarterSnapshots(args: {
       classificationGroups: structuredClone(args.classificationGroups)
     }
   } satisfies SavedQuarterSnapshot));
+}
+
+export function normalizeSavedQuarterSnapshot(snapshot: SavedQuarterSnapshot) {
+  const normalizedPasteEdits = normalizePasteEditsForValidation({
+    pastedText: snapshot.source.pastedText,
+    selectedCompany: snapshot.companyName,
+    logicConfig: snapshot.source.logicConfig,
+    companyConfigs: snapshot.source.companyConfigs,
+    classificationGroups: snapshot.source.classificationGroups,
+    pasteEdits: snapshot.source.pasteEdits,
+    nameEdits: snapshot.source.nameEdits ?? {},
+    sessionSignFixes: snapshot.source.sessionSignFixes
+  });
+
+  const rebuiltSnapshots = buildQuarterSnapshots({
+    pastedText: snapshot.source.pastedText,
+    selectedCompany: snapshot.companyName,
+    tolerance: snapshot.source.tolerance,
+    logicConfig: snapshot.source.logicConfig,
+    companyConfigs: snapshot.source.companyConfigs,
+    classificationGroups: snapshot.source.classificationGroups,
+    pasteEdits: normalizedPasteEdits,
+    nameEdits: snapshot.source.nameEdits ?? {},
+    sessionSignFixes: snapshot.source.sessionSignFixes
+  });
+
+  const rebuilt = rebuiltSnapshots.find((item) => item.quarterKey === snapshot.quarterKey)
+    ?? rebuiltSnapshots.find((item) => item.id === snapshot.id);
+
+  if (!rebuilt) {
+    return {
+      ...snapshot,
+      source: {
+        ...snapshot.source,
+        pasteEdits: normalizedPasteEdits
+      }
+    } satisfies SavedQuarterSnapshot;
+  }
+
+  return {
+    ...rebuilt,
+    id: snapshot.id,
+    savedAt: snapshot.savedAt,
+    quarterKey: snapshot.quarterKey,
+    quarterLabel: snapshot.quarterLabel,
+    companyName: snapshot.companyName
+  } satisfies SavedQuarterSnapshot;
 }
 
 export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClassificationGroups?: ClassificationGroups) {

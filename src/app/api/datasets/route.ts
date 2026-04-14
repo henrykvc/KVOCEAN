@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAllowedUser } from "@/lib/supabase/access";
 import { DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG } from "@/lib/validation/defaults";
-import type { SavedQuarterSnapshot } from "@/lib/validation/report";
+import { normalizeSavedQuarterSnapshot, type SavedQuarterSnapshot } from "@/lib/validation/report";
 
 export const runtime = "nodejs";
 
@@ -57,6 +57,23 @@ function mapDatasetRow(item: DatasetRow) {
   } satisfies SavedQuarterSnapshot;
 }
 
+function toDatasetRow(snapshot: SavedQuarterSnapshot, savedBy?: string | null) {
+  return {
+    id: snapshot.id,
+    company_name: snapshot.companyName,
+    quarter_key: snapshot.quarterKey,
+    quarter_label: snapshot.quarterLabel,
+    saved_at: snapshot.savedAt,
+    saved_by: savedBy ?? null,
+    raw_statement_rows: snapshot.rawStatementRows,
+    adjusted_statement_rows: snapshot.adjustedStatementRows,
+    source: snapshot.source,
+    is_deleted: false,
+    deleted_at: null,
+    deleted_by: null
+  };
+}
+
 async function loadDatasets(supabase: ReturnType<typeof createClient>) {
   const { data, error } = await supabase
     .from("datasets")
@@ -70,13 +87,26 @@ async function loadDatasets(supabase: ReturnType<typeof createClient>) {
 
   const active: SavedQuarterSnapshot[] = [];
   const trashed: SavedQuarterSnapshot[] = [];
+  const normalizedRows: Array<ReturnType<typeof toDatasetRow>> = [];
 
   for (const item of (data ?? []) as DatasetRow[]) {
     const mapped = mapDatasetRow(item);
+    const normalized = normalizeSavedQuarterSnapshot(mapped);
+    if (!item.is_deleted && JSON.stringify(mapped) !== JSON.stringify(normalized)) {
+      normalizedRows.push(toDatasetRow(normalized));
+    }
+
     if (item.is_deleted) {
-      trashed.push(mapped);
+      trashed.push(normalized);
     } else {
-      active.push(mapped);
+      active.push(normalized);
+    }
+  }
+
+  if (normalizedRows.length) {
+    const { error: normalizeError } = await supabase.from("datasets").upsert(normalizedRows, { onConflict: "id" });
+    if (normalizeError) {
+      throw normalizeError;
     }
   }
 
@@ -111,20 +141,9 @@ export async function PUT(request: Request) {
   }
 
   try {
-    const rows = snapshots.map((snapshot) => ({
-      id: snapshot.id,
-      company_name: snapshot.companyName,
-      quarter_key: snapshot.quarterKey,
-      quarter_label: snapshot.quarterLabel,
-      saved_at: snapshot.savedAt,
-      saved_by: user.email,
-      raw_statement_rows: snapshot.rawStatementRows,
-      adjusted_statement_rows: snapshot.adjustedStatementRows,
-      source: snapshot.source,
-      is_deleted: false,
-      deleted_at: null,
-      deleted_by: null
-    }));
+    const rows = snapshots
+      .map((snapshot) => normalizeSavedQuarterSnapshot(snapshot))
+      .map((snapshot) => toDatasetRow(snapshot, user.email));
 
     const { error } = await supabase.from("datasets").upsert(rows, { onConflict: "id" });
     if (error) {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAllowedUser } from "@/lib/supabase/access";
 import { DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG } from "@/lib/validation/defaults";
-import type { SavedQuarterSnapshot } from "@/lib/validation/report";
+import { normalizeSavedQuarterSnapshot, type SavedQuarterSnapshot } from "@/lib/validation/report";
 
 export const runtime = "nodejs";
 
@@ -67,7 +67,7 @@ async function loadDatasets(supabase: ReturnType<typeof createClient>) {
   const trashedDatasets: SavedQuarterSnapshot[] = [];
 
   for (const item of (data ?? []) as DatasetRow[]) {
-    const mapped = mapDatasetRow(item);
+    const mapped = normalizeSavedQuarterSnapshot(mapDatasetRow(item));
     if (item.is_deleted) {
       trashedDatasets.push(mapped);
     } else {

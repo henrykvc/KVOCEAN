@@ -40,6 +40,7 @@ import {
   formatMetricRatio,
   formatMetricValue,
   isTurnoverMetricLabel,
+  normalizePasteEditsForValidation,
   type MetricCalculationInput,
   type FinalMetricRow,
   type MetricCalculationDetail,
@@ -1343,6 +1344,23 @@ export function ValidatorApp() {
     return relations;
   }, [classificationCatalog]);
 
+  useEffect(() => {
+    const normalizedPasteEdits = normalizePasteEditsForValidation({
+      pastedText,
+      selectedCompany,
+      logicConfig,
+      companyConfigs,
+      classificationGroups,
+      pasteEdits,
+      nameEdits,
+      sessionSignFixes
+    });
+
+    if (JSON.stringify(normalizedPasteEdits) !== JSON.stringify(pasteEdits)) {
+      setPasteEdits(normalizedPasteEdits);
+    }
+  }, [pastedText, selectedCompany, logicConfig, companyConfigs, classificationGroups, pasteEdits, nameEdits, sessionSignFixes]);
+
   function resetAdjustments() {
     setPasteEdits({});
     setNameEdits({});
@@ -1416,10 +1434,21 @@ export function ValidatorApp() {
   }
 
   function loadDatasetIntoValidator(dataset: SavedQuarterSnapshot) {
+    const normalizedPasteEdits = normalizePasteEditsForValidation({
+      pastedText: dataset.source.pastedText,
+      selectedCompany: dataset.companyName,
+      logicConfig: dataset.source.logicConfig,
+      companyConfigs: dataset.source.companyConfigs,
+      classificationGroups: dataset.source.classificationGroups,
+      pasteEdits: dataset.source.pasteEdits,
+      nameEdits: dataset.source.nameEdits ?? {},
+      sessionSignFixes: cloneSessionSignFixes(dataset.source.sessionSignFixes)
+    });
+
     setPastedText(dataset.source.pastedText);
     setTolerance(dataset.source.tolerance);
     setSelectedCompany(dataset.companyName);
-    setPasteEdits({ ...dataset.source.pasteEdits });
+    setPasteEdits(normalizedPasteEdits);
     setNameEdits({ ...(dataset.source.nameEdits ?? {}) });
     setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
     setSelectedDatasetId(dataset.id);
@@ -1759,7 +1788,25 @@ export function ValidatorApp() {
   }
 
   function updateDetailSign(sect: string, acct: string, nextSign: SignCode) {
-    applySessionFix(sect, acct, nextSign);
+    const nextSessionSignFixes = {
+      ...sessionSignFixes,
+      [sect]: {
+        ...(sessionSignFixes[sect] ?? {}),
+        [acct]: nextSign
+      }
+    };
+
+    setSessionSignFixes(nextSessionSignFixes);
+    setPasteEdits((prev) => normalizePasteEditsForValidation({
+      pastedText,
+      selectedCompany,
+      logicConfig,
+      companyConfigs,
+      classificationGroups,
+      pasteEdits: prev,
+      nameEdits,
+      sessionSignFixes: nextSessionSignFixes
+    }));
   }
 
   function applyClassificationCatalog(nextCatalog: ClassificationCatalogGroup[], showFeedback = false) {
@@ -2858,17 +2905,6 @@ export function ValidatorApp() {
                   <div>
                     <h3>분류 항목 편집</h3>
                     <p className="muted">수식에 필요한 대표 항목과 원본 계정 목록만 간단하게 관리합니다. 상위 확정 항목은 시스템 고정값으로 유지하고 여기서 숨깁니다.</p>
-                  </div>
-                  <div className="inline-actions">
-                      <button className="ghost-button" onClick={() => updateClassificationCatalog((prev) => [...prev, {
-                      groupId: `${Date.now()}`,
-                      majorCategory: "",
-                      middleCategory: "",
-                      smallCategory: "",
-                      sign: "",
-                      canonicalKey: "",
-                      aliases: []
-                    }])}>분류 묶음 추가</button>
                   </div>
                 </div>
                 <div className="report-table-wrap">
