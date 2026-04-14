@@ -627,6 +627,35 @@ function buildRequestedFormulaRows() {
   ];
 }
 
+const REPORT_METRIC_HELP_TEXT = {
+  자산: "자산총계입니다.",
+  유동자산: "1년 이내 현금화되거나 사용될 자산입니다.",
+  비유동자산: "1년을 초과해 보유하는 자산입니다.",
+  부채: "부채총계입니다.",
+  유동부채: "1년 이내 상환해야 하는 부채입니다.",
+  비유동부채: "1년을 초과해 상환하는 부채입니다.",
+  자본: "자본총계입니다.",
+  매출액: "회사의 영업활동으로 인식한 매출 총액입니다.",
+  매출원가: "매출을 만들기 위해 직접 발생한 원가입니다.",
+  판매비와관리비: "매출원가를 제외한 주요 영업비용입니다.",
+  영업이익: "매출액 - 매출원가 - 판매비와관리비입니다.",
+  영업외수익: "본업 외에서 발생한 수익입니다.",
+  영업외비용: "본업 외에서 발생한 비용입니다.",
+  월평균지출액: "(매출액 - 영업이익 - 감가상각비계) / 경과월수입니다.",
+  정상영업순환주기: "매출채권회전기간 + 재고자산회전기간입니다."
+} satisfies Record<string, string>;
+
+const REQUESTED_FORMULA_HELP_TEXT = buildRequestedFormulaRows().reduce<Record<string, string>>((acc, row) => {
+  acc[normalizeMetricLabel(row.항목)] = `${row.항목} = ${row.수식}`;
+  return acc;
+}, {});
+
+function getReportMetricHelpText(label: string) {
+  return REQUESTED_FORMULA_HELP_TEXT[normalizeMetricLabel(label)]
+    ?? REPORT_METRIC_HELP_TEXT[normalizeMetricLabel(label) as keyof typeof REPORT_METRIC_HELP_TEXT]
+    ?? null;
+}
+
 function buildInitialComparisonSelections(items: SavedQuarterSnapshot[]): ComparisonSelection[] {
   return Array.from({ length: 4 }, (_, index) => {
     const dataset = items[index];
@@ -893,6 +922,7 @@ export function ValidatorApp() {
   const [sameCompanyMode, setSameCompanyMode] = useState(false);
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
+  const [activeMetricHelpKey, setActiveMetricHelpKey] = useState<string | null>(null);
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
   const [datasetActionState, setDatasetActionState] = useState<"idle" | "saving" | "deleting" | "restoring" | "purging">("idle");
   const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
@@ -1250,6 +1280,30 @@ export function ValidatorApp() {
       .filter(({ group }) => MANAGED_CLASSIFICATION_KEY_SET.has(group.canonicalKey.trim())),
     [classificationCatalog]
   );
+  const classificationParentLabels = useMemo(() => {
+    const relations = new Map<string, string[]>();
+
+    classificationCatalog.forEach((group) => {
+      const parentLabel = group.canonicalKey.trim();
+      if (!parentLabel) {
+        return;
+      }
+
+      sanitizeClassificationAliases(group.aliases).forEach((alias) => {
+        const childKey = alias.trim();
+        if (!childKey || normalizeAccountDictionaryKey(childKey) === normalizeAccountDictionaryKey(parentLabel)) {
+          return;
+        }
+
+        const existing = relations.get(normalizeAccountDictionaryKey(childKey)) ?? [];
+        if (!existing.includes(parentLabel)) {
+          relations.set(normalizeAccountDictionaryKey(childKey), [...existing, parentLabel]);
+        }
+      });
+    });
+
+    return relations;
+  }, [classificationCatalog]);
 
   function resetAdjustments() {
     setPasteEdits({});
@@ -1749,6 +1803,10 @@ export function ValidatorApp() {
     }));
   }
 
+  function toggleMetricHelp(metricKey: string) {
+    setActiveMetricHelpKey((prev) => (prev === metricKey ? null : metricKey));
+  }
+
   function resetConfig() {
     const defaults = getDefaultPersistedState();
     setLogicConfig(cloneLogicConfig(defaults.logicConfig));
@@ -1913,7 +1971,7 @@ export function ValidatorApp() {
       <section className="page-shell">
         <section className="hero">
         <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
-        <h1>붙여넣고 바로 확인하는 OCR 검증</h1>
+        <h1>Challenge the Status Quo</h1>
         <p>{sharedStateReady ? "공용 Supabase 저장소와 동기화된 상태로 작업합니다." : "공용 Supabase 저장소를 불러오는 중입니다..."}</p>
         <div className="hero-meta">
           <span className="pill">1. 텍스트 붙여넣기</span>
@@ -2493,13 +2551,35 @@ export function ValidatorApp() {
                                   {(() => {
                                     const metricKey = buildReportMetricKey(section.title, row.label);
                                     const metricExpanded = expandedReportMetrics[metricKey] ?? false;
+                                    const metricHelpText = getReportMetricHelpText(row.label);
+                                    const metricHelpOpen = activeMetricHelpKey === metricKey;
                                     const ratioOnlySection = isRatioOnlySection(section.title);
                                     return (
                                       <>
                                 <tr key={`${section.title}-${row.label}-value`} className="final-value-row separated-row">
                                   <td className="final-metric-label">
                                     <div className="final-metric-heading">
-                                      <span>{row.label}</span>
+                                      <div className="metric-help-wrap">
+                                        <span>{row.label}</span>
+                                        {metricHelpText && (
+                                          <div className="metric-help-anchor">
+                                            <button
+                                              type="button"
+                                              className={`metric-help-button ${metricHelpOpen ? "active" : ""}`.trim()}
+                                              aria-label={`${row.label} 설명 보기`}
+                                              aria-expanded={metricHelpOpen}
+                                              onClick={() => toggleMetricHelp(metricKey)}
+                                            >
+                                              ?
+                                            </button>
+                                            {metricHelpOpen && (
+                                              <div className="metric-help-popover" role="note">
+                                                {metricHelpText}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
                                       {showReportValidation && (
                                         <button className="tiny-button final-detail-toggle" onClick={() => toggleReportMetric(metricKey)}>
                                           {metricExpanded ? "계산 접기" : "계산 보기"}
@@ -2739,7 +2819,22 @@ export function ValidatorApp() {
                     <tbody>
                       {editableClassificationCatalog.map(({ group, index }) => (
                         <tr key={`classification-group-${group.groupId}-${index}`}>
-                          <td><input className="input" value={group.canonicalKey} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))} /></td>
+                          <td>
+                            <div className="classification-key-cell">
+                              <input className="input" value={group.canonicalKey} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))} />
+                              {(() => {
+                                const parentLabels = classificationParentLabels.get(normalizeAccountDictionaryKey(group.canonicalKey.trim())) ?? [];
+                                if (!parentLabels.length) {
+                                  return null;
+                                }
+                                return (
+                                  <p className="classification-parent-note">
+                                    {parentLabels.map((label) => `${label}으로 귀속`).join(", ")}
+                                  </p>
+                                );
+                              })()}
+                            </div>
+                          </td>
                           <td>
                             <textarea
                               className="textarea classification-textarea"
