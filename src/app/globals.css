@@ -44,8 +44,8 @@ body {
 }
 
 .workspace-bar {
-  width: calc(100vw - 40px);
-  max-width: 1840px;
+  width: calc(100vw - 24px);
+  max-width: 2040px;
   margin: 8px auto 0;
   padding: 10px 14px;
   border: 1px solid rgba(49, 130, 246, 0.14);
@@ -228,8 +228,8 @@ a {
 }
 
 .workspace-shell {
-  width: calc(100vw - 40px);
-  max-width: 1840px;
+  width: calc(100vw - 24px);
+  max-width: 2040px;
   margin: 8px auto 32px;
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -392,7 +392,7 @@ a {
 }
 
 .fixed-comparison-table {
-  min-width: 1400px;
+  min-width: 1560px;
 }
 
 .comparison-section-row td {
@@ -441,10 +441,11 @@ a {
   min-width: 220px;
   font-weight: 700;
   background: #fcfcfd;
+  vertical-align: top;
 }
 
 .final-output-compare-panel {
-  padding: 20px;
+  padding: 24px;
 }
 
 .summary-label,

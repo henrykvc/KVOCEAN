@@ -2551,35 +2551,13 @@ export function ValidatorApp() {
                                   {(() => {
                                     const metricKey = buildReportMetricKey(section.title, row.label);
                                     const metricExpanded = expandedReportMetrics[metricKey] ?? false;
-                                    const metricHelpText = getReportMetricHelpText(row.label);
-                                    const metricHelpOpen = activeMetricHelpKey === metricKey;
                                     const ratioOnlySection = isRatioOnlySection(section.title);
                                     return (
                                       <>
                                 <tr key={`${section.title}-${row.label}-value`} className="final-value-row separated-row">
                                   <td className="final-metric-label">
                                     <div className="final-metric-heading">
-                                      <div className="metric-help-wrap">
-                                        <span>{row.label}</span>
-                                        {metricHelpText && (
-                                          <div className="metric-help-anchor">
-                                            <button
-                                              type="button"
-                                              className={`metric-help-button ${metricHelpOpen ? "active" : ""}`.trim()}
-                                              aria-label={`${row.label} 설명 보기`}
-                                              aria-expanded={metricHelpOpen}
-                                              onClick={() => toggleMetricHelp(metricKey)}
-                                            >
-                                              ?
-                                            </button>
-                                            {metricHelpOpen && (
-                                              <div className="metric-help-popover" role="note">
-                                                {metricHelpText}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
+                                      <span>{row.label}</span>
                                       {showReportValidation && (
                                         <button className="tiny-button final-detail-toggle" onClick={() => toggleReportMetric(metricKey)}>
                                           {metricExpanded ? "계산 접기" : "계산 보기"}
@@ -3110,7 +3088,37 @@ export function ValidatorApp() {
                       </tr>
                       {section.rows.map((row) => (
                         <tr key={`summary-row-${section.title}-${row.label}`}>
-                          <td className="formula-label-cell comparison-item-cell">{row.label}</td>
+                          <td className="formula-label-cell comparison-item-cell">
+                            {(() => {
+                              const metricKey = `compare::${buildReportMetricKey(section.title, row.label)}`;
+                              const metricHelpText = getReportMetricHelpText(row.label);
+                              const metricHelpOpen = activeMetricHelpKey === metricKey;
+
+                              return (
+                                <div className="metric-help-wrap">
+                                  <span>{row.label}</span>
+                                  {metricHelpText && (
+                                    <div className="metric-help-anchor">
+                                      <button
+                                        type="button"
+                                        className={`metric-help-button ${metricHelpOpen ? "active" : ""}`.trim()}
+                                        aria-label={`${row.label} 설명 보기`}
+                                        aria-expanded={metricHelpOpen}
+                                        onClick={() => toggleMetricHelp(metricKey)}
+                                      >
+                                        ?
+                                      </button>
+                                      {metricHelpOpen && (
+                                        <div className="metric-help-popover" role="note">
+                                          {metricHelpText}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           {comparisonSelections.map((selection) => {
                             const metric = findComparisonMetric(section.title, row.label, selection.slotId);
                             const ratioOnlySection = isRatioOnlySection(section.title);
