@@ -98,6 +98,12 @@ type TopViewKey = "menu" | "final-output";
 
 const DEFAULT_INDUSTRY_OPTIONS = ["서비스", "게임", "기술", "헬스케어", "크립토"] as const;
 
+type PendingInsertedRow = {
+  section: string;
+  accountName: string;
+  value: string;
+};
+
 type SectionAccountDbEntry = {
   entryKey: string;
   section: string;
@@ -693,6 +699,73 @@ function getDisplayCompanyName(companyName: string) {
   return companyName.trim() === "로지스팟재무제표" ? "로지스팟" : companyName;
 }
 
+function buildPastedTextFromMatrix(catRow: string[], nameRow: string[], dataRows: Array<Array<string | number | null>>) {
+  const rows = [catRow, nameRow, ...dataRows].map((row) => row.map((cell) => cell ?? "").join("\t"));
+  return rows.join("\n");
+}
+
+function buildEffectiveDataRows(dataRows: Array<Array<string | number | null>>, pasteEdits: Record<string, number>) {
+  return dataRows.map((row, rowIndex) => row.map((value, colIndex) => {
+    const edited = pasteEdits[pasteEditKey(rowIndex, colIndex)];
+    return edited !== undefined ? edited : value;
+  }));
+}
+
+function buildEffectiveSections(catRow: string[], length: number) {
+  let current = "";
+  return Array.from({ length }, (_, index) => {
+    const next = catRow[index]?.trim() ?? "";
+    if (next) {
+      current = next;
+    }
+    return current;
+  });
+}
+
+function removeColumnFromMatrix(catRow: string[], nameRow: string[], dataRows: Array<Array<string | number | null>>, colIndex: number) {
+  const nextCatRow = [...catRow];
+  const removedSectionLabel = nextCatRow[colIndex]?.trim() ?? "";
+  nextCatRow.splice(colIndex, 1);
+  if (removedSectionLabel && colIndex < nextCatRow.length && !(nextCatRow[colIndex]?.trim())) {
+    nextCatRow[colIndex] = removedSectionLabel;
+  }
+
+  return {
+    catRow: nextCatRow,
+    nameRow: nameRow.filter((_, index) => index !== colIndex),
+    dataRows: dataRows.map((row) => row.filter((_, index) => index !== colIndex))
+  };
+}
+
+function insertColumnIntoMatrix(
+  catRow: string[],
+  nameRow: string[],
+  dataRows: Array<Array<string | number | null>>,
+  insertIndex: number,
+  section: string,
+  accountName: string,
+  value: number,
+  targetRowIndex: number
+) {
+  const nextCatRow = [...catRow];
+  const nextNameRow = [...nameRow];
+  const nextDataRows = dataRows.map((row) => [...row]);
+  const previousSection = insertIndex > 0 ? buildEffectiveSections(catRow, nameRow.length)[insertIndex - 1] : "";
+  const catCellValue = previousSection === section ? "" : section;
+
+  nextCatRow.splice(insertIndex, 0, catCellValue);
+  nextNameRow.splice(insertIndex, 0, accountName);
+  nextDataRows.forEach((row, rowIndex) => {
+    row.splice(insertIndex, 0, rowIndex === targetRowIndex ? value : "");
+  });
+
+  return {
+    catRow: nextCatRow,
+    nameRow: nextNameRow,
+    dataRows: nextDataRows
+  };
+}
+
 function buildInitialComparisonSelections(items: SavedQuarterSnapshot[]): ComparisonSelection[] {
   return Array.from({ length: 4 }, (_, index) => {
     const dataset = items[index];
@@ -960,6 +1033,7 @@ export function ValidatorApp() {
   const [showReportValidation, setShowReportValidation] = useState(false);
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [activeMetricHelpKey, setActiveMetricHelpKey] = useState<string | null>(null);
+  const [pendingInsertedRows, setPendingInsertedRows] = useState<Record<string, PendingInsertedRow>>({});
   const [activeIndustryEditor, setActiveIndustryEditor] = useState<string | null>(null);
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
   const [datasetActionState, setDatasetActionState] = useState<"idle" | "saving" | "deleting" | "restoring" | "purging">("idle");
@@ -1365,6 +1439,7 @@ export function ValidatorApp() {
     setPasteEdits({});
     setNameEdits({});
     setSessionSignFixes({});
+    setPendingInsertedRows({});
   }
 
   async function saveCurrentDataset() {
@@ -1451,6 +1526,7 @@ export function ValidatorApp() {
     setPasteEdits(normalizedPasteEdits);
     setNameEdits({ ...(dataset.source.nameEdits ?? {}) });
     setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
+    setPendingInsertedRows({});
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
   }
@@ -1683,29 +1759,96 @@ export function ValidatorApp() {
     });
   }
 
-  function updateEditableSign(rowIndex: number, colIndex: number, rawValue: number, currentValue: number, nextMode: "raw" | "positive" | "negative") {
-    if (nextMode === "raw") {
-      updateEditableValue(rowIndex, colIndex, rawValue, String(rawValue));
-      return;
-    }
-
-    const magnitude = Math.abs(currentValue);
-    const nextValue = nextMode === "negative" ? -magnitude : magnitude;
-    updateEditableValue(rowIndex, colIndex, rawValue, String(nextValue));
-  }
-
-  function getEditableSignMode(rawValue: number, currentValue: number) {
-    if (Math.abs(currentValue - rawValue) < 0.5) {
-      return "raw" as const;
-    }
-
-    return currentValue < 0 ? "negative" as const : "positive" as const;
-  }
-
   function applySuggestedEdit(rowIndex: number, colIndex: number, nextValue: number) {
     const rawCell = validation.parsed.dataRows[rowIndex]?.[colIndex];
     const rawValue = typeof rawCell === "number" ? rawCell : 0;
     updateEditableValue(rowIndex, colIndex, rawValue, String(nextValue));
+  }
+
+  function removeValidationAccount(colIndex: number) {
+    if (!validation.parsed.nameRow[colIndex]) {
+      return;
+    }
+
+    const nextMatrix = removeColumnFromMatrix(
+      validation.parsed.catRow,
+      validation.editableNameRow,
+      buildEffectiveDataRows(validation.parsed.dataRows, pasteEdits),
+      colIndex
+    );
+
+    setPastedText(buildPastedTextFromMatrix(nextMatrix.catRow, nextMatrix.nameRow, nextMatrix.dataRows));
+    setPasteEdits({});
+    setNameEdits({});
+    setSessionSignFixes((prev) => {
+      const accountName = validation.editableNameRow[colIndex] ?? validation.parsed.nameRow[colIndex] ?? "";
+      const next = Object.fromEntries(Object.entries(prev).map(([section, items]) => {
+        const filtered = Object.fromEntries(Object.entries(items).filter(([name]) => name !== accountName));
+        return [section, filtered];
+      }).filter(([, items]) => Object.keys(items).length));
+      return next;
+    });
+  }
+
+  function updatePendingInsertedRow(cardKey: string, field: keyof PendingInsertedRow, value: string) {
+    setPendingInsertedRows((prev) => ({
+      ...prev,
+      [cardKey]: {
+        section: prev[cardKey]?.section ?? "",
+        accountName: prev[cardKey]?.accountName ?? "",
+        value: prev[cardKey]?.value ?? "",
+        [field]: value
+      }
+    }));
+  }
+
+  function openPendingInsertedRow(cardKey: string, section: string) {
+    setPendingInsertedRows((prev) => ({
+      ...prev,
+      [cardKey]: prev[cardKey] ?? {
+        section,
+        accountName: "",
+        value: ""
+      }
+    }));
+  }
+
+  function closePendingInsertedRow(cardKey: string) {
+    setPendingInsertedRows((prev) => {
+      const next = { ...prev };
+      delete next[cardKey];
+      return next;
+    });
+  }
+
+  function addValidationAccount(cardKey: string, rowIndex: number, defaultSection: string) {
+    const draft = pendingInsertedRows[cardKey];
+    const section = draft?.section.trim() || defaultSection.trim();
+    const accountName = draft?.accountName.trim() ?? "";
+    const value = safeFloat(draft?.value ?? "");
+
+    if (!section || !accountName || value === null) {
+      return;
+    }
+
+    const effectiveSections = buildEffectiveSections(validation.parsed.catRow, validation.editableNameRow.length);
+    const lastSectionIndex = effectiveSections.reduce((acc, item, index) => item === section ? index : acc, -1);
+    const insertIndex = lastSectionIndex >= 0 ? lastSectionIndex + 1 : validation.editableNameRow.length;
+    const nextMatrix = insertColumnIntoMatrix(
+      validation.parsed.catRow,
+      validation.editableNameRow,
+      buildEffectiveDataRows(validation.parsed.dataRows, pasteEdits),
+      insertIndex,
+      section,
+      accountName,
+      value,
+      rowIndex
+    );
+
+    setPastedText(buildPastedTextFromMatrix(nextMatrix.catRow, nextMatrix.nameRow, nextMatrix.dataRows));
+    setPasteEdits({});
+    setNameEdits({});
+    closePendingInsertedRow(cardKey);
   }
 
   function hasPendingResultAdjustments(result: ValidationResult) {
@@ -2314,6 +2457,8 @@ export function ValidatorApp() {
                         const resultStatus = getResultStatus(result);
                         const hasPendingAdjustments = hasPendingResultAdjustments(result);
                         const isOpen = resultOpenState[cardKey] ?? (!result.passed || hasPendingAdjustments);
+                        const pendingInsertedRow = pendingInsertedRows[cardKey];
+                        const targetRowIndex = result.parent_row ?? result.detail[0]?._row ?? 0;
                         const currentParentValue = result.parent_row !== undefined && result.parent_col !== undefined && pasteEdits[pasteEditKey(result.parent_row, result.parent_col)] !== undefined
                           ? pasteEdits[pasteEditKey(result.parent_row, result.parent_col)]
                           : result.parent_val;
@@ -2333,6 +2478,43 @@ export function ValidatorApp() {
                               </div>
                             </div>
                             {isOpen && <div className="result-body">
+                              <div className="result-inline-actions">
+                                <button className="ghost-button" type="button" onClick={() => openPendingInsertedRow(cardKey, resultSection)}>
+                                  행 추가
+                                </button>
+                              </div>
+                              {pendingInsertedRow && (
+                                <div className="insert-row-panel">
+                                  <input
+                                    className="mini-input"
+                                    type="text"
+                                    value={pendingInsertedRow.section}
+                                    onChange={(event) => updatePendingInsertedRow(cardKey, "section", event.target.value)}
+                                    placeholder="섹션"
+                                  />
+                                  <input
+                                    className="mini-input insert-name-input"
+                                    type="text"
+                                    value={pendingInsertedRow.accountName}
+                                    onChange={(event) => updatePendingInsertedRow(cardKey, "accountName", event.target.value)}
+                                    placeholder="계정명"
+                                  />
+                                  <input
+                                    className="mini-input"
+                                    type="number"
+                                    step={1}
+                                    value={pendingInsertedRow.value}
+                                    onChange={(event) => updatePendingInsertedRow(cardKey, "value", event.target.value)}
+                                    placeholder="값"
+                                  />
+                                  <button className="secondary-button" type="button" onClick={() => addValidationAccount(cardKey, targetRowIndex, resultSection)}>
+                                    추가
+                                  </button>
+                                  <button className="ghost-button" type="button" onClick={() => closePendingInsertedRow(cardKey)}>
+                                    닫기
+                                  </button>
+                                </div>
+                              )}
                               {result.detail.length > 0 ? (
                                 <div style={{ overflowX: "auto" }}>
                                   <table className="table">
@@ -2341,7 +2523,6 @@ export function ValidatorApp() {
                                         <th>계정명</th>
                                         <th>원본값</th>
                                         <th>OCR 수정값</th>
-                                        <th>OCR 부호</th>
                                         <th>검증 부호</th>
                                         <th>적용값</th>
                                       </tr>
@@ -2353,26 +2534,25 @@ export function ValidatorApp() {
                                         const currentSign = displayedSignToCode(detail.부호);
                                         return (
                                           <tr key={`${detail.계정명}-${index}`}>
-                                            <td>{detail.계정명}</td>
+                                            <td>
+                                              <div className="result-account-cell">
+                                                <span>{detail.계정명}</span>
+                                                {detail._col !== undefined && (
+                                                  <button
+                                                    className="icon-button danger"
+                                                    type="button"
+                                                    aria-label={`${detail.계정명} 삭제`}
+                                                    onClick={() => removeValidationAccount(detail._col!)}
+                                                  >
+                                                    🗑
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </td>
                                             <td>{formatNumber(detail.원본값)}</td>
                                             <td>
                                               {detail._row !== undefined && detail._col !== undefined ? (
                                                 <input className="mini-input" type="number" step={1} value={String(currentValue)} onChange={(event) => updateEditableValue(detail._row!, detail._col!, detail.원본값, event.target.value)} />
-                                              ) : (
-                                                <span className="muted">자동 계산</span>
-                                              )}
-                                            </td>
-                                            <td>
-                                              {detail._row !== undefined && detail._col !== undefined ? (
-                                                <select
-                                                  className="mini-select"
-                                                  value={getEditableSignMode(detail.원본값, currentValue)}
-                                                  onChange={(event) => updateEditableSign(detail._row!, detail._col!, detail.원본값, currentValue, event.target.value as "raw" | "positive" | "negative")}
-                                                >
-                                                  <option value="raw">원본 유지</option>
-                                                  <option value="positive">양수(+)</option>
-                                                  <option value="negative">음수(-)</option>
-                                                </select>
                                               ) : (
                                                 <span className="muted">자동 계산</span>
                                               )}
@@ -2401,7 +2581,7 @@ export function ValidatorApp() {
 
                               {result.detail.length > 0 && (
                                 <div className="rule-helper muted">
-                                  `OCR 수정값`과 `OCR 부호`는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증에만 적용하거나 공통/회사 규칙으로 저장할 수 있습니다.
+                                  `OCR 수정값`과 계정 삭제/추가는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증에만 적용하거나 공통/회사 규칙으로 저장할 수 있습니다.
                                 </div>
                               )}
 
