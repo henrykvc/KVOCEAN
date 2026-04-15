@@ -815,6 +815,44 @@ function getPreferredAdjustedMetric(context: MetricContext, periodKey: string, n
   return getAdjustedMetricSum(context, periodKey, names, sectionName);
 }
 
+function getPreferredProfitabilityNetIncome(context: MetricContext, periodKey: string) {
+  const continuing = getAdjustedExactMetricValue(
+    context,
+    periodKey,
+    ["계속사업당기순이익", "계속사업당기순손실", "계속사업당기순이익(손실)"],
+    ["계속사업당기순이익"]
+  );
+
+  if (continuing !== null) {
+    return {
+      label: "계속사업당기순이익",
+      formulaLabel: "계속사업당기순이익",
+      value: continuing
+    };
+  }
+
+  const netIncome = getAdjustedExactMetricValue(
+    context,
+    periodKey,
+    ["당기순이익", "당기순손실", "당기순이익(손실)", "당기순손익", "당기순이익(당기순손실)", "연결당기순이익"],
+    ["당기순이익"]
+  );
+
+  if (netIncome !== null) {
+    return {
+      label: "당기순이익",
+      formulaLabel: "당기순이익(대체)",
+      value: netIncome
+    };
+  }
+
+  return {
+    label: "계속사업당기순이익",
+    formulaLabel: "계속사업당기순이익",
+    value: null
+  };
+}
+
 function getPreferredTotalEquity(context: MetricContext, periodKey: string) {
   return getAdjustedExactMetricValue(context, periodKey, ["자본총계", "총자본"], ["자본"], "재무상태표");
 }
@@ -1373,36 +1411,36 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
   const profitabilitySpecs: MetricSpec[] = [
     {
       label: "매출액순이익률",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100),
+      ratio: (period, current) => safeDivide(getPreferredProfitabilityNetIncome(current, period.key).value, getPreferredAdjustedMetric(current, period.key, ["매출액"]), 100),
       ratioDetail: (period, current, result) => {
-        const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
+        const netIncome = getPreferredProfitabilityNetIncome(current, period.key);
         const sales = getPreferredAdjustedMetric(current, period.key, ["매출액"]);
-        return createCalculationDetail("계속사업당기순이익 / 매출액 * 100", result, [
-          { label: "계속사업당기순이익", value: netIncome },
+        return createCalculationDetail(`${netIncome.formulaLabel} / 매출액 * 100`, result, [
+          { label: netIncome.label, value: netIncome.value },
           { label: "매출액", value: sales }
         ], sales === 0 ? "매출액이 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "총자산이익률(ROA)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredTotalAssets(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getPreferredProfitabilityNetIncome(current, period.key).value, getPreferredTotalAssets(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
+        const netIncome = getPreferredProfitabilityNetIncome(current, period.key);
         const assets = getPreferredTotalAssets(current, period.key);
-        return createCalculationDetail("계속사업당기순이익 / 자산 * 100", result, [
-          { label: "계속사업당기순이익", value: netIncome },
+        return createCalculationDetail(`${netIncome.formulaLabel} / 자산 * 100`, result, [
+          { label: netIncome.label, value: netIncome.value },
           { label: "자산", value: assets }
         ], assets === 0 ? "자산이 0이라 비율을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "자기자본이익률(ROE)",
-      ratio: (period, current) => safeDivide(getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]), getPreferredTotalEquity(current, period.key), 100),
+      ratio: (period, current) => safeDivide(getPreferredProfitabilityNetIncome(current, period.key).value, getPreferredTotalEquity(current, period.key), 100),
       ratioDetail: (period, current, result) => {
-        const netIncome = getAdjustedMetricSum(current, period.key, ["계속사업당기순이익"]);
+        const netIncome = getPreferredProfitabilityNetIncome(current, period.key);
         const equity = getPreferredTotalEquity(current, period.key);
-        return createCalculationDetail("계속사업당기순이익 / 자본 * 100", result, [
-          { label: "계속사업당기순이익", value: netIncome },
+        return createCalculationDetail(`${netIncome.formulaLabel} / 자본 * 100`, result, [
+          { label: netIncome.label, value: netIncome.value },
           { label: "자본", value: equity }
         ], equity === 0 ? "자본이 0이라 비율을 계산하지 않았습니다." : undefined);
       }
