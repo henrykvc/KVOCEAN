@@ -942,13 +942,31 @@ function getPreviousPeriod(context: MetricContext, period: ReportPeriod) {
   return index >= 0 ? context.periods[index + 1] ?? null : null;
 }
 
-function getPeriodOffset(context: MetricContext, period: ReportPeriod, offset: number) {
-  const index = context.periods.findIndex((item) => item.key === period.key);
-  return index >= 0 ? context.periods[index + offset] ?? null : null;
+function getPeriodQuarter(period: ReportPeriod) {
+  if (!period.date) {
+    return null;
+  }
+
+  return Math.floor(period.date.getMonth() / 3) + 1;
 }
 
-function getThreeQuarterPriorPeriod(context: MetricContext, period: ReportPeriod) {
-  return getPeriodOffset(context, period, 3);
+function getYearStartPeriod(context: MetricContext, period: ReportPeriod) {
+  if (!period.date) {
+    return null;
+  }
+
+  const year = period.date.getFullYear();
+  return context.periods.find((item) => item.date && item.date.getFullYear() === year && getPeriodQuarter(item) === 1) ?? null;
+}
+
+function getPreviousYearSameQuarterPeriod(context: MetricContext, period: ReportPeriod) {
+  if (!period.date) {
+    return null;
+  }
+
+  const year = period.date.getFullYear() - 1;
+  const quarter = getPeriodQuarter(period);
+  return context.periods.find((item) => item.date && item.date.getFullYear() === year && getPeriodQuarter(item) === quarter) ?? null;
 }
 
 function formatPeriodInputLabel(prefix: string, period: ReportPeriod | null) {
@@ -1487,53 +1505,53 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
     {
       label: "총자산회전율",
       ratio: (period, current) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const averageAssets = basePeriod
           ? averageTwo(getPreferredTotalAssets(current, period.key), getPreferredTotalAssets(current, basePeriod.key))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageAssets, 1);
       },
       ratioDetail: (period, current, result) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const currentAssets = getPreferredTotalAssets(current, period.key);
         const baseAssets = basePeriod ? getPreferredTotalAssets(current, basePeriod.key) : null;
         const averageAssets = basePeriod ? averageTwo(currentAssets, baseAssets) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
-        return createCalculationDetail("매출액 / 기초기말 평균총자산", result, [
+        return createCalculationDetail("매출액 / ((해당연도 1분기 자산 + 현재 분기 자산) / 2)", result, [
           { label: "매출액", value: sales },
-          { label: formatPeriodInputLabel("기초 자산", basePeriod), value: baseAssets },
-          { label: formatPeriodInputLabel("기말 자산", period), value: currentAssets },
-          { label: "기초기말 평균총자산", value: averageAssets }
-        ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : averageAssets === 0 ? "평균총자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
+          { label: formatPeriodInputLabel("기초 자산(해당연도 1분기)", basePeriod), value: baseAssets },
+          { label: formatPeriodInputLabel("기말 자산(현재 분기)", period), value: currentAssets },
+          { label: "평균총자산", value: averageAssets }
+        ], !basePeriod ? "해당 연도 1분기 자산이 없어 계산하지 않았습니다." : averageAssets === 0 ? "평균총자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "매출채권회전율",
       ratio: (period, current) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const averageReceivables = basePeriod
           ? averageTwo(getClassifiedMetricSum(current, period.key, ["매출채권"]), getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출액"]), averageReceivables, 1);
       },
       ratioDetail: (period, current, result) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const currentReceivables = getClassifiedMetricSum(current, period.key, ["매출채권"]);
         const baseReceivables = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]) : null;
         const averageReceivables = basePeriod ? averageTwo(currentReceivables, baseReceivables) : null;
         const sales = getAdjustedMetricSum(current, period.key, ["매출액"]);
-        return createCalculationDetail("매출액 / 기초기말 평균매출채권", result, [
+        return createCalculationDetail("매출액 / ((해당연도 1분기 매출채권 + 현재 분기 매출채권) / 2)", result, [
           { label: "매출액", value: sales },
-          { label: formatPeriodInputLabel("기초 매출채권", basePeriod), value: baseReceivables },
-          { label: formatPeriodInputLabel("기말 매출채권", period), value: currentReceivables },
-          { label: "기초기말 평균매출채권", value: averageReceivables }
-        ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : averageReceivables === 0 ? "평균매출채권이 0이라 회전율을 계산하지 않았습니다." : undefined);
+          { label: formatPeriodInputLabel("기초 매출채권(해당연도 1분기)", basePeriod), value: baseReceivables },
+          { label: formatPeriodInputLabel("기말 매출채권(현재 분기)", period), value: currentReceivables },
+          { label: "평균매출채권", value: averageReceivables }
+        ], !basePeriod ? "해당 연도 1분기 매출채권이 없어 계산하지 않았습니다." : averageReceivables === 0 ? "평균매출채권이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "매출채권회전기간",
       amount: (period, current) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const averageReceivables = basePeriod
           ? averageTwo(getClassifiedMetricSum(current, period.key, ["매출채권"]), getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]))
           : null;
@@ -1541,7 +1559,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return turnover ? 365 / turnover : null;
       },
       amountDetail: (period, current, result) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const currentReceivables = getClassifiedMetricSum(current, period.key, ["매출채권"]);
         const baseReceivables = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]) : null;
         const averageReceivables = basePeriod ? averageTwo(currentReceivables, baseReceivables) : null;
@@ -1549,40 +1567,40 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const turnover = safeDivide(sales, averageReceivables, 1);
         return createCalculationDetail("365 / 매출채권회전율", result, [
           { label: "매출액", value: sales },
-          { label: formatPeriodInputLabel("기초 매출채권", basePeriod), value: baseReceivables },
-          { label: formatPeriodInputLabel("기말 매출채권", period), value: currentReceivables },
-          { label: "기초기말 평균매출채권", value: averageReceivables },
+          { label: formatPeriodInputLabel("기초 매출채권(해당연도 1분기)", basePeriod), value: baseReceivables },
+          { label: formatPeriodInputLabel("기말 매출채권(현재 분기)", period), value: currentReceivables },
+          { label: "평균매출채권", value: averageReceivables },
           { label: "매출채권회전율", value: turnover }
-        ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);
+        ], !basePeriod ? "해당 연도 1분기 매출채권이 없어 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "재고자산회전율",
       ratio: (period, current) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const averageInventory = basePeriod
           ? averageTwo(getClassifiedMetricSum(current, period.key, ["재고자산"]), getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]))
           : null;
         return safeDivide(getAdjustedMetricSum(current, period.key, ["매출원가"]), averageInventory, 1);
       },
       ratioDetail: (period, current, result) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const currentInventory = getClassifiedMetricSum(current, period.key, ["재고자산"]);
         const baseInventory = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]) : null;
         const averageInventory = basePeriod ? averageTwo(currentInventory, baseInventory) : null;
         const costOfSales = getAdjustedMetricSum(current, period.key, ["매출원가"]);
-        return createCalculationDetail("매출원가 / 기초기말 평균재고자산", result, [
+        return createCalculationDetail("매출원가 / ((해당연도 1분기 재고자산 + 현재 분기 재고자산) / 2)", result, [
           { label: "매출원가", value: costOfSales },
-          { label: formatPeriodInputLabel("기초 재고자산", basePeriod), value: baseInventory },
-          { label: formatPeriodInputLabel("기말 재고자산", period), value: currentInventory },
-          { label: "기초기말 평균재고자산", value: averageInventory }
-        ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : averageInventory === 0 ? "평균재고자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
+          { label: formatPeriodInputLabel("기초 재고자산(해당연도 1분기)", basePeriod), value: baseInventory },
+          { label: formatPeriodInputLabel("기말 재고자산(현재 분기)", period), value: currentInventory },
+          { label: "평균재고자산", value: averageInventory }
+        ], !basePeriod ? "해당 연도 1분기 재고자산이 없어 계산하지 않았습니다." : averageInventory === 0 ? "평균재고자산이 0이라 회전율을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "재고자산회전기간",
       amount: (period, current) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const averageInventory = basePeriod
           ? averageTwo(getClassifiedMetricSum(current, period.key, ["재고자산"]), getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]))
           : null;
@@ -1590,7 +1608,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return turnover ? 365 / turnover : null;
       },
       amountDetail: (period, current, result) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const currentInventory = getClassifiedMetricSum(current, period.key, ["재고자산"]);
         const baseInventory = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["재고자산"]) : null;
         const averageInventory = basePeriod ? averageTwo(currentInventory, baseInventory) : null;
@@ -1598,17 +1616,17 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const turnover = safeDivide(costOfSales, averageInventory, 1);
         return createCalculationDetail("365 / 재고자산회전율", result, [
           { label: "매출원가", value: costOfSales },
-          { label: formatPeriodInputLabel("기초 재고자산", basePeriod), value: baseInventory },
-          { label: formatPeriodInputLabel("기말 재고자산", period), value: currentInventory },
-          { label: "기초기말 평균재고자산", value: averageInventory },
+          { label: formatPeriodInputLabel("기초 재고자산(해당연도 1분기)", basePeriod), value: baseInventory },
+          { label: formatPeriodInputLabel("기말 재고자산(현재 분기)", period), value: currentInventory },
+          { label: "평균재고자산", value: averageInventory },
           { label: "재고자산회전율", value: turnover }
-        ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);
+        ], !basePeriod ? "해당 연도 1분기 재고자산이 없어 계산하지 않았습니다." : !turnover ? "회전율이 0 또는 비어 있어 기간을 계산하지 않았습니다." : undefined);
       }
     },
     {
       label: "정상영업순환주기",
       amount: (period, current) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const averageReceivables = basePeriod
           ? averageTwo(getClassifiedMetricSum(current, period.key, ["매출채권"]), getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]))
           : null;
@@ -1622,7 +1640,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return receivableDays !== null && inventoryDays !== null ? receivableDays + inventoryDays : null;
       },
       amountDetail: (period, current, result) => {
-        const basePeriod = getThreeQuarterPriorPeriod(current, period);
+        const basePeriod = getYearStartPeriod(current, period);
         const currentReceivables = getClassifiedMetricSum(current, period.key, ["매출채권"]);
         const baseReceivables = basePeriod ? getClassifiedMetricSum(current, basePeriod.key, ["매출채권"]) : null;
         const averageReceivables = basePeriod ? averageTwo(currentReceivables, baseReceivables) : null;
@@ -1638,14 +1656,14 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         return createCalculationDetail("매출채권회전기간 + 재고자산회전기간", result, [
           { label: "매출채권회전기간", value: receivableDays },
           { label: "재고자산회전기간", value: inventoryDays }
-        ], !basePeriod ? "전 분기 데이터 부족으로 계산하지 않았습니다." : undefined);
+        ], !basePeriod ? "해당 연도 1분기 기준 데이터가 없어 계산하지 않았습니다." : undefined);
       }
     }
   ];
 
   const growthSpecs: MetricSpec[] = [
     {
-      label: "매출액 증가율",
+      label: "매출액 증가율(QoQ)",
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         if (!previous) {
@@ -1661,14 +1679,37 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const previous = getPreviousPeriod(current, period);
         const currentSales = getAdjustedMetricSum(current, period.key, ["매출액"]);
         const previousSales = previous ? getAdjustedMetricSum(current, previous.key, ["매출액"]) : null;
-        return createCalculationDetail("(당기 매출액 - 전기 매출액) / 전기 매출액 * 100", result, [
+        return createCalculationDetail("(당기 매출액 - 직전 분기 매출액) / |직전 분기 매출액| * 100", result, [
           { label: "당기 매출액", value: currentSales },
-          { label: "전기 매출액", value: previousSales }
-        ], !previous ? "직전 분기가 없어 증가율을 계산하지 않았습니다." : previousSales === 0 ? "전기 매출액이 0이라 증가율을 계산하지 않았습니다." : undefined);
+          { label: previous ? `직전 분기 매출액 (${previous.label})` : "직전 분기 매출액", value: previousSales }
+        ], !previous ? "직전 분기가 없어 증가율을 계산하지 않았습니다." : previousSales === 0 ? "직전 분기 매출액이 0이라 증가율을 계산하지 않았습니다." : undefined);
       }
     },
     {
-      label: "영업이익 증가율",
+      label: "매출액 증가율(YoY)",
+      ratio: (period, current) => {
+        const previousYearSameQuarter = getPreviousYearSameQuarterPeriod(current, period);
+        if (!previousYearSameQuarter) {
+          return null;
+        }
+        const currentSales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        const previousYearSales = getAdjustedMetricSum(current, previousYearSameQuarter.key, ["매출액"]);
+        return currentSales !== null && previousYearSales !== null && previousYearSales !== 0
+          ? ((currentSales - previousYearSales) / Math.abs(previousYearSales)) * 100
+          : null;
+      },
+      ratioDetail: (period, current, result) => {
+        const previousYearSameQuarter = getPreviousYearSameQuarterPeriod(current, period);
+        const currentSales = getAdjustedMetricSum(current, period.key, ["매출액"]);
+        const previousYearSales = previousYearSameQuarter ? getAdjustedMetricSum(current, previousYearSameQuarter.key, ["매출액"]) : null;
+        return createCalculationDetail("(당기 매출액 - 전년도 동일분기 매출액) / |전년도 동일분기 매출액| * 100", result, [
+          { label: "당기 매출액", value: currentSales },
+          { label: previousYearSameQuarter ? `전년도 동일분기 매출액 (${previousYearSameQuarter.label})` : "전년도 동일분기 매출액", value: previousYearSales }
+        ], !previousYearSameQuarter ? "전년도 동일분기가 없어 증가율을 계산하지 않았습니다." : previousYearSales === 0 ? "전년도 동일분기 매출액이 0이라 증가율을 계산하지 않았습니다." : undefined);
+      }
+    },
+    {
+      label: "영업이익 증가율(QoQ)",
       ratio: (period, current) => {
         const previous = getPreviousPeriod(current, period);
         if (!previous) {
@@ -1684,10 +1725,33 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const previous = getPreviousPeriod(current, period);
         const currentOperating = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
         const previousOperating = previous ? getAdjustedMetricSum(current, previous.key, ["영업이익", "영업이익(손실)"]) : null;
-        return createCalculationDetail("(당기 영업이익 - 전기 영업이익) / 전기 영업이익 * 100", result, [
+        return createCalculationDetail("(당기 영업이익 - 직전 분기 영업이익) / |직전 분기 영업이익| * 100", result, [
           { label: "당기 영업이익", value: currentOperating },
-          { label: "전기 영업이익", value: previousOperating }
-        ], !previous ? "직전 분기가 없어 증가율을 계산하지 않았습니다." : previousOperating === 0 ? "전기 영업이익이 0이라 증가율을 계산하지 않았습니다." : undefined);
+          { label: previous ? `직전 분기 영업이익 (${previous.label})` : "직전 분기 영업이익", value: previousOperating }
+        ], !previous ? "직전 분기가 없어 증가율을 계산하지 않았습니다." : previousOperating === 0 ? "직전 분기 영업이익이 0이라 증가율을 계산하지 않았습니다." : undefined);
+      }
+    },
+    {
+      label: "영업이익 증가율(YoY)",
+      ratio: (period, current) => {
+        const previousYearSameQuarter = getPreviousYearSameQuarterPeriod(current, period);
+        if (!previousYearSameQuarter) {
+          return null;
+        }
+        const currentOperating = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
+        const previousYearOperating = getAdjustedMetricSum(current, previousYearSameQuarter.key, ["영업이익", "영업이익(손실)"]);
+        return currentOperating !== null && previousYearOperating !== null && previousYearOperating !== 0
+          ? ((currentOperating - previousYearOperating) / Math.abs(previousYearOperating)) * 100
+          : null;
+      },
+      ratioDetail: (period, current, result) => {
+        const previousYearSameQuarter = getPreviousYearSameQuarterPeriod(current, period);
+        const currentOperating = getAdjustedMetricSum(current, period.key, ["영업이익", "영업이익(손실)"]);
+        const previousYearOperating = previousYearSameQuarter ? getAdjustedMetricSum(current, previousYearSameQuarter.key, ["영업이익", "영업이익(손실)"]) : null;
+        return createCalculationDetail("(당기 영업이익 - 전년도 동일분기 영업이익) / |전년도 동일분기 영업이익| * 100", result, [
+          { label: "당기 영업이익", value: currentOperating },
+          { label: previousYearSameQuarter ? `전년도 동일분기 영업이익 (${previousYearSameQuarter.label})` : "전년도 동일분기 영업이익", value: previousYearOperating }
+        ], !previousYearSameQuarter ? "전년도 동일분기가 없어 증가율을 계산하지 않았습니다." : previousYearOperating === 0 ? "전년도 동일분기 영업이익이 0이라 증가율을 계산하지 않았습니다." : undefined);
       }
     }
   ];
