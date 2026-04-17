@@ -1633,6 +1633,24 @@ a {
   align-items: start;
 }
 
+.validate-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.validate-workspace.with-preview {
+  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
+}
+
+.validate-main-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
 .account-db-preview-panel {
   position: sticky;
   top: 16px;
@@ -1671,6 +1689,33 @@ a {
 .account-db-preview-value {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
+}
+
+.validate-preview-panel {
+  min-width: 0;
+}
+
+.validate-preview-row-body {
+  gap: 10px;
+}
+
+.validate-preview-table input {
+  width: 100%;
+}
+
+.validate-preview-number {
+  text-align: right;
+}
+
+.validate-preview-action-cell {
+  width: 76px;
+  text-align: center;
+}
+
+.validate-preview-action-cell .ghost-button,
+.validate-preview-action-cell .icon-button {
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .data-list {
@@ -1900,7 +1945,8 @@ a {
     gap: 12px;
   }
 
-  .account-db-layout.with-preview {
+  .account-db-layout.with-preview,
+  .validate-workspace.with-preview {
     grid-template-columns: 1fr;
   }
 

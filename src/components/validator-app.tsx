@@ -119,6 +119,28 @@ type SectionAccountDbEntry = {
   }>;
 };
 
+type ValidatePreviewDraft = {
+  accountName: string;
+  value: string;
+};
+
+type ValidatePreviewItem = {
+  sectionKey: string;
+  accountName: string;
+  colIndex: number;
+  rowIndex: number;
+  value: string | number | null;
+  rawName: string;
+  rawValue: number;
+  locked: boolean;
+};
+
+type ValidatePreviewGroup = {
+  rowIndex: number;
+  rowLabel: string;
+  sections: Array<[string, ValidatePreviewItem[]]>;
+};
+
 const ACCOUNT_DB_SECTIONS = {
   유동자산: ["유동자산"],
   비유동자산: ["비유동자산"],
@@ -206,6 +228,45 @@ function groupPreviewRowsBySection(rows: SavedQuarterSnapshot["adjustedStatement
   });
 
   return Array.from(grouped.entries());
+}
+
+function buildValidatePreviewGroups(args: {
+  catRow: string[];
+  nameRow: string[];
+  editableNameRow: string[];
+  dataRows: Array<Array<string | number | null>>;
+}) {
+  const effectiveSections = buildEffectiveSections(args.catRow, args.editableNameRow.length);
+  const dateIndex = args.nameRow.findIndex((name) => ["날짜", "date", "Date"].includes(name));
+
+  return args.dataRows.map((row, rowIndex) => {
+    const labelCell = dateIndex >= 0 ? row[dateIndex] : null;
+    const rowLabel = labelCell ? String(labelCell) : `데이터${rowIndex + 1}`;
+    const grouped = new Map<string, ValidatePreviewItem[]>();
+
+    args.editableNameRow.forEach((accountName, colIndex) => {
+      const sectionKey = effectiveSections[colIndex]?.trim() || "기타";
+      const items = grouped.get(sectionKey) ?? [];
+      const rawCell = args.dataRows[rowIndex]?.[colIndex];
+      items.push({
+        sectionKey,
+        accountName,
+        colIndex,
+        rowIndex,
+        value: row[colIndex],
+        rawName: args.nameRow[colIndex] ?? accountName,
+        rawValue: typeof rawCell === "number" ? rawCell : 0,
+        locked: isLockedPreviewNameCell(args.nameRow[colIndex] ?? accountName)
+      });
+      grouped.set(sectionKey, items);
+    });
+
+    return {
+      rowIndex,
+      rowLabel,
+      sections: Array.from(grouped.entries())
+    } satisfies ValidatePreviewGroup;
+  });
 }
 
 function normalizeMetricLabel(value: string) {
@@ -1037,6 +1098,7 @@ export function ValidatorApp() {
   const [expandedReportMetrics, setExpandedReportMetrics] = useState<Record<string, boolean>>({});
   const [activeMetricHelpKey, setActiveMetricHelpKey] = useState<string | null>(null);
   const [pendingInsertedRows, setPendingInsertedRows] = useState<Record<string, PendingInsertedRow>>({});
+  const [validatePreviewDrafts, setValidatePreviewDrafts] = useState<Record<string, ValidatePreviewDraft>>({});
   const [activeIndustryEditor, setActiveIndustryEditor] = useState<string | null>(null);
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
   const [datasetActionState, setDatasetActionState] = useState<"idle" | "saving" | "deleting" | "restoring" | "purging">("idle");
@@ -1333,6 +1395,15 @@ export function ValidatorApp() {
   const previewGroups = useMemo(
     () => buildPreviewGroups(validation.parsed.catRow, validation.parsed.nameRow),
     [validation.parsed.catRow, validation.parsed.nameRow]
+  );
+  const validatePreviewGroups = useMemo(
+    () => buildValidatePreviewGroups({
+      catRow: validation.parsed.catRow,
+      nameRow: validation.parsed.nameRow,
+      editableNameRow: validation.editableNameRow,
+      dataRows: buildEffectiveDataRows(validation.parsed.dataRows, pasteEdits)
+    }),
+    [validation.parsed.catRow, validation.parsed.nameRow, validation.editableNameRow, validation.parsed.dataRows, pasteEdits]
   );
   const selectedDataset = useMemo(
     () => savedDatasets.find((item) => item.id === selectedDatasetId) ?? null,
@@ -1852,6 +1923,52 @@ export function ValidatorApp() {
     setPasteEdits({});
     setNameEdits({});
     closePendingInsertedRow(cardKey);
+  }
+
+  function updateValidatePreviewDraft(rowIndex: number, section: string, field: keyof ValidatePreviewDraft, value: string) {
+    const draftKey = `${rowIndex}::${section}`;
+    setValidatePreviewDrafts((prev) => ({
+      ...prev,
+      [draftKey]: {
+        accountName: prev[draftKey]?.accountName ?? "",
+        value: prev[draftKey]?.value ?? "",
+        [field]: value
+      }
+    }));
+  }
+
+  function addValidatePreviewAccount(rowIndex: number, section: string) {
+    const draftKey = `${rowIndex}::${section}`;
+    const draft = validatePreviewDrafts[draftKey];
+    const accountName = draft?.accountName.trim() ?? "";
+    const value = safeFloat(draft?.value ?? "");
+
+    if (!accountName || value === null) {
+      return;
+    }
+
+    const effectiveSections = buildEffectiveSections(validation.parsed.catRow, validation.editableNameRow.length);
+    const lastSectionIndex = effectiveSections.reduce((acc, item, index) => item === section ? index : acc, -1);
+    const insertIndex = lastSectionIndex >= 0 ? lastSectionIndex + 1 : validation.editableNameRow.length;
+    const nextMatrix = insertColumnIntoMatrix(
+      validation.parsed.catRow,
+      validation.editableNameRow,
+      buildEffectiveDataRows(validation.parsed.dataRows, pasteEdits),
+      insertIndex,
+      section,
+      accountName,
+      value,
+      rowIndex
+    );
+
+    setPastedText(buildPastedTextFromMatrix(nextMatrix.catRow, nextMatrix.nameRow, nextMatrix.dataRows));
+    setPasteEdits({});
+    setNameEdits({});
+    setValidatePreviewDrafts((prev) => {
+      const next = { ...prev };
+      delete next[draftKey];
+      return next;
+    });
   }
 
   function hasPendingResultAdjustments(result: ValidationResult) {
@@ -2386,282 +2503,261 @@ export function ValidatorApp() {
                     {validation.stats.failed > 0 && <div className="notice">통과율이 100%가 될 때만 저장할 수 있습니다. 실패 항목의 OCR 수정값과 검증 부호를 먼저 정리해 주세요.</div>}
                   </section>
 
-                  <div className="preview-table-wrap">
-                    <div className="section-title">
-                      <div>
-                        <h3>붙여넣기 미리보기</h3>
-                        <p className="result-meta">계정 {validation.parsed.nameRow.length}개 / 데이터 {validation.parsed.dataRows.length}행</p>
-                      </div>
-                      <span className="preview-scroll-chip">좌우로 넘겨서 전체 열 보기</span>
-                    </div>
-                    <div className="preview-scroll-wrap">
-                      <div className="preview-scroll-shadow left" aria-hidden="true" />
-                      <div className="preview-scroll-shadow right" aria-hidden="true" />
-                      <div className="preview-scroll" role="region" aria-label="붙여넣기 미리보기 가로 스크롤 영역">
-                        <table className="preview-grid-table">
-                        <tbody>
-                          <tr>
-                            <th className="preview-row-label">분류</th>
-                            {previewGroups.groups.map((group) => (
-                              <th key={`group-${group.start}`} colSpan={group.span} className={`preview-group-cell tone-${group.tone}`}>
-                                {group.label}
-                              </th>
-                            ))}
-                          </tr>
-                          <tr>
-                            <th className="preview-row-label">계정명</th>
-                            {validation.parsed.nameRow.map((name, index) => (
-                              <td key={`${name}-${index}`} className={`preview-name-cell tone-${previewGroups.tones[index] ?? 0}`}>
-                                {isLockedPreviewNameCell(name) ? (
-                                  validation.editableNameRow[index] || `열${index}`
-                                ) : (
-                                  <input
-                                    className="mini-input"
-                                    type="text"
-                                    value={validation.editableNameRow[index] ?? ""}
-                                    onChange={(event) => updateEditableName(index, name, event.target.value)}
-                                    placeholder={`열${index}`}
-                                  />
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                          <tr>
-                            <th className="preview-row-label">값</th>
-                            {validation.editableRow.map((value, index) => (
-                              <td key={`val-${index}`} className={`preview-value-cell tone-${previewGroups.tones[index] ?? 0}`}>
-                                {typeof value === "number" ? formatNumber(value) : value ?? ""}
-                              </td>
-                            ))}
-                          </tr>
-                        </tbody>
-                        </table>
-                      </div>
-                    </div>
-                    <div className="preview-scroll-note muted">모바일이나 트랙패드에서는 표를 좌우로 밀어서 나머지 계정 열을 확인할 수 있습니다.</div>
-                  </div>
-
-                  {validation.stats.total === 0 && <div className="notice">검증 결과가 없습니다. 섹션명 1행이 `유동자산`, `판관비` 같은 검증 대상 형식인지 확인해 주세요.</div>}
-
-                  {Object.entries(validation.resultsByDate).map(([dateLabel, results]) => (
-                    <section className="result-group" key={dateLabel}>
-                      <div className="section-title">
-                        <div>
-                          <h3>{dateLabel}</h3>
-                          <p className="muted result-meta">검증 {results.length}건</p>
+                  <section className="validate-workspace with-preview">
+                    <div className="validate-main-stack">
+                      <div className="preview-table-wrap">
+                        <div className="section-title">
+                          <div>
+                            <h3>붙여넣기 미리보기</h3>
+                            <p className="result-meta">계정 {validation.parsed.nameRow.length}개 / 데이터 {validation.parsed.dataRows.length}행</p>
+                          </div>
+                          <span className="preview-scroll-chip">좌우로 넘겨서 전체 열 보기</span>
                         </div>
-                        <span className={`tag ${results.some((item) => !item.passed) ? "fail" : "pass"}`}>{results.some((item) => !item.passed) ? "실패 항목 포함" : "전부 통과"}</span>
-                      </div>
-
-                      {results.map((result, resultIndex) => {
-                        const actions = result.passed ? [] : diagnoseDiff(result);
-                        const resultSection = result.sect ?? result.parent;
-                        const cardKey = `${dateLabel}-${result.rule}-${resultIndex}`;
-                        const resultStatus = getResultStatus(result);
-                        const hasPendingAdjustments = hasPendingResultAdjustments(result);
-                        const isOpen = resultOpenState[cardKey] ?? (!result.passed || hasPendingAdjustments);
-                        const pendingInsertedRow = pendingInsertedRows[cardKey];
-                        const targetRowIndex = result.parent_row ?? result.detail[0]?._row ?? 0;
-                        const currentParentValue = result.parent_row !== undefined && result.parent_col !== undefined && pasteEdits[pasteEditKey(result.parent_row, result.parent_col)] !== undefined
-                          ? pasteEdits[pasteEditKey(result.parent_row, result.parent_col)]
-                          : result.parent_val;
-                        return (
-                          <article className={`result-card ${isOpen ? "" : "collapsed"}`} key={cardKey}>
-                            <div className="result-header">
-                              <div>
-                                <div className={resultStatus.className}>{resultStatus.label}</div>
-                                <strong>{result.rule}</strong>
-                              </div>
-                              <div className="result-header-actions">
-                                <div className="muted">차이</div>
-                                <strong className={result.passed ? "status-pass" : "status-fail"}>{formatNumber(result.diff)}원</strong>
-                                <button className="collapse-toggle" onClick={() => toggleResultCard(cardKey, !result.passed || hasPendingAdjustments)} aria-expanded={isOpen}>
-                                  {isOpen ? "접기" : "펼치기"}
-                                </button>
-                              </div>
-                            </div>
-                            {isOpen && <div className="result-body">
-                              <div className="result-inline-actions">
-                                <button className="ghost-button" type="button" onClick={() => openPendingInsertedRow(cardKey, resultSection)}>
-                                  행 추가
-                                </button>
-                              </div>
-                              {pendingInsertedRow && (
-                                <div className="insert-row-panel">
-                                  <input
-                                    className="mini-input"
-                                    type="text"
-                                    value={pendingInsertedRow.section}
-                                    onChange={(event) => updatePendingInsertedRow(cardKey, "section", event.target.value)}
-                                    placeholder="섹션"
-                                  />
-                                  <input
-                                    className="mini-input insert-name-input"
-                                    type="text"
-                                    value={pendingInsertedRow.accountName}
-                                    onChange={(event) => updatePendingInsertedRow(cardKey, "accountName", event.target.value)}
-                                    placeholder="계정명"
-                                  />
-                                  <input
-                                    className="mini-input"
-                                    type="number"
-                                    step={1}
-                                    value={pendingInsertedRow.value}
-                                    onChange={(event) => updatePendingInsertedRow(cardKey, "value", event.target.value)}
-                                    placeholder="값"
-                                  />
-                                  <button className="secondary-button" type="button" onClick={() => addValidationAccount(cardKey, targetRowIndex, resultSection)}>
-                                    추가
-                                  </button>
-                                  <button className="ghost-button" type="button" onClick={() => closePendingInsertedRow(cardKey)}>
-                                    닫기
-                                  </button>
-                                </div>
-                              )}
-                              {result.detail.length > 0 ? (
-                                <div style={{ overflowX: "auto" }}>
-                                  <table className="table">
-                                    <thead>
-                                      <tr>
-                                        <th>계정명</th>
-                                        <th>원본값</th>
-                                        <th>OCR 수정값</th>
-                                        <th>검증 부호</th>
-                                        <th>적용값</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {result.detail.map((detail, index) => {
-                                        const currentEditKey = detail._row !== undefined && detail._col !== undefined ? pasteEditKey(detail._row, detail._col) : null;
-                                        const currentValue = currentEditKey && pasteEdits[currentEditKey] !== undefined ? pasteEdits[currentEditKey] : detail.원본값;
-                                        const currentSign = displayedSignToCode(detail.부호);
-                                        return (
-                                          <tr key={`${detail.계정명}-${index}`}>
-                                            <td>
-                                              <div className="result-account-cell">
-                                                <span>{detail.계정명}</span>
-                                                {detail._col !== undefined && (
-                                                  <button
-                                                    className="icon-button danger"
-                                                    type="button"
-                                                    aria-label={`${detail.계정명} 삭제`}
-                                                    onClick={() => removeValidationAccount(detail._col!)}
-                                                  >
-                                                    🗑
-                                                  </button>
-                                                )}
-                                              </div>
-                                            </td>
-                                            <td>{formatNumber(detail.원본값)}</td>
-                                            <td>
-                                              {detail._row !== undefined && detail._col !== undefined ? (
-                                                <input className="mini-input" type="number" step={1} value={String(currentValue)} onChange={(event) => updateEditableValue(detail._row!, detail._col!, detail.원본값, event.target.value)} />
-                                              ) : (
-                                                <span className="muted">자동 계산</span>
-                                              )}
-                                            </td>
-                                            <td>
-                                              <div className="sign-editor">
-                                                <select
-                                                  className="mini-select"
-                                                  value={String(currentSign)}
-                                                  onChange={(event) => updateDetailSign(resultSection, detail.계정명, Number(event.target.value) as SignCode)}
-                                                >
-                                                  <option value="0">가산(+)</option>
-                                                  <option value="1">차감(−)</option>
-                                                  <option value="2">제외</option>
-                                                </select>
-                                              </div>
-                                            </td>
-                                            <td>{formatNumber(detail.적용값)}</td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              ) : null}
-
-                              {result.detail.length > 0 && (
-                                <div className="rule-helper muted">
-                                  `OCR 수정값`과 계정 삭제/추가는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증에만 적용하거나 공통/회사 규칙으로 저장할 수 있습니다.
-                                </div>
-                              )}
-
-                              <div className="two-col">
-                                <div className="diagnosis-card">
-                                  <strong>합계 비교</strong>
-                                  <p className="muted">OCR 합산 {formatNumber(result.computed)}원 / 재무제표 값 {formatNumber(currentParentValue)}원</p>
-                                  {result.parent_row !== undefined && result.parent_col !== undefined && (
-                                    <div className="inline-actions" style={{ marginTop: 12 }}>
+                        <div className="preview-scroll-wrap">
+                          <div className="preview-scroll-shadow left" aria-hidden="true" />
+                          <div className="preview-scroll-shadow right" aria-hidden="true" />
+                          <div className="preview-scroll" role="region" aria-label="붙여넣기 미리보기 가로 스크롤 영역">
+                            <table className="preview-grid-table">
+                            <tbody>
+                              <tr>
+                                <th className="preview-row-label">분류</th>
+                                {previewGroups.groups.map((group) => (
+                                  <th key={`group-${group.start}`} colSpan={group.span} className={`preview-group-cell tone-${group.tone}`}>
+                                    {group.label}
+                                  </th>
+                                ))}
+                              </tr>
+                              <tr>
+                                <th className="preview-row-label">계정명</th>
+                                {validation.parsed.nameRow.map((name, index) => (
+                                  <td key={`${name}-${index}`} className={`preview-name-cell tone-${previewGroups.tones[index] ?? 0}`}>
+                                    {isLockedPreviewNameCell(name) ? (
+                                      validation.editableNameRow[index] || `열${index}`
+                                    ) : (
                                       <input
                                         className="mini-input"
-                                        type="number"
-                                        step={1}
-                                        value={String(currentParentValue)}
-                                        onChange={(event) => updateEditableValue(result.parent_row!, result.parent_col!, result.parent_val, event.target.value)}
+                                        type="text"
+                                        value={validation.editableNameRow[index] ?? ""}
+                                        onChange={(event) => updateEditableName(index, name, event.target.value)}
+                                        placeholder={`열${index}`}
                                       />
-                                      <span className="muted">재무제표 값 수정</span>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="diagnosis-card">
-                                  <strong>누락 계정</strong>
-                                  <p className="muted">{result.missing.length ? result.missing.join(", ") : "없음"}</p>
-                                </div>
-                              </div>
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                              <tr>
+                                <th className="preview-row-label">값</th>
+                                {validation.editableRow.map((value, index) => (
+                                  <td key={`val-${index}`} className={`preview-value-cell tone-${previewGroups.tones[index] ?? 0}`}>
+                                    {typeof value === "number" ? formatNumber(value) : value ?? ""}
+                                  </td>
+                                ))}
+                              </tr>
+                            </tbody>
+                            </table>
+                          </div>
+                        </div>
+                        <div className="preview-scroll-note muted">모바일이나 트랙패드에서는 표를 좌우로 밀어서 나머지 계정 열을 확인할 수 있습니다.</div>
+                      </div>
 
-                              {!result.passed && actions.length > 0 && (
-                                <div className="diagnosis-card">
-                                  <strong>원인 추정과 처리 방향</strong>
-                                  <p className="muted diagnosis-note">차이를 0원으로 만드는 후보를 먼저 보여줍니다. 특히 `음수 OCR + 차감`은 검증 부호보다 `OCR 수정값`을 먼저 바로잡도록 안내합니다.</p>
-                                  <div className="list-editor" style={{ marginTop: 12 }}>
-                                    {actions.map((action, index) => (
-                                      <div key={`${action.text}-${index}`} className="notice">
-                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                                          <strong>{index === 0 ? "우선 확인" : "다음 후보"}</strong>
-                                          {action.badge ? <span className="soft-badge">{action.badge}</span> : null}
-                                        </div>
-                                        <div className="pre diagnosis-copy">{renderDiagnosisText(action.shortText ?? action.text)}</div>
-                                        {action.edit ? (
-                                          <div className="inline-actions" style={{ marginTop: 12 }}>
-                                            <button className="secondary-button" onClick={() => applySuggestedEdit(action.edit!.row, action.edit!.col, action.edit!.value)}>
-                                              {action.editLabel}
-                                            </button>
-                                          </div>
-                                        ) : null}
-                                        {action.fix ? (
-                                          <div className="inline-actions" style={{ marginTop: 12 }}>
-                                            <button className="secondary-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              이번 검증만 적용: {action.label}
-                                            </button>
-                                            <button className="ghost-button" onClick={() => saveGlobalFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              검증 규칙에 적용: {action.label}
-                                            </button>
-                                            <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>
-                                              {selectedCompany.trim() ? `회사별 규칙 적용: ${action.label}` : "회사명 입력 필요"}
-                                            </button>
-                                          </div>
-                                        ) : null}
-                                      </div>
-                                    ))}
+                      {validation.stats.total === 0 && <div className="notice">검증 결과가 없습니다. 섹션명 1행이 `유동자산`, `판관비` 같은 검증 대상 형식인지 확인해 주세요.</div>}
+
+                      {Object.entries(validation.resultsByDate).map(([dateLabel, results]) => (
+                        <section className="result-group" key={dateLabel}>
+                          <div className="section-title">
+                            <div>
+                              <h3>{dateLabel}</h3>
+                              <p className="muted result-meta">검증 {results.length}건</p>
+                            </div>
+                            <span className={`tag ${results.some((item) => !item.passed) ? "fail" : "pass"}`}>{results.some((item) => !item.passed) ? "실패 항목 포함" : "전부 통과"}</span>
+                          </div>
+
+                          {results.map((result, resultIndex) => {
+                            const actions = result.passed ? [] : diagnoseDiff(result);
+                            const resultSection = result.sect ?? result.parent;
+                            const cardKey = `${dateLabel}-${result.rule}-${resultIndex}`;
+                            const resultStatus = getResultStatus(result);
+                            const hasPendingAdjustments = hasPendingResultAdjustments(result);
+                            const isOpen = resultOpenState[cardKey] ?? (!result.passed || hasPendingAdjustments);
+                            const pendingInsertedRow = pendingInsertedRows[cardKey];
+                            const targetRowIndex = result.parent_row ?? result.detail[0]?._row ?? 0;
+                            const currentParentValue = result.parent_row !== undefined && result.parent_col !== undefined && pasteEdits[pasteEditKey(result.parent_row, result.parent_col)] !== undefined
+                              ? pasteEdits[pasteEditKey(result.parent_row, result.parent_col)]
+                              : result.parent_val;
+                            return (
+                              <article className={`result-card ${isOpen ? "" : "collapsed"}`} key={cardKey}>
+                                <div className="result-header">
+                                  <div>
+                                    <div className={resultStatus.className}>{resultStatus.label}</div>
+                                    <strong>{result.rule}</strong>
+                                  </div>
+                                  <div className="result-header-actions">
+                                    <div className="muted">차이</div>
+                                    <strong className={result.passed ? "status-pass" : "status-fail"}>{formatNumber(result.diff)}원</strong>
+                                    <button className="collapse-toggle" onClick={() => toggleResultCard(cardKey, !result.passed || hasPendingAdjustments)} aria-expanded={isOpen}>
+                                      {isOpen ? "접기" : "펼치기"}
+                                    </button>
                                   </div>
                                 </div>
-                              )}
-                            </div>}
-                          </article>
-                        );
-                      })}
-                    </section>
-                  ))}
+                                {isOpen && <div className="result-body">
+                                  <div className="result-inline-actions">
+                                    <button className="ghost-button" type="button" onClick={() => openPendingInsertedRow(cardKey, resultSection)}>
+                                      행 추가
+                                    </button>
+                                  </div>
+                                  {pendingInsertedRow && (
+                                    <div className="insert-row-panel">
+                                      <input className="mini-input" type="text" value={pendingInsertedRow.section} onChange={(event) => updatePendingInsertedRow(cardKey, "section", event.target.value)} placeholder="섹션" />
+                                      <input className="mini-input insert-name-input" type="text" value={pendingInsertedRow.accountName} onChange={(event) => updatePendingInsertedRow(cardKey, "accountName", event.target.value)} placeholder="계정명" />
+                                      <input className="mini-input" type="number" step={1} value={pendingInsertedRow.value} onChange={(event) => updatePendingInsertedRow(cardKey, "value", event.target.value)} placeholder="값" />
+                                      <button className="secondary-button" type="button" onClick={() => addValidationAccount(cardKey, targetRowIndex, resultSection)}>추가</button>
+                                      <button className="ghost-button" type="button" onClick={() => closePendingInsertedRow(cardKey)}>닫기</button>
+                                    </div>
+                                  )}
+                                  {result.detail.length > 0 ? (
+                                    <div style={{ overflowX: "auto" }}>
+                                      <table className="table">
+                                        <thead>
+                                          <tr><th>계정명</th><th>원본값</th><th>OCR 수정값</th><th>검증 부호</th><th>적용값</th></tr>
+                                        </thead>
+                                        <tbody>
+                                          {result.detail.map((detail, index) => {
+                                            const currentEditKey = detail._row !== undefined && detail._col !== undefined ? pasteEditKey(detail._row, detail._col) : null;
+                                            const currentValue = currentEditKey && pasteEdits[currentEditKey] !== undefined ? pasteEdits[currentEditKey] : detail.원본값;
+                                            const currentSign = displayedSignToCode(detail.부호);
+                                            return (
+                                              <tr key={`${detail.계정명}-${index}`}>
+                                                <td>
+                                                  <div className="result-account-cell">
+                                                    <span>{detail.계정명}</span>
+                                                    {detail._col !== undefined && (
+                                                      <button className="icon-button danger" type="button" aria-label={`${detail.계정명} 삭제`} onClick={() => removeValidationAccount(detail._col!)}>🗑</button>
+                                                    )}
+                                                  </div>
+                                                </td>
+                                                <td>{formatNumber(detail.원본값)}</td>
+                                                <td>{detail._row !== undefined && detail._col !== undefined ? <input className="mini-input" type="number" step={1} value={String(currentValue)} onChange={(event) => updateEditableValue(detail._row!, detail._col!, detail.원본값, event.target.value)} /> : <span className="muted">자동 계산</span>}</td>
+                                                <td>
+                                                  <div className="sign-editor">
+                                                    <select className="mini-select" value={String(currentSign)} onChange={(event) => updateDetailSign(resultSection, detail.계정명, Number(event.target.value) as SignCode)}>
+                                                      <option value="0">가산(+)</option><option value="1">차감(−)</option><option value="2">제외</option>
+                                                    </select>
+                                                  </div>
+                                                </td>
+                                                <td>{formatNumber(detail.적용값)}</td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  ) : null}
 
-                  <div className="export-card">
-                    <div className="section-title">
-                      <h3>수정된 OCR 데이터 복사</h3>
-                      <button className="secondary-button" onClick={copyModifiedText}>클립보드 복사</button>
+                                  {result.detail.length > 0 && <div className="rule-helper muted">`OCR 수정값`과 계정 삭제/추가는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증에만 적용하거나 공통/회사 규칙으로 저장할 수 있습니다.</div>}
+
+                                  <div className="two-col">
+                                    <div className="diagnosis-card">
+                                      <strong>합계 비교</strong>
+                                      <p className="muted">OCR 합산 {formatNumber(result.computed)}원 / 재무제표 값 {formatNumber(currentParentValue)}원</p>
+                                      {result.parent_row !== undefined && result.parent_col !== undefined && (
+                                        <div className="inline-actions" style={{ marginTop: 12 }}>
+                                          <input className="mini-input" type="number" step={1} value={String(currentParentValue)} onChange={(event) => updateEditableValue(result.parent_row!, result.parent_col!, result.parent_val, event.target.value)} />
+                                          <span className="muted">재무제표 값 수정</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="diagnosis-card"><strong>누락 계정</strong><p className="muted">{result.missing.length ? result.missing.join(", ") : "없음"}</p></div>
+                                  </div>
+
+                                  {!result.passed && actions.length > 0 && (
+                                    <div className="diagnosis-card">
+                                      <strong>원인 추정과 처리 방향</strong>
+                                      <p className="muted diagnosis-note">차이를 0원으로 만드는 후보를 먼저 보여줍니다. 특히 `음수 OCR + 차감`은 검증 부호보다 `OCR 수정값`을 먼저 바로잡도록 안내합니다.</p>
+                                      <div className="list-editor" style={{ marginTop: 12 }}>
+                                        {actions.map((action, index) => (
+                                          <div key={`${action.text}-${index}`} className="notice">
+                                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                              <strong>{index === 0 ? "우선 확인" : "다음 후보"}</strong>
+                                              {action.badge ? <span className="soft-badge">{action.badge}</span> : null}
+                                            </div>
+                                            <div className="pre diagnosis-copy">{renderDiagnosisText(action.shortText ?? action.text)}</div>
+                                            {action.edit ? <div className="inline-actions" style={{ marginTop: 12 }}><button className="secondary-button" onClick={() => applySuggestedEdit(action.edit!.row, action.edit!.col, action.edit!.value)}>{action.editLabel}</button></div> : null}
+                                            {action.fix ? (
+                                              <div className="inline-actions" style={{ marginTop: 12 }}>
+                                                <button className="secondary-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>이번 검증만 적용: {action.label}</button>
+                                                <button className="ghost-button" onClick={() => saveGlobalFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>검증 규칙에 적용: {action.label}</button>
+                                                <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>{selectedCompany.trim() ? `회사별 규칙 적용: ${action.label}` : "회사명 입력 필요"}</button>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>}
+                              </article>
+                            );
+                          })}
+                        </section>
+                      ))}
+
+                      <div className="export-card">
+                        <div className="section-title">
+                          <h3>수정된 OCR 데이터 복사</h3>
+                          <button className="secondary-button" onClick={copyModifiedText}>클립보드 복사</button>
+                        </div>
+                        <textarea className="textarea" value={validation.copyText} readOnly style={{ minHeight: 140, marginTop: 12 }} />
+                      </div>
                     </div>
-                    <textarea className="textarea" value={validation.copyText} readOnly style={{ minHeight: 140, marginTop: 12 }} />
-                  </div>
+
+                    <aside className="panel account-db-preview-panel validate-preview-panel">
+                      <div className="section-title">
+                        <div>
+                          <span className="section-kicker">출처 3줄 미리보기</span>
+                          <h3>OCR 정리본</h3>
+                          <p className="result-meta">섹션별로 계정명과 값을 바로 수정하고 행을 추가/삭제할 수 있습니다.</p>
+                        </div>
+                      </div>
+
+                      <div className="account-db-preview-body">
+                        {validatePreviewGroups.map((group) => (
+                          <div className="account-db-preview-section" key={`validate-preview-row-${group.rowIndex}`}>
+                            <div className="account-db-preview-section-title">{group.rowLabel}</div>
+                            <div className="account-db-preview-body validate-preview-row-body">
+                              {group.sections.map(([sectionKey, rows]) => {
+                                const draftKey = `${group.rowIndex}::${sectionKey}`;
+                                const draft = validatePreviewDrafts[draftKey] ?? { accountName: "", value: "" };
+                                return (
+                                  <div className="account-db-preview-section" key={`validate-preview-row-${group.rowIndex}-${sectionKey}`}>
+                                    <div className="account-db-preview-section-title">{sectionKey}</div>
+                                    <table className="table account-db-preview-table validate-preview-table">
+                                      <thead>
+                                        <tr><th>계정명</th><th>수정 반영 값</th><th>삭제</th></tr>
+                                      </thead>
+                                      <tbody>
+                                        {rows.map((row) => (
+                                          <tr key={`validate-preview-item-${group.rowIndex}-${sectionKey}-${row.colIndex}`}>
+                                            <td>{row.locked ? <span>{row.accountName}</span> : <input className="mini-input" type="text" value={row.accountName} onChange={(event) => updateEditableName(row.colIndex, row.rawName, event.target.value)} />}</td>
+                                            <td className="account-db-preview-value">{typeof row.value === "number" ? <input className="mini-input validate-preview-number" type="number" step={1} value={String(row.value)} onChange={(event) => updateEditableValue(row.rowIndex, row.colIndex, row.rawValue, event.target.value)} /> : <span>{row.value ?? ""}</span>}</td>
+                                            <td className="validate-preview-action-cell"><button className="icon-button danger" type="button" aria-label={`${row.accountName} 삭제`} onClick={() => removeValidationAccount(row.colIndex)}>🗑</button></td>
+                                          </tr>
+                                        ))}
+                                        <tr>
+                                          <td><input className="mini-input" type="text" placeholder="새 계정명" value={draft.accountName} onChange={(event) => updateValidatePreviewDraft(group.rowIndex, sectionKey, "accountName", event.target.value)} /></td>
+                                          <td><input className="mini-input validate-preview-number" type="number" step={1} placeholder="값" value={draft.value} onChange={(event) => updateValidatePreviewDraft(group.rowIndex, sectionKey, "value", event.target.value)} /></td>
+                                          <td className="validate-preview-action-cell"><button className="ghost-button" type="button" onClick={() => addValidatePreviewAccount(group.rowIndex, sectionKey)}>추가</button></td>
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </aside>
+                  </section>
                 </>
               )}
             </>
