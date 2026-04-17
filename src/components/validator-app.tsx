@@ -120,6 +120,7 @@ type SectionAccountDbEntry = {
 };
 
 type ValidatePreviewDraft = {
+  section: string;
   accountName: string;
   value: string;
 };
@@ -138,7 +139,7 @@ type ValidatePreviewItem = {
 type ValidatePreviewGroup = {
   rowIndex: number;
   rowLabel: string;
-  sections: Array<[string, ValidatePreviewItem[]]>;
+  items: ValidatePreviewItem[];
 };
 
 const ACCOUNT_DB_SECTIONS = {
@@ -242,11 +243,10 @@ function buildValidatePreviewGroups(args: {
   return args.dataRows.map((row, rowIndex) => {
     const labelCell = dateIndex >= 0 ? row[dateIndex] : null;
     const rowLabel = labelCell ? String(labelCell) : `데이터${rowIndex + 1}`;
-    const grouped = new Map<string, ValidatePreviewItem[]>();
+    const items: ValidatePreviewItem[] = [];
 
     args.editableNameRow.forEach((accountName, colIndex) => {
       const sectionKey = effectiveSections[colIndex]?.trim() || "기타";
-      const items = grouped.get(sectionKey) ?? [];
       const rawCell = args.dataRows[rowIndex]?.[colIndex];
       items.push({
         sectionKey,
@@ -258,13 +258,12 @@ function buildValidatePreviewGroups(args: {
         rawValue: typeof rawCell === "number" ? rawCell : 0,
         locked: isLockedPreviewNameCell(args.nameRow[colIndex] ?? accountName)
       });
-      grouped.set(sectionKey, items);
     });
 
     return {
       rowIndex,
       rowLabel,
-      sections: Array.from(grouped.entries())
+      items
     } satisfies ValidatePreviewGroup;
   });
 }
@@ -1926,10 +1925,11 @@ export function ValidatorApp() {
   }
 
   function updateValidatePreviewDraft(rowIndex: number, section: string, field: keyof ValidatePreviewDraft, value: string) {
-    const draftKey = `${rowIndex}::${section}`;
+    const draftKey = String(rowIndex);
     setValidatePreviewDrafts((prev) => ({
       ...prev,
       [draftKey]: {
+        section: prev[draftKey]?.section ?? section,
         accountName: prev[draftKey]?.accountName ?? "",
         value: prev[draftKey]?.value ?? "",
         [field]: value
@@ -1937,13 +1937,14 @@ export function ValidatorApp() {
     }));
   }
 
-  function addValidatePreviewAccount(rowIndex: number, section: string) {
-    const draftKey = `${rowIndex}::${section}`;
+  function addValidatePreviewAccount(rowIndex: number) {
+    const draftKey = String(rowIndex);
     const draft = validatePreviewDrafts[draftKey];
+    const section = draft?.section.trim() ?? "";
     const accountName = draft?.accountName.trim() ?? "";
     const value = safeFloat(draft?.value ?? "");
 
-    if (!accountName || value === null) {
+    if (!section || !accountName || value === null) {
       return;
     }
 
@@ -2720,41 +2721,36 @@ export function ValidatorApp() {
                       </div>
 
                       <div className="account-db-preview-body">
-                        {validatePreviewGroups.map((group) => (
-                          <div className="account-db-preview-section" key={`validate-preview-row-${group.rowIndex}`}>
-                            <div className="account-db-preview-section-title">{group.rowLabel}</div>
-                            <div className="account-db-preview-body validate-preview-row-body">
-                              {group.sections.map(([sectionKey, rows]) => {
-                                const draftKey = `${group.rowIndex}::${sectionKey}`;
-                                const draft = validatePreviewDrafts[draftKey] ?? { accountName: "", value: "" };
-                                return (
-                                  <div className="account-db-preview-section" key={`validate-preview-row-${group.rowIndex}-${sectionKey}`}>
-                                    <div className="account-db-preview-section-title">{sectionKey}</div>
-                                    <table className="table account-db-preview-table validate-preview-table">
-                                      <thead>
-                                        <tr><th>계정명</th><th>수정 반영 값</th><th>삭제</th></tr>
-                                      </thead>
-                                      <tbody>
-                                        {rows.map((row) => (
-                                          <tr key={`validate-preview-item-${group.rowIndex}-${sectionKey}-${row.colIndex}`}>
-                                            <td>{row.locked ? <span>{row.accountName}</span> : <input className="mini-input" type="text" value={row.accountName} onChange={(event) => updateEditableName(row.colIndex, row.rawName, event.target.value)} />}</td>
-                                            <td className="account-db-preview-value">{typeof row.value === "number" ? <input className="mini-input validate-preview-number" type="number" step={1} value={String(row.value)} onChange={(event) => updateEditableValue(row.rowIndex, row.colIndex, row.rawValue, event.target.value)} /> : <span>{row.value ?? ""}</span>}</td>
-                                            <td className="validate-preview-action-cell"><button className="icon-button danger" type="button" aria-label={`${row.accountName} 삭제`} onClick={() => removeValidationAccount(row.colIndex)}>🗑</button></td>
-                                          </tr>
-                                        ))}
-                                        <tr>
-                                          <td><input className="mini-input" type="text" placeholder="새 계정명" value={draft.accountName} onChange={(event) => updateValidatePreviewDraft(group.rowIndex, sectionKey, "accountName", event.target.value)} /></td>
-                                          <td><input className="mini-input validate-preview-number" type="number" step={1} placeholder="값" value={draft.value} onChange={(event) => updateValidatePreviewDraft(group.rowIndex, sectionKey, "value", event.target.value)} /></td>
-                                          <td className="validate-preview-action-cell"><button className="ghost-button" type="button" onClick={() => addValidatePreviewAccount(group.rowIndex, sectionKey)}>추가</button></td>
-                                        </tr>
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                );
-                              })}
+                        {validatePreviewGroups.map((group) => {
+                          const draftKey = String(group.rowIndex);
+                          const draft = validatePreviewDrafts[draftKey] ?? { section: group.items[0]?.sectionKey ?? "", accountName: "", value: "" };
+                          return (
+                            <div className="account-db-preview-section" key={`validate-preview-row-${group.rowIndex}`}>
+                              <div className="account-db-preview-section-title">{group.rowLabel}</div>
+                              <table className="table account-db-preview-table validate-preview-table validate-preview-ordered-table">
+                                <thead>
+                                  <tr><th>분류</th><th>계정명</th><th>수정 반영 값</th><th>삭제</th></tr>
+                                </thead>
+                                <tbody>
+                                  {group.items.map((row) => (
+                                    <tr key={`validate-preview-item-${group.rowIndex}-${row.colIndex}`}>
+                                      <td>{row.sectionKey}</td>
+                                      <td>{row.locked ? <span>{row.accountName}</span> : <input className="mini-input" type="text" value={row.accountName} onChange={(event) => updateEditableName(row.colIndex, row.rawName, event.target.value)} />}</td>
+                                      <td className="account-db-preview-value">{typeof row.value === "number" ? <input className="mini-input validate-preview-number" type="number" step={1} value={String(row.value)} onChange={(event) => updateEditableValue(row.rowIndex, row.colIndex, row.rawValue, event.target.value)} /> : <span>{row.value ?? ""}</span>}</td>
+                                      <td className="validate-preview-action-cell"><button className="icon-button danger" type="button" aria-label={`${row.accountName} 삭제`} onClick={() => removeValidationAccount(row.colIndex)}>🗑</button></td>
+                                    </tr>
+                                  ))}
+                                  <tr>
+                                    <td><input className="mini-input" type="text" placeholder="분류" value={draft.section} onChange={(event) => updateValidatePreviewDraft(group.rowIndex, draft.section, "section", event.target.value)} /></td>
+                                    <td><input className="mini-input" type="text" placeholder="새 계정명" value={draft.accountName} onChange={(event) => updateValidatePreviewDraft(group.rowIndex, draft.section, "accountName", event.target.value)} /></td>
+                                    <td><input className="mini-input validate-preview-number" type="number" step={1} placeholder="값" value={draft.value} onChange={(event) => updateValidatePreviewDraft(group.rowIndex, draft.section, "value", event.target.value)} /></td>
+                                    <td className="validate-preview-action-cell"><button className="ghost-button" type="button" onClick={() => addValidatePreviewAccount(group.rowIndex)}>추가</button></td>
+                                  </tr>
+                                </tbody>
+                              </table>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </aside>
                   </section>
