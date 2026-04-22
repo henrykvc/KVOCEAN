@@ -2790,7 +2790,7 @@ export function ValidatorApp() {
                         <tr><th>섹션</th><th>계정명</th><th>값</th><th>부호</th></tr>
                       </thead>
                       <tbody>
-                        {selectedDataset.raw_statement_rows.map((row, idx) => (
+                        {selectedDataset.rawStatementRows.map((row, idx) => (
                           <tr key={`raw-${idx}`}>
                             <td>{row.section}</td>
                             <td>{row.accountName}</td>
