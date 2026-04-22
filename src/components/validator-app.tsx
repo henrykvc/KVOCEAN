@@ -1262,6 +1262,29 @@ export function ValidatorApp() {
   }, [googleSheetUrl]);
 
   useEffect(() => {
+    if (!googleSheetUrl || !googleProviderToken) return;
+
+    const match = googleSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    if (!match) return;
+    const sheetId = match[1];
+
+    setGoogleSheetLoading(true);
+    setGoogleSheetError(null);
+
+    fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:Z`,
+      { headers: { Authorization: `Bearer ${googleProviderToken}` } }
+    )
+      .then((res) => {
+        if (!res.ok) return res.json().then((e: { error?: { message?: string } }) => { throw new Error(e?.error?.message ?? "시트를 불러오지 못했습니다."); });
+        return res.json() as Promise<{ values?: string[][] }>;
+      })
+      .then((json) => setGoogleSheetRows(json.values ?? []))
+      .catch((e) => setGoogleSheetError(e instanceof Error ? e.message : "오류가 발생했습니다."))
+      .finally(() => setGoogleSheetLoading(false));
+  }, [googleSheetUrl, googleProviderToken]);
+
+  useEffect(() => {
     if (!mounted || !sharedStateReady) {
       return;
     }
@@ -2804,7 +2827,7 @@ export function ValidatorApp() {
                   <div>
                     <span className="section-kicker">0. 검증 전 데이터</span>
                     <h3>검증 전 데이터 (Google Sheet)</h3>
-                    <p className="result-meta">구글시트 링크를 붙여넣고 불러오기를 누르면 데이터가 표시됩니다.</p>
+                    <p className="result-meta">구글시트 링크를 저장하면 자동으로 불러옵니다.</p>
                   </div>
                   {googleSheetRows.length > 1 && <span className="soft-badge">총 {googleSheetRows.length - 1}건</span>}
                 </div>
@@ -2814,7 +2837,7 @@ export function ValidatorApp() {
                 <div className="section-title">
                   <div>
                     <h3>구글시트 연결</h3>
-                    <p className="result-meta">구글시트를 열고 주소창 URL 전체를 복사해 붙여넣으세요. 링크는 저장되어 다음에도 유지됩니다.</p>
+                    <p className="result-meta">구글시트 주소창 URL을 복사해 붙여넣으세요. 저장 후 자동으로 불러옵니다.</p>
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -2825,52 +2848,6 @@ export function ValidatorApp() {
                     onChange={(e) => setGoogleSheetUrl(e.target.value)}
                     style={{ flex: 1, padding: "0.5rem 0.75rem", border: "1px solid #bdc3c7", borderRadius: "6px", fontSize: "0.875rem" }}
                   />
-                  <button
-                    disabled={!googleSheetUrl || googleSheetLoading}
-                    onClick={async () => {
-                      const match = googleSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-                      if (!match) {
-                        setGoogleSheetError("올바른 구글시트 링크가 아닙니다.");
-                        return;
-                      }
-                      const sheetId = match[1];
-                      setGoogleSheetLoading(true);
-                      setGoogleSheetError(null);
-                      try {
-                        if (!googleProviderToken) {
-                          setGoogleSheetError("구글 로그인이 필요합니다. 로그아웃 후 다시 구글로 로그인해 주세요.");
-                          setGoogleSheetLoading(false);
-                          return;
-                        }
-                        const res = await fetch(
-                          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:Z`,
-                          { headers: { Authorization: `Bearer ${googleProviderToken}` } }
-                        );
-                        if (!res.ok) {
-                          const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-                          throw new Error(err?.error?.message ?? "시트를 불러오지 못했습니다.");
-                        }
-                        const json = await res.json() as { values?: string[][] };
-                        setGoogleSheetRows(json.values ?? []);
-                      } catch (e) {
-                        setGoogleSheetError(e instanceof Error ? e.message : "알 수 없는 오류가 발생했습니다.");
-                      } finally {
-                        setGoogleSheetLoading(false);
-                      }
-                    }}
-                    style={{
-                      padding: "0.5rem 1rem",
-                      background: googleSheetLoading ? "#bdc3c7" : "#2ecc71",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "6px",
-                      cursor: googleSheetLoading ? "not-allowed" : "pointer",
-                      fontWeight: 600,
-                      whiteSpace: "nowrap"
-                    }}
-                  >
-                    {googleSheetLoading ? "불러오는 중..." : "불러오기"}
-                  </button>
                   {googleSheetRows.length > 0 && (
                     <button
                       onClick={() => { setGoogleSheetRows([]); setGoogleSheetUrl(""); setGoogleSheetError(null); }}
@@ -2880,8 +2857,16 @@ export function ValidatorApp() {
                     </button>
                   )}
                 </div>
+                {!googleProviderToken && (
+                  <p style={{ color: "#e67e22", marginTop: "0.5rem", fontSize: "0.875rem" }}>
+                    ⚠️ 구글 시트를 읽으려면 <strong>구글 계정으로 로그아웃 후 다시 로그인</strong>해야 합니다.
+                  </p>
+                )}
+                {googleSheetLoading && (
+                  <p style={{ color: "#7f8c8d", marginTop: "0.5rem", fontSize: "0.875rem" }}>시트 불러오는 중...</p>
+                )}
                 {googleSheetError && (
-                  <p style={{ color: "#e74c3c", marginTop: "0.5rem", fontSize: "0.875rem" }}>{googleSheetError}</p>
+                  <p style={{ color: "#e74c3c", marginTop: "0.5rem", fontSize: "0.875rem" }}>오류: {googleSheetError}</p>
                 )}
               </section>
 
