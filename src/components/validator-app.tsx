@@ -98,6 +98,7 @@ type TopViewKey = "menu" | "final-output";
 
 const DEFAULT_INDUSTRY_OPTIONS = ["서비스", "게임", "기술", "헬스케어", "크립토"] as const;
 const DEFAULT_ACCOUNTING_STANDARDS = ["K-GAAP", "IFRS"] as const;
+
 type AccountingStandard = (typeof DEFAULT_ACCOUNTING_STANDARDS)[number];
 
 type PendingInsertedRow = {
@@ -1066,6 +1067,7 @@ function applyManagedAssignmentsFromSavedDatasets(
   };
 }
 
+
 export function ValidatorApp() {
   const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
@@ -1106,6 +1108,11 @@ export function ValidatorApp() {
   const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState<string | null>(null);
+  const [googleSheetUrl, setGoogleSheetUrl] = useState("");
+  const [googleSheetRows, setGoogleSheetRows] = useState<string[][]>([]);
+  const [googleSheetLoading, setGoogleSheetLoading] = useState(false);
+  const [googleSheetError, setGoogleSheetError] = useState<string | null>(null);
+  const [googleProviderToken, setGoogleProviderToken] = useState<string | null>(null);
   const configSyncInitializedRef = useRef(false);
 
   useEffect(() => {
@@ -1225,6 +1232,34 @@ export function ValidatorApp() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("kvocean-google-sheet-url");
+    if (saved) setGoogleSheetUrl(saved);
+  }, []);
+
+  useEffect(() => {
+    async function loadProviderToken() {
+      const { createClient } = await import("@/lib/supabase/browser");
+      const supabase = createClient();
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.provider_token ?? null;
+      if (token) {
+        setGoogleProviderToken(token);
+        window.localStorage.setItem("kvocean-google-provider-token", token);
+      } else {
+        const saved = window.localStorage.getItem("kvocean-google-provider-token");
+        if (saved) setGoogleProviderToken(saved);
+      }
+    }
+    loadProviderToken();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("kvocean-google-sheet-url", googleSheetUrl);
+  }, [googleSheetUrl]);
 
   useEffect(() => {
     if (!mounted || !sharedStateReady) {
@@ -2768,39 +2803,108 @@ export function ValidatorApp() {
                 <div className="section-title">
                   <div>
                     <span className="section-kicker">0. 검증 전 데이터</span>
-                    <h3>원본 데이터 미리보기</h3>
-                    <p className="result-meta">OCR로부터 추출된 원본 데이터입니다. 검증 전 상태를 확인할 수 있습니다.</p>
+                    <h3>검증 전 데이터 (Google Sheet)</h3>
+                    <p className="result-meta">구글시트 링크를 붙여넣고 불러오기를 누르면 데이터가 표시됩니다.</p>
                   </div>
+                  {googleSheetRows.length > 1 && <span className="soft-badge">총 {googleSheetRows.length - 1}건</span>}
                 </div>
               </section>
 
-              {!selectedDataset ? (
-                <div className="notice">데이터 탭에서 저장된 데이터를 선택해주세요.</div>
-              ) : (
-                <section className="config-card">
-                  <div className="section-title">
-                    <div>
-                      <h3>{getDisplayCompanyName(selectedDataset.companyName)} {selectedDataset.quarterLabel}</h3>
-                      <p className="result-meta">OCR 원본 상태의 데이터</p>
-                    </div>
+              <section className="config-card">
+                <div className="section-title">
+                  <div>
+                    <h3>구글시트 연결</h3>
+                    <p className="result-meta">구글시트를 열고 주소창 URL 전체를 복사해 붙여넣으세요. 링크는 저장되어 다음에도 유지됩니다.</p>
                   </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table className="table">
-                      <thead>
-                        <tr><th>섹션</th><th>계정명</th><th>값</th><th>부호</th></tr>
-                      </thead>
-                      <tbody>
-                        {selectedDataset.rawStatementRows.map((row, idx) => (
-                          <tr key={`raw-${idx}`}>
-                            <td>{row.section}</td>
-                            <td>{row.accountName}</td>
-                            <td>{formatNumber(row.value)}</td>
-                            <td>{row.signFlag === 0 ? "가산(+)" : row.signFlag === 1 ? "차감(−)" : "제외"}</td>
-                          </tr>
+                </div>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <input
+                    type="text"
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                    value={googleSheetUrl}
+                    onChange={(e) => setGoogleSheetUrl(e.target.value)}
+                    style={{ flex: 1, padding: "0.5rem 0.75rem", border: "1px solid #bdc3c7", borderRadius: "6px", fontSize: "0.875rem" }}
+                  />
+                  <button
+                    disabled={!googleSheetUrl || googleSheetLoading}
+                    onClick={async () => {
+                      const match = googleSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+                      if (!match) {
+                        setGoogleSheetError("올바른 구글시트 링크가 아닙니다.");
+                        return;
+                      }
+                      const sheetId = match[1];
+                      setGoogleSheetLoading(true);
+                      setGoogleSheetError(null);
+                      try {
+                        if (!googleProviderToken) {
+                          setGoogleSheetError("구글 로그인이 필요합니다. 로그아웃 후 다시 구글로 로그인해 주세요.");
+                          setGoogleSheetLoading(false);
+                          return;
+                        }
+                        const res = await fetch(
+                          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:Z`,
+                          { headers: { Authorization: `Bearer ${googleProviderToken}` } }
+                        );
+                        if (!res.ok) {
+                          const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
+                          throw new Error(err?.error?.message ?? "시트를 불러오지 못했습니다.");
+                        }
+                        const json = await res.json() as { values?: string[][] };
+                        setGoogleSheetRows(json.values ?? []);
+                      } catch (e) {
+                        setGoogleSheetError(e instanceof Error ? e.message : "알 수 없는 오류가 발생했습니다.");
+                      } finally {
+                        setGoogleSheetLoading(false);
+                      }
+                    }}
+                    style={{
+                      padding: "0.5rem 1rem",
+                      background: googleSheetLoading ? "#bdc3c7" : "#2ecc71",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      cursor: googleSheetLoading ? "not-allowed" : "pointer",
+                      fontWeight: 600,
+                      whiteSpace: "nowrap"
+                    }}
+                  >
+                    {googleSheetLoading ? "불러오는 중..." : "불러오기"}
+                  </button>
+                  {googleSheetRows.length > 0 && (
+                    <button
+                      onClick={() => { setGoogleSheetRows([]); setGoogleSheetUrl(""); setGoogleSheetError(null); }}
+                      style={{ padding: "0.5rem 0.75rem", border: "1px solid #bdc3c7", borderRadius: "6px", background: "white", cursor: "pointer", color: "#7f8c8d", whiteSpace: "nowrap" }}
+                    >
+                      초기화
+                    </button>
+                  )}
+                </div>
+                {googleSheetError && (
+                  <p style={{ color: "#e74c3c", marginTop: "0.5rem", fontSize: "0.875rem" }}>{googleSheetError}</p>
+                )}
+              </section>
+
+              {googleSheetRows.length > 1 && (
+                <section className="config-card" style={{ overflowX: "auto" }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        {(googleSheetRows[0] ?? []).map((header, i) => (
+                          <th key={i}>{header}</th>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {googleSheetRows.slice(1).map((row, ri) => (
+                        <tr key={ri}>
+                          {(googleSheetRows[0] ?? []).map((_, ci) => (
+                            <td key={ci}>{row[ci] ?? ""}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </section>
               )}
             </>

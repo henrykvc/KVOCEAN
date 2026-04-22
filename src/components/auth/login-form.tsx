@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 
 type LoginFormProps = {
@@ -10,58 +10,34 @@ type LoginFormProps = {
 
 const ERROR_MESSAGES: Record<string, string> = {
   callback: "로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.",
-  missing_code: "이메일 링크가 올바르지 않습니다. 새 링크를 요청해 주세요."
+  missing_code: "로그인 링크가 올바르지 않습니다. 다시 시도해 주세요."
 };
 
 export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [status, setStatus] = useState<"idle" | "submitting" | "sent" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
-  const errorMessage = useMemo(() => {
-    if (!errorCode) {
-      return null;
-    }
+  const errorMessage = errorCode ? (ERROR_MESSAGES[errorCode] ?? "로그인 중 오류가 발생했습니다. 다시 시도해 주세요.") : null;
 
-    return ERROR_MESSAGES[errorCode] ?? "로그인 중 오류가 발생했습니다. 다시 시도해 주세요.";
-  }, [errorCode]);
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleGoogleLogin() {
     setStatus("submitting");
     setMessage(null);
 
     try {
-      const response = await fetch("/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          email
-        })
-      });
-
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(typeof payload.error === "string" ? payload.error : "로그인 메일 발송에 실패했습니다.");
-      }
-
       const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          scopes: "https://www.googleapis.com/auth/spreadsheets.readonly",
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent"
+          }
+        }
       });
 
-      if (error) {
-        throw error;
-      }
-
-      setStatus("sent");
-      setMessage("로그인되었습니다. 작업 화면으로 이동합니다.");
-      window.location.assign(nextPath || "/");
+      if (error) throw error;
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "로그인에 실패했습니다.");
@@ -73,47 +49,31 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
       <div className="auth-copy">
         <span className="auth-eyebrow">Protected Workspace</span>
         <h1>KV OCEAN 로그인</h1>
-        <p>이메일과 비밀번호로 로그인해야 공용 데이터와 분류 기준을 볼 수 있습니다.</p>
+        <p>구글 계정으로 로그인하면 구글시트 데이터에 바로 접근할 수 있습니다.</p>
       </div>
 
-      <form className="auth-form" onSubmit={handleSubmit}>
-        <label className="auth-label" htmlFor="email">이메일</label>
-        <input
-          id="email"
-          className="input auth-input"
-          type="email"
-          autoComplete="email"
-          placeholder="name@company.com"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          required
-        />
-        <label className="auth-label" htmlFor="password">비밀번호</label>
-        <input
-          id="password"
-          className="input auth-input"
-          type="password"
-          autoComplete="current-password"
-          placeholder="비밀번호 입력"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          required
-        />
-        <button className="button auth-submit" type="submit" disabled={status === "submitting"}>
-          {status === "submitting" ? "로그인 중..." : "로그인"}
+      <div className="auth-form">
+        <button
+          className="button auth-submit"
+          onClick={handleGoogleLogin}
+          disabled={status === "submitting"}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem" }}
+        >
+          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+            <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+            <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
+            <path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+            <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+          </svg>
+          {status === "submitting" ? "로그인 중..." : "Google로 로그인"}
         </button>
-      </form>
+      </div>
 
       {(errorMessage || message) && (
         <p className={`auth-message ${status === "error" || errorMessage ? "is-error" : "is-success"}`.trim()}>
           {errorMessage ?? message}
         </p>
       )}
-
-      <div className="auth-note">
-        <strong>운영 메모</strong>
-        <p>Supabase Auth에 등록된 사용자만 로그인할 수 있습니다.</p>
-      </div>
     </div>
   );
 }
