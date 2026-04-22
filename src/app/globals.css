@@ -2033,3 +2033,30 @@ a {
     min-width: 0;
   }
 }
+
+/* Tab highlighting for main workspace tabs */
+.side-nav-item.tab-highlighted {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.side-nav-item.tab-highlighted:hover {
+  color: #1a252f;
+}
+
+/* Edit config inline for dataset modifications */
+.edit-config-inline {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  width: 100%;
+}
+
+.edit-config-inline label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}

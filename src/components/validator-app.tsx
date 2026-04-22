@@ -49,7 +49,7 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db";
+type TabKey = "data-preview" | "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db";
 
 type OverrideRow = {
   section: string;
@@ -97,6 +97,8 @@ type ComparisonSelection = {
 type TopViewKey = "menu" | "final-output";
 
 const DEFAULT_INDUSTRY_OPTIONS = ["서비스", "게임", "기술", "헬스케어", "크립토"] as const;
+const DEFAULT_ACCOUNTING_STANDARDS = ["K-GAAP", "IFRS"] as const;
+type AccountingStandard = (typeof DEFAULT_ACCOUNTING_STANDARDS)[number];
 
 type PendingInsertedRow = {
   section: string;
@@ -2385,13 +2387,14 @@ export function ValidatorApp() {
           <div className="side-nav-card">
             <span className="section-kicker">Workspace</span>
             <div className="side-nav-list">
-              <button className={`side-nav-item ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>1. OCR검증</button>
+              <button className={`side-nav-item tab-highlighted ${activeTab === "data-preview" ? "active" : ""}`} onClick={() => setActiveTab("data-preview")}>0. 검증 전 데이터</button>
+              <button className={`side-nav-item tab-highlighted ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>1. OCR검증</button>
               <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>1-1. 검증 규칙관리</button>
-              <button className={`side-nav-item ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
-              <button className={`side-nav-item ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
+              <button className={`side-nav-item tab-highlighted ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
+              <button className={`side-nav-item tab-highlighted ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
               <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>3-1. 분류</button>
               <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>3-2. 수식</button>
-              <button className={`side-nav-item ${activeTab === "account-db" ? "active" : ""}`} onClick={() => setActiveTab("account-db")}>4. 계정 DB</button>
+              <button className={`side-nav-item tab-highlighted ${activeTab === "account-db" ? "active" : ""}`} onClick={() => setActiveTab("account-db")}>4. 계정 DB</button>
             </div>
             <div className="side-nav-divider" />
             <div className="side-nav-utils">
@@ -2759,6 +2762,50 @@ export function ValidatorApp() {
             </>
           )}
 
+          {activeTab === "data-preview" && (
+            <>
+              <section className="overview-card report-hero-card">
+                <div className="section-title">
+                  <div>
+                    <span className="section-kicker">0. 검증 전 데이터</span>
+                    <h3>원본 데이터 미리보기</h3>
+                    <p className="result-meta">OCR로부터 추출된 원본 데이터입니다. 검증 전 상태를 확인할 수 있습니다.</p>
+                  </div>
+                </div>
+              </section>
+
+              {!selectedDataset ? (
+                <div className="notice">데이터 탭에서 저장된 데이터를 선택해주세요.</div>
+              ) : (
+                <section className="config-card">
+                  <div className="section-title">
+                    <div>
+                      <h3>{getDisplayCompanyName(selectedDataset.companyName)} {selectedDataset.quarterLabel}</h3>
+                      <p className="result-meta">OCR 원본 상태의 데이터</p>
+                    </div>
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="table">
+                      <thead>
+                        <tr><th>섹션</th><th>계정명</th><th>값</th><th>부호</th></tr>
+                      </thead>
+                      <tbody>
+                        {selectedDataset.raw_statement_rows.map((row, idx) => (
+                          <tr key={`raw-${idx}`}>
+                            <td>{row.section}</td>
+                            <td>{row.accountName}</td>
+                            <td>{formatNumber(row.value)}</td>
+                            <td>{row.signFlag === 0 ? "가산(+)" : row.signFlag === 1 ? "차감(−)" : "제외"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
           {activeTab === "data" && (
             <>
               <section className="overview-card report-hero-card">
@@ -2795,23 +2842,10 @@ export function ValidatorApp() {
                             <div className="data-company-row">
                               <div className="data-company-main">
                                 <strong>{getDisplayCompanyName(companyName)}</strong>
-                                {industryEditorOpen ? (
-                                  <select
-                                    className="mini-select"
-                                    value={companyIndustry || ""}
-                                    onChange={(event) => setCompanyIndustry(companyName, event.target.value)}
-                                  >
-                                    <option value="">🏷️ 미분류</option>
-                                    {industryOptions.map((option) => (
-                                      <option key={`${companyName}-${option}`} value={option}>{`${getIndustryIcon(option)} ${option}`}</option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <div className="industry-badge-wrap">
-                                    <span className="industry-icon" aria-hidden="true">{companyIndustryIcon}</span>
-                                    <span>{companyIndustryLabel}</span>
-                                  </div>
-                                )}
+                                <div className="industry-badge-wrap">
+                                  <span className="industry-icon" aria-hidden="true">{companyIndustryIcon}</span>
+                                  <span>{companyIndustryLabel}</span>
+                                </div>
                               </div>
                               <div className="data-quarter-chip-list">
                                 {datasets.map((dataset) => (
@@ -2828,8 +2862,33 @@ export function ValidatorApp() {
                             {activeDataset && (
                               <div className="data-row-actions">
                                 <span className="soft-badge">선택 분기 {formatCompactQuarterLabel(activeDataset.quarterLabel)}</span>
+                                {industryEditorOpen ? (
+                                  <div className="edit-config-inline">
+                                    <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                      <span style={{ fontSize: "12px", color: "#666" }}>산업</span>
+                                      <select
+                                        className="mini-select"
+                                        value={companyIndustry || ""}
+                                        onChange={(event) => setCompanyIndustry(companyName, event.target.value)}
+                                      >
+                                        <option value="">🏷️ 미분류</option>
+                                        {industryOptions.map((option) => (
+                                          <option key={`${companyName}-${option}`} value={option}>{`${getIndustryIcon(option)} ${option}`}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                      <span style={{ fontSize: "12px", color: "#666" }}>회계기준</span>
+                                      <select className="mini-select" defaultValue="K-GAAP">
+                                        {DEFAULT_ACCOUNTING_STANDARDS.map((std) => (
+                                          <option key={std} value={std}>{std}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </div>
+                                ) : null}
                                 <button className="ghost-button" onClick={() => setActiveIndustryEditor((prev) => prev === companyName ? null : companyName)}>
-                                  {industryEditorOpen ? "수정 닫기" : "수정하기"}
+                                  {industryEditorOpen ? "수정 닫기" : "수정모드"}
                                 </button>
                                 <button className="secondary-button" onClick={() => { setSelectedDatasetId(activeDataset.id); setActiveTab("report"); }}>결과물 보기</button>
                                 <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeDataset)}>검증기로 불러오기</button>
