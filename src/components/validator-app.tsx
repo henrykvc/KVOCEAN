@@ -1112,7 +1112,6 @@ export function ValidatorApp() {
   const [googleSheetRows, setGoogleSheetRows] = useState<string[][]>([]);
   const [googleSheetLoading, setGoogleSheetLoading] = useState(false);
   const [googleSheetError, setGoogleSheetError] = useState<string | null>(null);
-  const [googleProviderToken, setGoogleProviderToken] = useState<string | null>(null);
   const configSyncInitializedRef = useRef(false);
 
   useEffect(() => {
@@ -1239,22 +1238,6 @@ export function ValidatorApp() {
     if (saved) setGoogleSheetUrl(saved);
   }, []);
 
-  useEffect(() => {
-    async function loadProviderToken() {
-      const { createClient } = await import("@/lib/supabase/browser");
-      const supabase = createClient();
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.provider_token ?? null;
-      if (token) {
-        setGoogleProviderToken(token);
-        window.localStorage.setItem("kvocean-google-provider-token", token);
-      } else {
-        const saved = window.localStorage.getItem("kvocean-google-provider-token");
-        if (saved) setGoogleProviderToken(saved);
-      }
-    }
-    loadProviderToken();
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1262,7 +1245,7 @@ export function ValidatorApp() {
   }, [googleSheetUrl]);
 
   useEffect(() => {
-    if (!googleSheetUrl || !googleProviderToken) return;
+    if (!googleSheetUrl) return;
 
     const match = googleSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
     if (!match) return;
@@ -1271,18 +1254,20 @@ export function ValidatorApp() {
     setGoogleSheetLoading(true);
     setGoogleSheetError(null);
 
-    fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:Z`,
-      { headers: { Authorization: `Bearer ${googleProviderToken}` } }
-    )
-      .then((res) => {
-        if (!res.ok) return res.json().then((e: { error?: { message?: string } }) => { throw new Error(e?.error?.message ?? "시트를 불러오지 못했습니다."); });
-        return res.json() as Promise<{ values?: string[][] }>;
+    fetch(`/api/google-sheet?sheetId=${sheetId}`)
+      .then((res) => res.json() as Promise<{ values?: string[][]; error?: string }>)
+      .then((json) => {
+        if (json.error === "no_provider_token") {
+          setGoogleSheetError("구글 계정으로 로그아웃 후 다시 로그인해 주세요.");
+        } else if (json.error) {
+          setGoogleSheetError(json.error);
+        } else {
+          setGoogleSheetRows(json.values ?? []);
+        }
       })
-      .then((json) => setGoogleSheetRows(json.values ?? []))
-      .catch((e) => setGoogleSheetError(e instanceof Error ? e.message : "오류가 발생했습니다."))
+      .catch(() => setGoogleSheetError("시트를 불러오지 못했습니다."))
       .finally(() => setGoogleSheetLoading(false));
-  }, [googleSheetUrl, googleProviderToken]);
+  }, [googleSheetUrl]);
 
   useEffect(() => {
     if (!mounted || !sharedStateReady) {
@@ -2857,11 +2842,6 @@ export function ValidatorApp() {
                     </button>
                   )}
                 </div>
-                {!googleProviderToken && (
-                  <p style={{ color: "#e67e22", marginTop: "0.5rem", fontSize: "0.875rem" }}>
-                    ⚠️ 구글 시트를 읽으려면 <strong>구글 계정으로 로그아웃 후 다시 로그인</strong>해야 합니다.
-                  </p>
-                )}
                 {googleSheetLoading && (
                   <p style={{ color: "#7f8c8d", marginTop: "0.5rem", fontSize: "0.875rem" }}>시트 불러오는 중...</p>
                 )}
