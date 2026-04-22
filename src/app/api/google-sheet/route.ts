@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -8,19 +9,23 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createClient();
-  const { data: { session } } = await supabase.auth.getSession();
-
-  if (!session) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
 
-  if (!session.provider_token) {
+  // provider_token은 세션보다 별도 쿠키에서 더 안정적으로 읽힘
+  const cookieStore = cookies();
+  const providerToken = cookieStore.get("kvocean-google-token")?.value
+    ?? (await supabase.auth.getSession()).data.session?.provider_token;
+
+  if (!providerToken) {
     return NextResponse.json({ error: "no_provider_token" }, { status: 401 });
   }
 
   const res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/A:Z`,
-    { headers: { Authorization: `Bearer ${session.provider_token}` } }
+    { headers: { Authorization: `Bearer ${providerToken}` } }
   );
 
   if (!res.ok) {

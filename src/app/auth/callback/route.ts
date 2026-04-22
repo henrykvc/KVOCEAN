@@ -59,6 +59,16 @@ export async function GET(request: NextRequest) {
   if (code) {
     const result = await supabase.auth.exchangeCodeForSession(code);
     error = result.error;
+    if (!error && result.data.session?.provider_token) {
+      const cookieStore = (await import("next/headers")).cookies();
+      cookieStore.set("kvocean-google-token", result.data.session.provider_token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 3600,
+        path: "/"
+      });
+    }
   } else if (tokenHash) {
     const result = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
