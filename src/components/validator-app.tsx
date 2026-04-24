@@ -2202,6 +2202,20 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
     }));
   }
 
+  function getCompanyStatementType(companyName: string) {
+    return companyConfigs[companyName]?.statementType ?? "별도";
+  }
+
+  function setCompanyStatementType(companyName: string, type: string) {
+    setCompanyConfigs((prev) => ({
+      ...prev,
+      [companyName]: {
+        ...(prev[companyName] ?? {}),
+        statementType: type || undefined
+      }
+    }));
+  }
+
   function resetConfig() {
     const defaults = getDefaultPersistedState();
     setLogicConfig(cloneLogicConfig(defaults.logicConfig));
@@ -2828,6 +2842,7 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
                         const companyIndustryLabel = companyIndustry || "미분류";
                         const companyIndustryIcon = getIndustryIcon(companyIndustryLabel);
                         const companyAccStd = getCompanyAccountingStandard(companyName);
+                        const companyStmtType = getCompanyStatementType(companyName);
                         return (
                           <article className={`data-company-card ${activeDataset ? "selected" : ""}`} key={`company-group-${companyName}`}>
                             <div className="data-company-row">
@@ -2836,7 +2851,7 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
                                 <div className="industry-badge-wrap">
                                   <span className="industry-icon" aria-hidden="true">{companyIndustryIcon}</span>
                                   <span>{companyIndustryLabel}</span>
-                                  <span style={{ color: "var(--muted)", fontSize: "0.75rem", marginLeft: 2 }}>· {companyAccStd}</span>
+                                  <span style={{ color: "var(--muted)", fontSize: "0.75rem", marginLeft: 2 }}>· {companyAccStd} · {companyStmtType}</span>
                                 </div>
                               </div>
                               <div className="data-quarter-chip-list">
@@ -2876,6 +2891,17 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
                                     {DEFAULT_ACCOUNTING_STANDARDS.map((std) => (
                                       <option key={std} value={std}>{std}</option>
                                     ))}
+                                  </select>
+                                </label>
+                                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <span style={{ fontSize: "12px", color: "#666" }}>재무제표</span>
+                                  <select
+                                    className="mini-select"
+                                    value={companyStmtType}
+                                    onChange={(event) => setCompanyStatementType(companyName, event.target.value)}
+                                  >
+                                    <option value="별도">별도</option>
+                                    <option value="연결">연결</option>
                                   </select>
                                 </label>
                               </div>
