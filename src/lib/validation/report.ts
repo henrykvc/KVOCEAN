@@ -1893,7 +1893,8 @@ export function normalizeSavedQuarterSnapshot(snapshot: SavedQuarterSnapshot) {
     classificationGroups: snapshot.source.classificationGroups,
     pasteEdits: normalizedPasteEdits,
     nameEdits: snapshot.source.nameEdits ?? {},
-    sessionSignFixes: snapshot.source.sessionSignFixes
+    sessionSignFixes: snapshot.source.sessionSignFixes,
+    statementType: snapshot.source.statementType
   });
 
   const rebuilt = rebuiltSnapshots.find((item) => item.quarterKey === snapshot.quarterKey)
