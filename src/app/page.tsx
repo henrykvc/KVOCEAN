@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { ValidatorApp } from "@/components/validator-app";
 import { createClient } from "@/lib/supabase/server";
 import { getUserRole } from "@/lib/supabase/access";
-import { loadDatasets } from "@/app/api/datasets/route";
+import { loadDatasets } from "@/lib/datasets";
 
 export default async function Page() {
   const supabase = createClient();
