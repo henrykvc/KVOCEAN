@@ -23,7 +23,7 @@ export async function GET() {
 
   const { data, error } = await adminClient
     .from("allowed_users")
-    .select("email, display_name, is_active, created_at")
+    .select("email, display_name, is_active, role, created_at")
     .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -36,18 +36,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
   }
 
-  const { email, display_name } = await request.json().catch(() => ({})) as { email?: string; display_name?: string };
+  const { email, display_name, role } = await request.json().catch(() => ({})) as {
+    email?: string;
+    display_name?: string;
+    role?: string;
+  };
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
     return NextResponse.json({ error: "이메일을 입력해 주세요." }, { status: 400 });
   }
 
+  const safeRole = role === "admin" ? "admin" : "manager";
+
+  // Upsert into allowed_users
   const { data, error } = await adminClient
     .from("allowed_users")
-    .upsert({ email: normalizedEmail, display_name: display_name?.trim() || null, is_active: true }, { onConflict: "email" })
+    .upsert(
+      { email: normalizedEmail, display_name: display_name?.trim() || null, is_active: true, role: safeRole },
+      { onConflict: "email" }
+    )
     .select()
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data, { status: 201 });
+
+  // Send invite email via Supabase Auth
+  const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(normalizedEmail, {
+    data: { display_name: display_name?.trim() || null }
+  });
+  // Invite errors are non-fatal (user may already exist)
+  const inviteSent = !inviteError;
+
+  return NextResponse.json({ ...data, inviteSent }, { status: 201 });
 }

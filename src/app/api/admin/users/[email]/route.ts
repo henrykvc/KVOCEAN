@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isActiveAdminUser } from "@/lib/supabase/access";
 
+const CREATOR_EMAIL = "henry@kakaoventures.co.kr";
+
 async function requireAdmin() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -25,14 +27,16 @@ export async function PATCH(
   }
 
   const email = decodeURIComponent(params.email);
-  const { is_active } = await request.json().catch(() => ({})) as { is_active?: boolean };
-  if (typeof is_active !== "boolean") {
-    return NextResponse.json({ error: "is_active 값이 필요합니다." }, { status: 400 });
+  if (email === CREATOR_EMAIL) {
+    return NextResponse.json({ error: "제작자 계정은 수정할 수 없습니다." }, { status: 403 });
   }
+
+  const body = await request.json().catch(() => ({})) as { role?: string };
+  const safeRole = body.role === "admin" ? "admin" : "manager";
 
   const { data, error } = await adminClient
     .from("allowed_users")
-    .update({ is_active, updated_at: new Date().toISOString() })
+    .update({ role: safeRole, updated_at: new Date().toISOString() })
     .eq("email", email)
     .select()
     .single();
@@ -51,6 +55,9 @@ export async function DELETE(
   }
 
   const email = decodeURIComponent(params.email);
+  if (email === CREATOR_EMAIL) {
+    return NextResponse.json({ error: "제작자 계정은 삭제할 수 없습니다." }, { status: 403 });
+  }
 
   const { error } = await adminClient
     .from("allowed_users")

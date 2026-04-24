@@ -798,6 +798,12 @@ a {
   cursor: not-allowed;
 }
 
+.side-nav-item.is-locked {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .main-panel {
   padding: 22px 20px;
   display: flex;

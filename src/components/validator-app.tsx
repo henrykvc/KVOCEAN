@@ -1068,7 +1068,11 @@ function applyManagedAssignmentsFromSavedDatasets(
 }
 
 
-export function ValidatorApp() {
+type UserRole = "creator" | "admin" | "manager";
+
+export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) {
+  const canEditConfig = userRole === "creator" || userRole === "admin";
+  const canDeleteData = userRole === "creator";
   const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
   const [mounted, setMounted] = useState(false);
@@ -2405,12 +2409,12 @@ export function ValidatorApp() {
             <span className="section-kicker">Workspace</span>
             <div className="side-nav-list">
               <button className={`side-nav-item tab-highlighted ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>1. OCR검증</button>
-              <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>1-1. 검증 규칙관리</button>
+              <button className={`side-nav-item ${activeTab === "config" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("config")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>1-1. 검증 규칙관리</button>
               <button className={`side-nav-item tab-highlighted ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
               <button className={`side-nav-item tab-highlighted ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
-              <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""}`} onClick={() => setActiveTab("classify")}>3-1. 분류</button>
-              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""}`} onClick={() => setActiveTab("formulas")}>3-2. 수식</button>
-              <button className={`side-nav-item tab-highlighted ${activeTab === "account-db" ? "active" : ""}`} onClick={() => setActiveTab("account-db")}>4. 계정 DB</button>
+              <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("classify")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>3-1. 분류</button>
+              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("formulas")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>3-2. 수식</button>
+              <button className={`side-nav-item tab-highlighted ${activeTab === "account-db" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("account-db")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>4. 계정 DB</button>
             </div>
             <div className="side-nav-divider" />
             <div className="side-nav-utils">
@@ -2874,7 +2878,9 @@ export function ValidatorApp() {
                                 <span className="soft-badge">선택 분기 {formatCompactQuarterLabel(activeDataset.quarterLabel)}</span>
                                 <button className="secondary-button" onClick={() => { setSelectedDatasetId(activeDataset.id); setActiveTab("report"); }}>결과물 보기</button>
                                 <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeDataset)}>검증기로 불러오기</button>
-                                <button className={`danger-button ${datasetActionState === "deleting" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "deleting"} onClick={() => deleteDataset(activeDataset)}>{datasetActionState === "deleting" ? "이동 중..." : "삭제"}</button>
+                                {canDeleteData && (
+                                  <button className={`danger-button ${datasetActionState === "deleting" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "deleting"} onClick={() => deleteDataset(activeDataset)}>{datasetActionState === "deleting" ? "이동 중..." : "삭제"}</button>
+                                )}
                               </div>
                             )}
                           </article>
@@ -2927,8 +2933,14 @@ export function ValidatorApp() {
                         </div>
                         <div className="data-row-actions">
                           <span className="soft-badge">삭제됨</span>
-                          <button className={`secondary-button ${datasetActionState === "restoring" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "restoring"} onClick={() => restoreDataset(dataset)}>{datasetActionState === "restoring" ? "복구 중..." : "복구하기"}</button>
-                          <button className={`danger-button ${datasetActionState === "purging" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "purging"} onClick={() => purgeDataset(dataset)}>{datasetActionState === "purging" ? "삭제 중..." : "완전삭제"}</button>
+                          {canDeleteData ? (
+                            <>
+                              <button className={`secondary-button ${datasetActionState === "restoring" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "restoring"} onClick={() => restoreDataset(dataset)}>{datasetActionState === "restoring" ? "복구 중..." : "복구하기"}</button>
+                              <button className={`danger-button ${datasetActionState === "purging" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "purging"} onClick={() => purgeDataset(dataset)}>{datasetActionState === "purging" ? "삭제 중..." : "완전삭제"}</button>
+                            </>
+                          ) : (
+                            <span className="soft-badge" style={{ color: "var(--muted)" }}>제작자만 삭제 가능</span>
+                          )}
                         </div>
                       </article>
                     ))}

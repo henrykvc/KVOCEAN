@@ -49,3 +49,20 @@ export async function isActiveAdminUser(supabase: SupabaseClient, email: string)
   if (error) throw error;
   return Boolean(data?.is_active);
 }
+
+export type UserRole = "creator" | "admin" | "manager";
+
+export async function getUserRole(supabase: SupabaseClient, email: string): Promise<UserRole> {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return "manager";
+
+  const { data } = await supabase
+    .from("allowed_users")
+    .select("role")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  const role = data?.role as UserRole | undefined;
+  if (role === "creator" || role === "admin" || role === "manager") return role;
+  return "manager";
+}

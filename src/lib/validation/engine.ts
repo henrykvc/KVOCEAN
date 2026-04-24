@@ -521,7 +521,7 @@ export function validatePasteSections(
       }
       if (sign === 2) {
         const capitalMatch = getAccountMatch(nameToValue, compName);
-        used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _row: rowIndex, _col: capitalMatch?.col, _allowedSigns: isPositive ? [0] : [0, 1] });
+        used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _row: rowIndex, _col: capitalMatch?.col, _allowedSigns: [0, 1, 2] });
         continue;
       }
       const signedValue = applySign(value, sign);
@@ -534,7 +534,7 @@ export function validatePasteSections(
         적용값: signedValue,
         _row: rowIndex,
         _col: capitalMatch?.col,
-        _allowedSigns: isPositive ? [0] : [0, 1]
+        _allowedSigns: [0, 1, 2]
       });
     }
     if (used.length) {

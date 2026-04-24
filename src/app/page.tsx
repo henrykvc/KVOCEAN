@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { ValidatorApp } from "@/components/validator-app";
 import { createClient } from "@/lib/supabase/server";
-import { isActiveAdminUser } from "@/lib/supabase/access";
+import { isActiveAdminUser, getUserRole } from "@/lib/supabase/access";
 
 export default async function Page() {
   const supabase = createClient();
@@ -13,9 +13,10 @@ export default async function Page() {
     redirect("/login");
   }
 
-  const isAdmin = user.email
-    ? await isActiveAdminUser(supabase, user.email).catch(() => false)
-    : false;
+  const [isAdmin, userRole] = await Promise.all([
+    user.email ? isActiveAdminUser(supabase, user.email).catch(() => false) : false,
+    user.email ? getUserRole(supabase, user.email).catch(() => "manager" as const) : "manager" as const,
+  ]);
 
   return (
     <>
@@ -38,7 +39,7 @@ export default async function Page() {
           </form>
         </div>
       </div>
-      <ValidatorApp />
+      <ValidatorApp userRole={userRole} />
     </>
   );
 }
