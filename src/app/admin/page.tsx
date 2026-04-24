@@ -3,6 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { getUserRole, CREATOR_EMAIL } from "@/lib/supabase/access";
 import { AdminPanel } from "@/components/admin/admin-panel";
 
+type AllowedUser = {
+  email: string;
+  display_name: string | null;
+  is_active: boolean;
+  role: "creator" | "admin" | "manager";
+  created_at: string;
+};
+
 export default async function AdminPage() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -13,7 +21,7 @@ export default async function AdminPage() {
   if (userRole !== "creator" && userRole !== "admin") redirect("/");
 
   // Try with role column, fall back without it if column doesn't exist yet
-  let users: unknown[] | null = null;
+  let users: AllowedUser[] | null = null;
   const { data, error } = await supabase
     .from("allowed_users")
     .select("email, display_name, is_active, role, created_at")
@@ -26,9 +34,12 @@ export default async function AdminPage() {
       .from("allowed_users")
       .select("email, display_name, is_active, created_at")
       .order("created_at", { ascending: false });
-    users = (fallback ?? []).map((u: Record<string, unknown>) => ({
-      ...u,
-      role: u.email === CREATOR_EMAIL ? "creator" : "manager",
+    users = (fallback ?? []).map((u) => ({
+      email: u.email as string,
+      display_name: u.display_name as string | null,
+      is_active: u.is_active as boolean,
+      created_at: u.created_at as string,
+      role: (u.email === CREATOR_EMAIL ? "creator" : "manager") as AllowedUser["role"],
     }));
   }
 
