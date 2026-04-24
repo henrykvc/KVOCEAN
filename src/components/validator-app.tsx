@@ -3579,9 +3579,15 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
                               disabled={!selection.companyName || (sameCompanyMode && index > 0)}
                             >
                               <option value="">분기 선택</option>
-                              {quarterOptions.map((dataset) => (
-                                <option key={`${selection.slotId}-${dataset.id}`} value={dataset.id}>{formatCompactQuarterLabel(dataset.quarterLabel)}</option>
-                              ))}
+                              {quarterOptions.map((dataset) => {
+                                const stmtType = dataset.source.statementType ?? "별도";
+                                const label = stmtType === "연결"
+                                  ? `${formatCompactQuarterLabel(dataset.quarterLabel)}-연결`
+                                  : formatCompactQuarterLabel(dataset.quarterLabel);
+                                return (
+                                  <option key={`${selection.slotId}-${dataset.id}`} value={dataset.id}>{label}</option>
+                                );
+                              })}
                             </select>
                           </div>
                         </th>
