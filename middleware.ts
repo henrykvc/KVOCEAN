@@ -1,37 +1,30 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { updateSession } from "@/lib/supabase/middleware";
 
 const PUBLIC_PATHS = new Set(["/login"]);
 
 function isPublicPath(pathname: string) {
-  if (PUBLIC_PATHS.has(pathname)) {
-    return true;
-  }
-
-  return pathname.startsWith("/auth/");
+  return PUBLIC_PATHS.has(pathname) || pathname.startsWith("/auth/");
 }
 
-export async function middleware(request: NextRequest) {
-  const { response, user } = await updateSession(request);
-  const hasSession = Boolean(user?.email);
+function hasSupabaseSession(request: NextRequest) {
+  return request.cookies.getAll().some(
+    (c) => c.name.includes("-auth-token")
+  );
+}
 
-  if (!hasSession && !isPublicPath(request.nextUrl.pathname)) {
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  if (isPublicPath(pathname)) return NextResponse.next();
+
+  if (!hasSupabaseSession(request)) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
-    if (request.nextUrl.pathname !== "/") {
-      loginUrl.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
-    }
+    if (pathname !== "/") loginUrl.searchParams.set("next", `${pathname}${request.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
 
-  if (hasSession && request.nextUrl.pathname === "/login") {
-    const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/";
-    homeUrl.search = "";
-    return NextResponse.redirect(homeUrl);
-  }
-
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {
