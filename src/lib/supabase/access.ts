@@ -52,9 +52,14 @@ export async function isActiveAdminUser(supabase: SupabaseClient, email: string)
 
 export type UserRole = "creator" | "admin" | "manager";
 
+export const CREATOR_EMAIL = "henry@kakaoventures.co.kr";
+
 export async function getUserRole(supabase: SupabaseClient, email: string): Promise<UserRole> {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return "manager";
+
+  // Creator is hardcoded — DB state doesn't affect this
+  if (normalizedEmail === CREATOR_EMAIL) return "creator";
 
   const { data } = await supabase
     .from("allowed_users")
