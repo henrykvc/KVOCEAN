@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { isActiveAdminUser } from "@/lib/supabase/access";
+import { getUserRole } from "@/lib/supabase/access";
 import { AdminPanel } from "@/components/admin/admin-panel";
 
 export default async function AdminPage() {
@@ -9,8 +9,8 @@ export default async function AdminPage() {
 
   if (!user?.email) redirect("/login");
 
-  const isAdmin = await isActiveAdminUser(supabase, user.email).catch(() => false);
-  if (!isAdmin) redirect("/");
+  const userRole = await getUserRole(supabase, user.email).catch(() => "manager" as const);
+  if (userRole !== "creator" && userRole !== "admin") redirect("/");
 
   const { data: users } = await supabase
     .from("allowed_users")

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { ValidatorApp } from "@/components/validator-app";
 import { createClient } from "@/lib/supabase/server";
-import { isActiveAdminUser, getUserRole } from "@/lib/supabase/access";
+import { getUserRole } from "@/lib/supabase/access";
 
 export default async function Page() {
   const supabase = createClient();
@@ -13,10 +13,10 @@ export default async function Page() {
     redirect("/login");
   }
 
-  const [isAdmin, userRole] = await Promise.all([
-    user.email ? isActiveAdminUser(supabase, user.email).catch(() => false) : false,
-    user.email ? getUserRole(supabase, user.email).catch(() => "manager" as const) : "manager" as const,
-  ]);
+  const userRole = user.email
+    ? await getUserRole(supabase, user.email).catch(() => "manager" as const)
+    : "manager" as const;
+  const canManageAccounts = userRole === "creator" || userRole === "admin";
 
   return (
     <>
@@ -29,7 +29,7 @@ export default async function Page() {
           </div>
         </div>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          {isAdmin && (
+          {canManageAccounts && (
             <a href="/admin" className="ghost-button" style={{ padding: "0.5rem 1rem", textDecoration: "none", borderRadius: 10, fontSize: "0.875rem" }}>
               계정 관리
             </a>
