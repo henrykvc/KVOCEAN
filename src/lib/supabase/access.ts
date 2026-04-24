@@ -35,3 +35,17 @@ export async function getAllowedUser(supabase: SupabaseClient): Promise<User | n
 
   return (await isActiveAllowedUser(supabase, user.email)) ? user : null;
 }
+
+export async function isActiveAdminUser(supabase: SupabaseClient, email: string) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return false;
+
+  const { data, error } = await supabase
+    .from("admin_users")
+    .select("email, is_active")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data?.is_active);
+}

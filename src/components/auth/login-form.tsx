@@ -10,7 +10,8 @@ type LoginFormProps = {
 
 const ERROR_MESSAGES: Record<string, string> = {
   callback: "로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.",
-  missing_code: "로그인 링크가 올바르지 않습니다. 다시 시도해 주세요."
+  missing_code: "로그인 링크가 올바르지 않습니다. 다시 시도해 주세요.",
+  not_allowed: "허용된 계정이 아닙니다. 접근 권한이 있는 계정으로 로그인해 주세요."
 };
 
 export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
@@ -28,12 +29,7 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          scopes: "https://www.googleapis.com/auth/spreadsheets.readonly",
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
-          queryParams: {
-            access_type: "offline",
-            prompt: "consent"
-          }
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
         }
       });
 
@@ -49,7 +45,7 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
       <div className="auth-copy">
         <span className="auth-eyebrow">Protected Workspace</span>
         <h1>KV OCEAN 로그인</h1>
-        <p>구글 계정으로 로그인하면 구글시트 데이터에 바로 접근할 수 있습니다.</p>
+        <p>승인된 구글 계정으로만 로그인할 수 있습니다.</p>
       </div>
 
       <div className="auth-form">

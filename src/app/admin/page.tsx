@@ -1,23 +1,26 @@
 import { redirect } from "next/navigation";
-import { ValidatorApp } from "@/components/validator-app";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isActiveAdminUser } from "@/lib/supabase/access";
+import { AdminPanel } from "@/components/admin/admin-panel";
 
-export default async function Page() {
+export default async function AdminPage() {
   const supabase = createClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
-  if (!user) {
-    redirect("/login");
-  }
+  if (!user?.email) redirect("/login");
 
   const adminClient = createAdminClient();
-  const isAdmin = adminClient && user.email
+  const isAdmin = adminClient
     ? await isActiveAdminUser(adminClient, user.email).catch(() => false)
     : false;
+
+  if (!isAdmin) redirect("/");
+
+  const { data: users } = await adminClient!
+    .from("allowed_users")
+    .select("email, display_name, is_active, created_at")
+    .order("created_at", { ascending: false });
 
   return (
     <>
@@ -26,21 +29,19 @@ export default async function Page() {
           <div className="workspace-brand-mark">KV</div>
           <div>
             <strong>Kakao Ventures</strong>
-            <span>KV OCEAN · {user.email}</span>
+            <span>KV OCEAN · 관리자</span>
           </div>
         </div>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          {isAdmin && (
-            <a href="/admin" className="ghost-button" style={{ padding: "0.5rem 1rem", textDecoration: "none", borderRadius: 10, fontSize: "0.875rem" }}>
-              계정 관리
-            </a>
-          )}
+          <a href="/" className="ghost-button" style={{ padding: "0.5rem 1rem", textDecoration: "none", borderRadius: 10, fontSize: "0.875rem" }}>
+            앱으로 돌아가기
+          </a>
           <form action="/auth/logout" method="post">
             <button className="ghost-button" type="submit">로그아웃</button>
           </form>
         </div>
       </div>
-      <ValidatorApp />
+      <AdminPanel initialUsers={users ?? []} />
     </>
   );
 }

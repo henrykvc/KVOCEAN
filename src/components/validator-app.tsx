@@ -49,7 +49,7 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "data-preview" | "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db";
+type TabKey = "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db";
 
 type OverrideRow = {
   section: string;
@@ -1108,10 +1108,6 @@ export function ValidatorApp() {
   const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState<string | null>(null);
-  const [googleSheetUrl, setGoogleSheetUrl] = useState("");
-  const [googleSheetRows, setGoogleSheetRows] = useState<string[][]>([]);
-  const [googleSheetLoading, setGoogleSheetLoading] = useState(false);
-  const [googleSheetError, setGoogleSheetError] = useState<string | null>(null);
   const configSyncInitializedRef = useRef(false);
 
   useEffect(() => {
@@ -1231,43 +1227,6 @@ export function ValidatorApp() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = window.localStorage.getItem("kvocean-google-sheet-url");
-    if (saved) setGoogleSheetUrl(saved);
-  }, []);
-
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("kvocean-google-sheet-url", googleSheetUrl);
-  }, [googleSheetUrl]);
-
-  useEffect(() => {
-    if (!googleSheetUrl) return;
-
-    const match = googleSheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-    if (!match) return;
-    const sheetId = match[1];
-
-    setGoogleSheetLoading(true);
-    setGoogleSheetError(null);
-
-    fetch(`/api/google-sheet?sheetId=${sheetId}`)
-      .then((res) => res.json() as Promise<{ values?: string[][]; error?: string }>)
-      .then((json) => {
-        if (json.error === "no_provider_token") {
-          setGoogleSheetError("구글 계정으로 로그아웃 후 다시 로그인해 주세요.");
-        } else if (json.error) {
-          setGoogleSheetError(json.error);
-        } else {
-          setGoogleSheetRows(json.values ?? []);
-        }
-      })
-      .catch(() => setGoogleSheetError("시트를 불러오지 못했습니다."))
-      .finally(() => setGoogleSheetLoading(false));
-  }, [googleSheetUrl]);
 
   useEffect(() => {
     if (!mounted || !sharedStateReady) {
@@ -2430,7 +2389,6 @@ export function ValidatorApp() {
           <div className="side-nav-card">
             <span className="section-kicker">Workspace</span>
             <div className="side-nav-list">
-              <button className={`side-nav-item tab-highlighted ${activeTab === "data-preview" ? "active" : ""}`} onClick={() => setActiveTab("data-preview")}>0. 검증 전 데이터</button>
               <button className={`side-nav-item tab-highlighted ${activeTab === "validate" ? "active" : ""}`} onClick={() => setActiveTab("validate")}>1. OCR검증</button>
               <button className={`side-nav-item ${activeTab === "config" ? "active" : ""}`} onClick={() => setActiveTab("config")}>1-1. 검증 규칙관리</button>
               <button className={`side-nav-item tab-highlighted ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
@@ -2801,76 +2759,6 @@ export function ValidatorApp() {
                     </aside>
                   </section>
                 </>
-              )}
-            </>
-          )}
-
-          {activeTab === "data-preview" && (
-            <>
-              <section className="overview-card report-hero-card">
-                <div className="section-title">
-                  <div>
-                    <span className="section-kicker">0. 검증 전 데이터</span>
-                    <h3>검증 전 데이터 (Google Sheet)</h3>
-                    <p className="result-meta">구글시트 링크를 저장하면 자동으로 불러옵니다.</p>
-                  </div>
-                  {googleSheetRows.length > 1 && <span className="soft-badge">총 {googleSheetRows.length - 1}건</span>}
-                </div>
-              </section>
-
-              <section className="config-card">
-                <div className="section-title">
-                  <div>
-                    <h3>구글시트 연결</h3>
-                    <p className="result-meta">구글시트 주소창 URL을 복사해 붙여넣으세요. 저장 후 자동으로 불러옵니다.</p>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                  <input
-                    type="text"
-                    placeholder="https://docs.google.com/spreadsheets/d/..."
-                    value={googleSheetUrl}
-                    onChange={(e) => setGoogleSheetUrl(e.target.value)}
-                    style={{ flex: 1, padding: "0.5rem 0.75rem", border: "1px solid #bdc3c7", borderRadius: "6px", fontSize: "0.875rem" }}
-                  />
-                  {googleSheetRows.length > 0 && (
-                    <button
-                      onClick={() => { setGoogleSheetRows([]); setGoogleSheetUrl(""); setGoogleSheetError(null); }}
-                      style={{ padding: "0.5rem 0.75rem", border: "1px solid #bdc3c7", borderRadius: "6px", background: "white", cursor: "pointer", color: "#7f8c8d", whiteSpace: "nowrap" }}
-                    >
-                      초기화
-                    </button>
-                  )}
-                </div>
-                {googleSheetLoading && (
-                  <p style={{ color: "#7f8c8d", marginTop: "0.5rem", fontSize: "0.875rem" }}>시트 불러오는 중...</p>
-                )}
-                {googleSheetError && (
-                  <p style={{ color: "#e74c3c", marginTop: "0.5rem", fontSize: "0.875rem" }}>오류: {googleSheetError}</p>
-                )}
-              </section>
-
-              {googleSheetRows.length > 1 && (
-                <section className="config-card" style={{ overflowX: "auto" }}>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        {(googleSheetRows[0] ?? []).map((header, i) => (
-                          <th key={i}>{header}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {googleSheetRows.slice(1).map((row, ri) => (
-                        <tr key={ri}>
-                          {(googleSheetRows[0] ?? []).map((_, ci) => (
-                            <td key={ci}>{row[ci] ?? ""}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </section>
               )}
             </>
           )}

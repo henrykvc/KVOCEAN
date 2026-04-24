@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { isActiveAllowedUser } from "@/lib/supabase/access";
 
 function renderHashBridgeHtml(nextPath: string) {
   const escapedNextPath = JSON.stringify(nextPath);
@@ -59,15 +61,16 @@ export async function GET(request: NextRequest) {
   if (code) {
     const result = await supabase.auth.exchangeCodeForSession(code);
     error = result.error;
-    if (!error && result.data.session?.provider_token) {
-      const cookieStore = (await import("next/headers")).cookies();
-      cookieStore.set("kvocean-google-token", result.data.session.provider_token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 3600,
-        path: "/"
-      });
+    if (!error) {
+      const email = result.data.session?.user?.email;
+      const adminClient = createAdminClient();
+      if (adminClient && email) {
+        const allowed = await isActiveAllowedUser(adminClient, email).catch(() => false);
+        if (!allowed) {
+          await supabase.auth.signOut();
+          return NextResponse.redirect(new URL("/login?error=not_allowed", request.url));
+        }
+      }
     }
   } else if (tokenHash) {
     const result = await supabase.auth.verifyOtp({
