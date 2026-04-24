@@ -1528,7 +1528,6 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
     if (validation.parsed.error || !canSaveCurrentDataset) {
       return;
     }
-    setDatasetActionState("saving");
     const snapshotArgs = {
       pastedText,
       selectedCompany: selectedCompany.trim() || null,
@@ -1541,6 +1540,14 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
       sessionSignFixes
     };
     const snapshots = buildQuarterSnapshots(snapshotArgs);
+
+    const duplicates = snapshots.filter((s) => savedDatasets.some((d) => d.id === s.id));
+    if (duplicates.length > 0) {
+      const labels = duplicates.map((s) => s.quarterLabel).join(", ");
+      if (!confirm(`이미 저장된 분기 데이터가 있습니다 (${labels}).\n덮어쓰시겠습니까?`)) return;
+    }
+
+    setDatasetActionState("saving");
 
     try {
       const response = await fetch("/api/datasets", {
