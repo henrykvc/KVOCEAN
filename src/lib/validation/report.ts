@@ -79,6 +79,7 @@ export type SavedQuarterSnapshot = {
     logicConfig: LogicConfig;
     companyConfigs: CompanyConfigs;
     classificationGroups: ClassificationGroups;
+    statementType?: string;
   };
 };
 
@@ -1828,13 +1829,15 @@ export function buildQuarterSnapshots(args: {
   pasteEdits: Record<string, number>;
   nameEdits: Record<string, string>;
   sessionSignFixes: SessionSignFixes;
+  statementType?: string;
 }) {
   const reporting = buildReportingModel(args);
   const companyName = args.selectedCompany?.trim() || reporting.companyName || reporting.detectedCompany || "미지정 회사";
   const normalizedPasteEdits = normalizePasteEditsForValidation(args);
+  const statementType = args.statementType ?? "별도";
 
   return reporting.periods.map((period) => ({
-    id: `${companyName}__${period.label}`,
+    id: `${companyName}__${period.label}__${statementType}`,
     companyName,
     quarterKey: period.key,
     quarterLabel: period.label,
@@ -1863,7 +1866,8 @@ export function buildQuarterSnapshots(args: {
       sessionSignFixes: structuredClone(args.sessionSignFixes),
       logicConfig: structuredClone(args.logicConfig),
       companyConfigs: structuredClone(args.companyConfigs),
-      classificationGroups: structuredClone(args.classificationGroups)
+      classificationGroups: structuredClone(args.classificationGroups),
+      statementType
     }
   } satisfies SavedQuarterSnapshot));
 }

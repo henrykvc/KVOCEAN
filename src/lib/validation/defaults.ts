@@ -14,7 +14,6 @@ export type LogicConfig = {
 export type CompanyConfig = {
   industry?: string;
   accountingStandard?: string;
-  statementType?: string;
   sectionSignOverrides?: Record<string, Record<string, SignCode>>;
 };
 
