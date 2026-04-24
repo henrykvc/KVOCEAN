@@ -74,39 +74,24 @@ function toDatasetRow(snapshot: SavedQuarterSnapshot, savedBy?: string | null) {
   };
 }
 
-async function loadDatasets(supabase: ReturnType<typeof createClient>) {
+export async function loadDatasets(supabase: ReturnType<typeof createClient>) {
   const { data, error } = await supabase
     .from("datasets")
     .select("id, company_name, quarter_key, quarter_label, saved_at, raw_statement_rows, adjusted_statement_rows, source, is_deleted")
     .order("company_name", { ascending: true })
     .order("quarter_key", { ascending: false });
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
   const active: SavedQuarterSnapshot[] = [];
   const trashed: SavedQuarterSnapshot[] = [];
-  const normalizedRows: Array<ReturnType<typeof toDatasetRow>> = [];
 
   for (const item of (data ?? []) as DatasetRow[]) {
     const mapped = mapDatasetRow(item);
-    const normalized = normalizeSavedQuarterSnapshot(mapped);
-    if (!item.is_deleted && JSON.stringify(mapped) !== JSON.stringify(normalized)) {
-      normalizedRows.push(toDatasetRow(normalized));
-    }
-
     if (item.is_deleted) {
-      trashed.push(normalized);
+      trashed.push(mapped);
     } else {
-      active.push(normalized);
-    }
-  }
-
-  if (normalizedRows.length) {
-    const { error: normalizeError } = await supabase.from("datasets").upsert(normalizedRows, { onConflict: "id" });
-    if (normalizeError) {
-      throw normalizeError;
+      active.push(mapped);
     }
   }
 

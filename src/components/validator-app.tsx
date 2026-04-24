@@ -1070,7 +1070,7 @@ function applyManagedAssignmentsFromSavedDatasets(
 
 type UserRole = "creator" | "admin" | "manager";
 
-export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) {
+export function ValidatorApp({ userRole = "manager", initialDatasets, initialTrashedDatasets }: { userRole?: UserRole; initialDatasets?: SavedQuarterSnapshot[]; initialTrashedDatasets?: SavedQuarterSnapshot[] }) {
   const canEditConfig = userRole === "creator" || userRole === "admin";
   const canDeleteData = userRole === "creator";
   const [topView, setTopView] = useState<TopViewKey>("menu");
@@ -1094,8 +1094,8 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
   const [capitalMemoRows, setCapitalMemoRows] = useState<CapitalMemoRow[]>(capitalMemoAccountsToRows(DEFAULT_LOGIC_CONFIG.capitalMemoAccounts));
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
-  const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>([]);
-  const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>([]);
+  const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>(initialDatasets ?? []);
+  const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>(initialTrashedDatasets ?? []);
   const [activeAccountDbSourceKey, setActiveAccountDbSourceKey] = useState<string | null>(null);
   const [activeAccountDbPreview, setActiveAccountDbPreview] = useState<{ datasetId: string; accountName: string } | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
@@ -1146,24 +1146,30 @@ export function ValidatorApp({ userRole = "manager" }: { userRole?: UserRole }) 
       let nextTrashed: SavedQuarterSnapshot[] = [];
 
       try {
-        const [configResponse, datasetsResponse] = await Promise.all([
+        // datasets pre-loaded server-side when available; only fetch if not provided
+        const fetchPromises: [Promise<Response>, Promise<Response> | null] = [
           fetch("/api/shared-state", { cache: "no-store" }),
-          fetch("/api/datasets", { cache: "no-store" })
-        ]);
+          initialDatasets ? null : fetch("/api/datasets", { cache: "no-store" })
+        ];
+        const [configResponse, datasetsResponse] = await Promise.all(fetchPromises);
 
         if (!configResponse.ok) {
           throw new Error("공용 데이터를 불러오지 못했습니다.");
         }
-        if (!datasetsResponse.ok) {
-          throw new Error("검증 저장 데이터를 불러오지 못했습니다.");
+
+        let remoteSaved: SavedQuarterSnapshot[];
+        if (initialDatasets) {
+          remoteSaved = initialDatasets;
+          nextTrashed = initialTrashedDatasets ?? [];
+        } else {
+          if (!datasetsResponse?.ok) throw new Error("검증 저장 데이터를 불러오지 못했습니다.");
+          const parsedDatasetResponse = parseDatasetApiResponse(await datasetsResponse.json() as DatasetApiResponse);
+          remoteSaved = parsedDatasetResponse.datasets;
+          nextTrashed = parsedDatasetResponse.trashedDatasets;
         }
 
         const remote = await configResponse.json() as SharedStateResponse;
-        const remoteDatasets = await datasetsResponse.json() as DatasetApiResponse;
         const remotePersisted = parsePersistedState(JSON.stringify(remote.config));
-        const parsedDatasetResponse = parseDatasetApiResponse(remoteDatasets);
-        const remoteSaved = parsedDatasetResponse.datasets;
-        nextTrashed = parsedDatasetResponse.trashedDatasets;
         const recoveredPersisted = recoverClassificationConfigFromDatasets(remoteSaved);
         const shouldRecoverRemoteClassification = !hasCustomConfig(remotePersisted) && hasCustomConfig(recoveredPersisted);
         const { nextConfig: autoAssignedRemotePersisted, changed: autoAssignedChanged } = applyManagedAssignmentsFromSavedDatasets(

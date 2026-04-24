@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { ValidatorApp } from "@/components/validator-app";
 import { createClient } from "@/lib/supabase/server";
 import { getUserRole } from "@/lib/supabase/access";
+import { loadDatasets } from "@/app/api/datasets/route";
 
 export default async function Page() {
   const supabase = createClient();
@@ -17,6 +18,8 @@ export default async function Page() {
     ? await getUserRole(supabase, user.email).catch(() => "manager" as const)
     : "manager" as const;
   const canManageAccounts = userRole === "creator" || userRole === "admin";
+
+  const initialDatasetPayload = await loadDatasets(supabase).catch(() => null);
 
   return (
     <>
@@ -39,7 +42,11 @@ export default async function Page() {
           </form>
         </div>
       </div>
-      <ValidatorApp userRole={userRole} />
+      <ValidatorApp
+        userRole={userRole}
+        initialDatasets={initialDatasetPayload?.datasets}
+        initialTrashedDatasets={initialDatasetPayload?.trashedDatasets}
+      />
     </>
   );
 }
