@@ -23,6 +23,8 @@ export async function updateSession(request: NextRequest) {
     }
   });
 
-  const { data: { user } } = await supabase.auth.getUser();
-  return { response, user: user ?? null };
+  // getSession reads from cookie only (no network call) — fast enough for middleware redirect logic.
+  // Actual JWT verification happens in each page/API route via getUser().
+  const { data: { session } } = await supabase.auth.getSession();
+  return { response, user: session?.user ?? null };
 }
