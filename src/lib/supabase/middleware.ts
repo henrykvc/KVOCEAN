@@ -1,13 +1,9 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import type { User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
-import { isActiveAllowedUser } from "@/lib/supabase/access";
 import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/supabase/env";
 
 export async function updateSession(request: NextRequest) {
-  let response = NextResponse.next({
-    request
-  });
+  let response = NextResponse.next({ request });
 
   const supabase = createServerClient(getSupabaseUrl(), getSupabasePublishableKey(), {
     cookies: {
@@ -27,22 +23,6 @@ export async function updateSession(request: NextRequest) {
     }
   });
 
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
-
-  let allowedUser: User | null = null;
-  if (user?.email) {
-    try {
-      if (await isActiveAllowedUser(supabase, user.email)) {
-        allowedUser = user;
-      } else {
-        await supabase.auth.signOut();
-      }
-    } catch {
-      await supabase.auth.signOut();
-    }
-  }
-
-  return { response, user: allowedUser };
+  const { data: { user } } = await supabase.auth.getUser();
+  return { response, user: user ?? null };
 }
