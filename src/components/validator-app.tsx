@@ -1103,6 +1103,7 @@ export function ValidatorApp() {
   const [pendingInsertedRows, setPendingInsertedRows] = useState<Record<string, PendingInsertedRow>>({});
   const [validatePreviewDrafts, setValidatePreviewDrafts] = useState<Record<string, ValidatePreviewDraft>>({});
   const [activeIndustryEditor, setActiveIndustryEditor] = useState<string | null>(null);
+  const [dataEditMode, setDataEditMode] = useState(false);
   const [classificationSaveState, setClassificationSaveState] = useState<"idle" | "saved">("idle");
   const [datasetActionState, setDatasetActionState] = useState<"idle" | "saving" | "deleting" | "restoring" | "purging">("idle");
   const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
@@ -2176,6 +2177,20 @@ export function ValidatorApp() {
     setActiveIndustryEditor(null);
   }
 
+  function getCompanyAccountingStandard(companyName: string) {
+    return companyConfigs[companyName]?.accountingStandard ?? "K-GAAP";
+  }
+
+  function setCompanyAccountingStandard(companyName: string, standard: string) {
+    setCompanyConfigs((prev) => ({
+      ...prev,
+      [companyName]: {
+        ...(prev[companyName] ?? {}),
+        accountingStandard: standard || undefined
+      }
+    }));
+  }
+
   function resetConfig() {
     const defaults = getDefaultPersistedState();
     setLogicConfig(cloneLogicConfig(defaults.logicConfig));
@@ -2772,7 +2787,15 @@ export function ValidatorApp() {
                     <h3>저장된 검증 데이터</h3>
                     <p className="result-meta">검증 완료 후 `저장하기`를 누른 데이터가 여기에 누적됩니다. 선택한 데이터는 결과물 탭에서 바로 사용합니다.</p>
                   </div>
-                  <span className="soft-badge">총 {savedDatasets.length}건</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <button
+                      className={`ghost-button ${dataEditMode ? "is-selected" : ""}`}
+                      style={{ padding: "0.4rem 0.6rem", fontSize: "0.85rem", borderRadius: 8 }}
+                      onClick={() => setDataEditMode((prev) => !prev)}
+                      title={dataEditMode ? "수정모드 끄기" : "수정모드 켜기"}
+                    >✏️</button>
+                    <span className="soft-badge">총 {savedDatasets.length}건</span>
+                  </div>
                 </div>
               </section>
 
@@ -2793,7 +2816,7 @@ export function ValidatorApp() {
                         const companyIndustry = getCompanyIndustry(companyName);
                         const companyIndustryLabel = companyIndustry || "미분류";
                         const companyIndustryIcon = getIndustryIcon(companyIndustryLabel);
-                        const industryEditorOpen = activeIndustryEditor === companyName;
+                        const companyAccStd = getCompanyAccountingStandard(companyName);
                         return (
                           <article className={`data-company-card ${activeDataset ? "selected" : ""}`} key={`company-group-${companyName}`}>
                             <div className="data-company-row">
@@ -2802,6 +2825,7 @@ export function ValidatorApp() {
                                 <div className="industry-badge-wrap">
                                   <span className="industry-icon" aria-hidden="true">{companyIndustryIcon}</span>
                                   <span>{companyIndustryLabel}</span>
+                                  <span style={{ color: "var(--muted)", fontSize: "0.75rem", marginLeft: 2 }}>· {companyAccStd}</span>
                                 </div>
                               </div>
                               <div className="data-quarter-chip-list">
@@ -2816,40 +2840,41 @@ export function ValidatorApp() {
                                 ))}
                               </div>
                             </div>
+                            {dataEditMode && (
+                              <div className="edit-config-inline" style={{ paddingTop: "0.5rem" }}>
+                                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <span style={{ fontSize: "12px", color: "#666" }}>산업</span>
+                                  <select
+                                    className="mini-select"
+                                    value={companyIndustry || ""}
+                                    onChange={(event) => setCompanyIndustry(companyName, event.target.value)}
+                                  >
+                                    <option value="">🏷️ 미분류</option>
+                                    {industryOptions.map((option) => (
+                                      <option key={`${companyName}-${option}`} value={option}>{`${getIndustryIcon(option)} ${option}`}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <span style={{ fontSize: "12px", color: "#666" }}>회계기준</span>
+                                  <select
+                                    className="mini-select"
+                                    value={companyAccStd}
+                                    onChange={(event) => setCompanyAccountingStandard(companyName, event.target.value)}
+                                  >
+                                    {DEFAULT_ACCOUNTING_STANDARDS.map((std) => (
+                                      <option key={std} value={std}>{std}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                            )}
                             {activeDataset && (
                               <div className="data-row-actions">
                                 <span className="soft-badge">선택 분기 {formatCompactQuarterLabel(activeDataset.quarterLabel)}</span>
-                                {industryEditorOpen ? (
-                                  <div className="edit-config-inline">
-                                    <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                      <span style={{ fontSize: "12px", color: "#666" }}>산업</span>
-                                      <select
-                                        className="mini-select"
-                                        value={companyIndustry || ""}
-                                        onChange={(event) => setCompanyIndustry(companyName, event.target.value)}
-                                      >
-                                        <option value="">🏷️ 미분류</option>
-                                        {industryOptions.map((option) => (
-                                          <option key={`${companyName}-${option}`} value={option}>{`${getIndustryIcon(option)} ${option}`}</option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                    <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                      <span style={{ fontSize: "12px", color: "#666" }}>회계기준</span>
-                                      <select className="mini-select" defaultValue="K-GAAP">
-                                        {DEFAULT_ACCOUNTING_STANDARDS.map((std) => (
-                                          <option key={std} value={std}>{std}</option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                  </div>
-                                ) : null}
-                                <button className="ghost-button" onClick={() => setActiveIndustryEditor((prev) => prev === companyName ? null : companyName)}>
-                                  {industryEditorOpen ? "수정 닫기" : "수정모드"}
-                                </button>
                                 <button className="secondary-button" onClick={() => { setSelectedDatasetId(activeDataset.id); setActiveTab("report"); }}>결과물 보기</button>
                                 <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeDataset)}>검증기로 불러오기</button>
-                                 <button className={`danger-button ${datasetActionState === "deleting" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "deleting"} onClick={() => deleteDataset(activeDataset)}>{datasetActionState === "deleting" ? "이동 중..." : "삭제"}</button>
+                                <button className={`danger-button ${datasetActionState === "deleting" ? "is-loading" : ""}`.trim()} disabled={datasetActionState === "deleting"} onClick={() => deleteDataset(activeDataset)}>{datasetActionState === "deleting" ? "이동 중..." : "삭제"}</button>
                               </div>
                             )}
                           </article>
