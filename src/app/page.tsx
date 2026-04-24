@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { ValidatorApp } from "@/components/validator-app";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { isActiveAdminUser } from "@/lib/supabase/access";
 
 export default async function Page() {
@@ -14,9 +13,8 @@ export default async function Page() {
     redirect("/login");
   }
 
-  const adminClient = createAdminClient();
-  const isAdmin = adminClient && user.email
-    ? await isActiveAdminUser(adminClient, user.email).catch(() => false)
+  const isAdmin = user.email
+    ? await isActiveAdminUser(supabase, user.email).catch(() => false)
     : false;
 
   return (
