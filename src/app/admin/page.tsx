@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getUserRole } from "@/lib/supabase/access";
+import { getUserRole, CREATOR_EMAIL } from "@/lib/supabase/access";
 import { AdminPanel } from "@/components/admin/admin-panel";
 
 export default async function AdminPage() {
@@ -12,10 +12,25 @@ export default async function AdminPage() {
   const userRole = await getUserRole(supabase, user.email).catch(() => "manager" as const);
   if (userRole !== "creator" && userRole !== "admin") redirect("/");
 
-  const { data: users } = await supabase
+  // Try with role column, fall back without it if column doesn't exist yet
+  let users: unknown[] | null = null;
+  const { data, error } = await supabase
     .from("allowed_users")
     .select("email, display_name, is_active, role, created_at")
     .order("created_at", { ascending: false });
+
+  if (!error) {
+    users = data;
+  } else {
+    const { data: fallback } = await supabase
+      .from("allowed_users")
+      .select("email, display_name, is_active, created_at")
+      .order("created_at", { ascending: false });
+    users = (fallback ?? []).map((u: Record<string, unknown>) => ({
+      ...u,
+      role: u.email === CREATOR_EMAIL ? "creator" : "manager",
+    }));
+  }
 
   return (
     <>

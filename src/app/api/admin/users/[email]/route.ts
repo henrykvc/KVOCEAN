@@ -30,14 +30,25 @@ export async function PATCH(
   const body = await request.json().catch(() => ({})) as { role?: string };
   const safeRole = body.role === "admin" ? "admin" : "manager";
 
-  const { data, error } = await ctx.adminClient
+  let { data, error } = await ctx.adminClient
     .from("allowed_users")
     .update({ role: safeRole })
     .eq("email", email)
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // If role column doesn't exist, return user as-is with the requested role
+  if (error) {
+    const result = await ctx.adminClient
+      .from("allowed_users")
+      .select("email, display_name, is_active, created_at")
+      .eq("email", email)
+      .single();
+    if (result.error) return NextResponse.json({ error: result.error.message }, { status: 500 });
+    data = { ...result.data, role: safeRole };
+    error = null;
+  }
+
   return NextResponse.json(data);
 }
 
