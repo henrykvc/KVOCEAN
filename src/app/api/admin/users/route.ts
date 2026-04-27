@@ -3,6 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getUserRole, normalizeEmail, CREATOR_EMAIL } from "@/lib/supabase/access";
 
+async function getAuthEmailSet(adminClient: ReturnType<typeof createAdminClient>): Promise<Set<string>> {
+  if (!adminClient) return new Set();
+  const { data } = await adminClient.auth.admin.listUsers({ perPage: 1000 }).catch(() => ({ data: null }));
+  return new Set((data?.users ?? []).map(u => u.email?.toLowerCase() ?? "").filter(Boolean));
+}
+
 async function requireAdminContext() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -42,7 +48,15 @@ export async function GET() {
     .select("email, display_name, is_active, role, created_at")
     .order("created_at", { ascending: false });
 
-  if (!error) return NextResponse.json(data);
+  const authEmails = await getAuthEmailSet(ctx.adminClient);
+
+  if (!error) {
+    const enriched = (data ?? []).map((u: Record<string, unknown>) => ({
+      ...u,
+      hasAuthAccount: authEmails.has((u.email as string).toLowerCase()),
+    }));
+    return NextResponse.json(enriched);
+  }
 
   // role column doesn't exist yet — fallback without it
   const { data: fallbackData, error: fallbackError } = await ctx.supabase
@@ -55,6 +69,7 @@ export async function GET() {
   const enriched = (fallbackData ?? []).map((u: Record<string, unknown>) => ({
     ...u,
     role: u.email === CREATOR_EMAIL ? "creator" : "manager",
+    hasAuthAccount: authEmails.has((u.email as string).toLowerCase()),
   }));
   return NextResponse.json(enriched);
 }

@@ -12,6 +12,7 @@ type AllowedUser = {
   is_active: boolean;
   role: UserRole;
   created_at: string;
+  hasAuthAccount?: boolean;
 };
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -74,6 +75,25 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
     });
     const json = await res.json() as AllowedUser & { error?: string };
     if (res.ok) setUsers((prev) => prev.map((u) => u.email === email ? json : u));
+    setLoadingEmail(null);
+  }
+
+  async function handleReinvite(user: AllowedUser) {
+    setLoadingEmail(user.email);
+    setAddError(null);
+    setAddSuccess(null);
+    const res = await fetch("/api/admin/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: user.email, display_name: user.display_name, role: user.role }),
+    });
+    const json = await res.json() as AllowedUser & { error?: string; inviteSent?: boolean };
+    if (!res.ok) {
+      setAddError(json.error ?? "재초대에 실패했습니다.");
+    } else {
+      setUsers((prev) => prev.map((u) => u.email === user.email ? { ...u, hasAuthAccount: true } : u));
+      setAddSuccess(json.inviteSent ? "초대 메일을 재발송했습니다." : "계정이 동기화되었습니다.");
+    }
     setLoadingEmail(null);
   }
 
@@ -174,6 +194,20 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
                     }}>
                       {ROLE_LABELS[user.role]}
                     </span>
+                    {user.hasAuthAccount === false && (
+                      <span style={{
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                        padding: "0.1rem 0.45rem",
+                        borderRadius: 6,
+                        background: "rgba(234,88,12,0.1)",
+                        color: "#ea580c",
+                        border: "1px solid rgba(234,88,12,0.3)",
+                        letterSpacing: "0.02em",
+                      }}>
+                        초대 미완료
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
                     {new Date(user.created_at).toLocaleDateString("ko-KR")} 추가
@@ -193,6 +227,16 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
                       <option value="manager">매니저</option>
                       <option value="admin">관리자</option>
                     </select>
+                    {user.hasAuthAccount === false && (
+                      <button
+                        className="button"
+                        style={{ padding: "0.4rem 0.75rem", fontSize: "0.8rem", borderRadius: 8 }}
+                        disabled={isLoading}
+                        onClick={() => handleReinvite(user)}
+                      >
+                        재초대
+                      </button>
+                    )}
                     <button
                       className="danger-button"
                       style={{ padding: "0.4rem 0.75rem", fontSize: "0.8rem", borderRadius: 8 }}

@@ -65,6 +65,13 @@ export async function DELETE(
     return NextResponse.json({ error: "제작자 계정은 삭제할 수 없습니다." }, { status: 403 });
   }
 
+  // Delete from Supabase Auth first
+  const { data: authData } = await ctx.adminClient.auth.admin.listUsers({ perPage: 1000 }).catch(() => ({ data: null }));
+  const authUser = (authData?.users ?? []).find(u => u.email?.toLowerCase() === email.toLowerCase());
+  if (authUser) {
+    await ctx.adminClient.auth.admin.deleteUser(authUser.id).catch(() => {});
+  }
+
   const { error } = await ctx.adminClient
     .from("allowed_users")
     .delete()
