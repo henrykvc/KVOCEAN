@@ -3,12 +3,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getUserRole, normalizeEmail, CREATOR_EMAIL } from "@/lib/supabase/access";
 
-async function getAuthEmailSet(adminClient: ReturnType<typeof createAdminClient>): Promise<Set<string>> {
-  if (!adminClient) return new Set();
-  const { data } = await adminClient.auth.admin.listUsers({ perPage: 1000 }).catch(() => ({ data: null }));
-  return new Set((data?.users ?? []).map(u => u.email?.toLowerCase() ?? "").filter(Boolean));
-}
-
 async function requireAdminContext() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -21,7 +15,6 @@ async function requireAdminContext() {
 }
 
 async function ensureCreatorExists(adminClient: NonNullable<ReturnType<typeof createAdminClient>>) {
-  // Try with role column first, then without
   const { error } = await adminClient
     .from("allowed_users")
     .upsert({ email: CREATOR_EMAIL, display_name: "Henry", is_active: true, role: "creator" }, { onConflict: "email", ignoreDuplicates: true });
@@ -37,39 +30,16 @@ export async function GET() {
   const ctx = await requireAdminContext();
   if (!ctx) return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
 
-  // Auto-ensure creator is in the table
   if (ctx.adminClient) {
     await ensureCreatorExists(ctx.adminClient).catch(() => {});
   }
 
-  // Try selecting with role column
   const { data, error } = await ctx.supabase
     .from("allowed_users")
     .select("email, display_name, is_active, role, created_at")
     .order("created_at", { ascending: false });
 
-  const authEmails = await getAuthEmailSet(ctx.adminClient);
-
-  const autoInvite = async (rows: Record<string, unknown>[]) => {
-    for (const u of rows) {
-      const email = (u.email as string).toLowerCase();
-      if (!authEmails.has(email)) {
-        await ctx.adminClient!.auth.admin.inviteUserByEmail(email, {
-          data: { display_name: u.display_name ?? null }
-        }).catch(() => {});
-        authEmails.add(email);
-      }
-    }
-  };
-
-  if (!error) {
-    await autoInvite(data ?? []);
-    const enriched = (data ?? []).map((u: Record<string, unknown>) => ({
-      ...u,
-      hasAuthAccount: authEmails.has((u.email as string).toLowerCase()),
-    }));
-    return NextResponse.json(enriched);
-  }
+  if (!error) return NextResponse.json(data);
 
   // role column doesn't exist yet — fallback without it
   const { data: fallbackData, error: fallbackError } = await ctx.supabase
@@ -79,11 +49,9 @@ export async function GET() {
 
   if (fallbackError) return NextResponse.json({ error: fallbackError.message }, { status: 500 });
 
-  await autoInvite(fallbackData ?? []);
   const enriched = (fallbackData ?? []).map((u: Record<string, unknown>) => ({
     ...u,
     role: u.email === CREATOR_EMAIL ? "creator" : "manager",
-    hasAuthAccount: authEmails.has((u.email as string).toLowerCase()),
   }));
   return NextResponse.json(enriched);
 }
@@ -101,7 +69,6 @@ export async function POST(request: Request) {
 
   const safeRole = role === "admin" ? "admin" : "manager";
 
-  // Try upsert with role column
   let { data, error } = await ctx.adminClient
     .from("allowed_users")
     .upsert(
@@ -111,7 +78,6 @@ export async function POST(request: Request) {
     .select()
     .single();
 
-  // If role column doesn't exist, retry without it
   if (error) {
     const result = await ctx.adminClient
       .from("allowed_users")
