@@ -50,7 +50,20 @@ export async function GET() {
 
   const authEmails = await getAuthEmailSet(ctx.adminClient);
 
+  const autoInvite = async (rows: Record<string, unknown>[]) => {
+    for (const u of rows) {
+      const email = (u.email as string).toLowerCase();
+      if (!authEmails.has(email)) {
+        await ctx.adminClient!.auth.admin.inviteUserByEmail(email, {
+          data: { display_name: u.display_name ?? null }
+        }).catch(() => {});
+        authEmails.add(email);
+      }
+    }
+  };
+
   if (!error) {
+    await autoInvite(data ?? []);
     const enriched = (data ?? []).map((u: Record<string, unknown>) => ({
       ...u,
       hasAuthAccount: authEmails.has((u.email as string).toLowerCase()),
@@ -66,6 +79,7 @@ export async function GET() {
 
   if (fallbackError) return NextResponse.json({ error: fallbackError.message }, { status: 500 });
 
+  await autoInvite(fallbackData ?? []);
   const enriched = (fallbackData ?? []).map((u: Record<string, unknown>) => ({
     ...u,
     role: u.email === CREATOR_EMAIL ? "creator" : "manager",
