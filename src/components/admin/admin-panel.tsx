@@ -69,13 +69,18 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
 
   async function handleRoleChange(email: string, role: "admin" | "manager") {
     setLoadingEmail(email);
+    setAddError(null);
     const res = await fetch(`/api/admin/users/${encodeURIComponent(email)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role }),
     });
     const json = await res.json() as AllowedUser & { error?: string };
-    if (res.ok) setUsers((prev) => prev.map((u) => u.email === email ? json : u));
+    if (res.ok) {
+      setUsers((prev) => prev.map((u) => u.email === email ? json : u));
+    } else {
+      setAddError(`역할 변경 실패: ${json.error ?? "알 수 없는 오류"}`);
+    }
     setLoadingEmail(null);
   }
 

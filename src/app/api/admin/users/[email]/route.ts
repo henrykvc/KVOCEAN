@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getUserRole, CREATOR_EMAIL } from "@/lib/supabase/access";
+import { getUserRole, normalizeEmail, CREATOR_EMAIL } from "@/lib/supabase/access";
 
 async function requireAdminContext() {
   const supabase = createClient();
@@ -22,7 +22,7 @@ export async function PATCH(
   if (!ctx) return NextResponse.json({ error: "권한이 없습니다." }, { status: 403 });
   if (!ctx.adminClient) return NextResponse.json({ error: "서버 설정 오류: SUPABASE_SERVICE_ROLE_KEY가 없습니다." }, { status: 500 });
 
-  const email = decodeURIComponent(params.email);
+  const email = normalizeEmail(decodeURIComponent(params.email));
   if (email === CREATOR_EMAIL) {
     return NextResponse.json({ error: "제작자 계정은 수정할 수 없습니다." }, { status: 403 });
   }
