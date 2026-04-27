@@ -36,6 +36,7 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
   const [loadingEmail, setLoadingEmail] = useState<string | null>(null);
+  const [bulkReinviting, setBulkReinviting] = useState(false);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -97,6 +98,28 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
     setLoadingEmail(null);
   }
 
+  async function handleBulkReinvite() {
+    const unsynced = users.filter((u) => u.hasAuthAccount === false);
+    if (unsynced.length === 0) return;
+    setBulkReinviting(true);
+    setAddError(null);
+    setAddSuccess(null);
+    let successCount = 0;
+    for (const user of unsynced) {
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user.email, display_name: user.display_name, role: user.role }),
+      });
+      if (res.ok) {
+        setUsers((prev) => prev.map((u) => u.email === user.email ? { ...u, hasAuthAccount: true } : u));
+        successCount++;
+      }
+    }
+    setAddSuccess(`${successCount}명에게 초대 메일을 발송했습니다.`);
+    setBulkReinviting(false);
+  }
+
   async function handleDelete(email: string) {
     if (!confirm(`${email} 계정을 삭제하시겠습니까?`)) return;
     setLoadingEmail(email);
@@ -152,7 +175,19 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
       <section className="config-card">
         <div className="section-title">
           <div><h3>허용 계정 목록</h3></div>
-          <span className="soft-badge">활성 {activeCount}명</span>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            {users.some((u) => u.hasAuthAccount === false) && (
+              <button
+                className="button"
+                style={{ fontSize: "0.8rem", padding: "0.35rem 0.75rem", borderRadius: 8 }}
+                disabled={bulkReinviting}
+                onClick={handleBulkReinvite}
+              >
+                {bulkReinviting ? "초대 중..." : "미완료 전체 재초대"}
+              </button>
+            )}
+            <span className="soft-badge">활성 {activeCount}명</span>
+          </div>
         </div>
 
         {users.length === 0 && (
