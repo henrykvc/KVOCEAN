@@ -3565,12 +3565,19 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                 </tr>
                               </thead>
                               <tbody>
-                                {previewRows.map((row, index) => (
-                                  <tr key={`preview-row-${activeAccountDbPreviewDataset.id}-${previewSectionKey}-${row.accountName}-${index}`}>
-                                    <td>{row.accountName}</td>
-                                    <td className="account-db-preview-value">{row.value === null || row.value === undefined ? "-" : formatNumber(row.value)}</td>
-                                  </tr>
-                                ))}
+                                {previewRows.map((row, index) => {
+                                  const isHighlighted = row.accountName === activeAccountDbPreview?.accountName;
+                                  return (
+                                    <tr
+                                      key={`preview-row-${activeAccountDbPreviewDataset.id}-${previewSectionKey}-${row.accountName}-${index}`}
+                                      data-highlight={isHighlighted ? "true" : undefined}
+                                      style={isHighlighted ? { backgroundColor: "rgba(234,179,8,0.13)" } : undefined}
+                                    >
+                                      <td>{row.accountName}</td>
+                                      <td className="account-db-preview-value">{row.value === null || row.value === undefined ? "-" : formatNumber(row.value)}</td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
