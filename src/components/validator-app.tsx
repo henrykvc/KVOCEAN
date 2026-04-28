@@ -2841,7 +2841,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                         if (el) previewRowRefsRef.current.set(refKey, el);
                                         else previewRowRefsRef.current.delete(refKey);
                                       }}
-                                      className={lastEditedCell === `${row.rowIndex}_${row.colIndex}` ? "row-highlight" : undefined}
+                                      data-highlight={lastEditedCell === `${row.rowIndex}_${row.colIndex}` ? "true" : undefined}
+                                      style={lastEditedCell === `${row.rowIndex}_${row.colIndex}` ? { backgroundColor: "rgba(234,179,8,0.13)" } : undefined}
                                     >
                                       <td>{row.sectionKey}</td>
                                       <td>{row.locked ? <span>{row.accountName}</span> : <input className="mini-input" type="text" value={row.accountName} onChange={(event) => updateEditableName(row.colIndex, row.rawName, event.target.value)} />}</td>
