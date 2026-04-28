@@ -2078,3 +2078,13 @@ a {
   align-items: center;
   white-space: nowrap;
 }
+
+@keyframes highlight-pulse {
+  0%   { background-color: rgba(234, 179, 8, 0.35); }
+  60%  { background-color: rgba(234, 179, 8, 0.18); }
+  100% { background-color: transparent; }
+}
+
+.highlight-pulse {
+  animation: highlight-pulse 1.2s ease-out forwards;
+}

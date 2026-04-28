@@ -150,6 +150,7 @@ const ACCOUNT_DB_SECTIONS = {
   비유동자산: ["비유동자산"],
   유동부채: ["유동부채"],
   비유동부채: ["비유동부채"],
+  매출액: ["매출액", "수익", "영업수익"],
   매출원가: ["매출원가"],
   판매비와관리비: ["판매비와관리비", "판관비", "영업비용", "판매관리비", "판매비및관리비", "판매비와관리비합계"],
   영업외수익: ["영업외수익", "기타수익", "영업외수익합계", "금융수익"],
@@ -1114,7 +1115,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState<string | null>(null);
+  const [lastEditedCell, setLastEditedCell] = useState<string | null>(null);
+  const [activeAccountDbHighlightKey, setActiveAccountDbHighlightKey] = useState<string | null>(null);
   const configSyncInitializedRef = useRef(false);
+  const previewRowRefsRef = useRef<Map<string, HTMLElement>>(new Map());
+  const accountDbRowRefsRef = useRef<Map<string, HTMLElement>>(new Map());
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1301,6 +1306,38 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [activeAccountDbSourceKey]);
+
+  useEffect(() => {
+    if (!lastEditedCell) {
+      return;
+    }
+    const el = previewRowRefsRef.current.get(lastEditedCell);
+    if (!el) {
+      return;
+    }
+    const target = el;
+    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    target.classList.remove("highlight-pulse");
+    void target.offsetHeight;
+    target.classList.add("highlight-pulse");
+    function handleAnimationEnd() {
+      target.classList.remove("highlight-pulse");
+      target.removeEventListener("animationend", handleAnimationEnd);
+    }
+    target.addEventListener("animationend", handleAnimationEnd);
+    return () => {
+      target.classList.remove("highlight-pulse");
+      target.removeEventListener("animationend", handleAnimationEnd);
+    };
+  }, [lastEditedCell]);
+
+  useEffect(() => {
+    if (!activeAccountDbHighlightKey) {
+      return;
+    }
+    const el = accountDbRowRefsRef.current.get(activeAccountDbHighlightKey);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [activeAccountDbHighlightKey]);
 
   useEffect(() => {
     setComparisonSelections((prev) => {
@@ -1643,7 +1680,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     setActiveTab("validate");
   }
 
-  function openAccountDbSourceDataset(datasetId: string, accountName: string) {
+  function openAccountDbSourceDataset(datasetId: string, accountName: string, entryKey: string) {
     const dataset = savedDatasets.find((item) => item.id === datasetId);
     if (!dataset) {
       return;
@@ -1651,6 +1688,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
 
     setActiveAccountDbPreview({ datasetId: dataset.id, accountName });
     setActiveAccountDbSourceKey(null);
+    setActiveAccountDbHighlightKey(entryKey);
   }
 
   async function deleteDataset(dataset: SavedQuarterSnapshot) {
@@ -1855,6 +1893,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       }
       return next;
     });
+    setLastEditedCell(`${rowIndex}_${colIndex}`);
   }
 
   function updateEditableName(colIndex: number, rawName: string, nextName: string) {
@@ -1869,6 +1908,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       }
       return next;
     });
+    setLastEditedCell(`0_${colIndex}`);
   }
 
   function applySuggestedEdit(rowIndex: number, colIndex: number, nextValue: number) {
@@ -2794,7 +2834,14 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                 </thead>
                                 <tbody>
                                   {group.items.map((row) => (
-                                    <tr key={`validate-preview-item-${group.rowIndex}-${row.colIndex}`}>
+                                    <tr
+                                      key={`validate-preview-item-${group.rowIndex}-${row.colIndex}`}
+                                      ref={(el) => {
+                                        const refKey = `${row.rowIndex}_${row.colIndex}`;
+                                        if (el) previewRowRefsRef.current.set(refKey, el);
+                                        else previewRowRefsRef.current.delete(refKey);
+                                      }}
+                                    >
                                       <td>{row.sectionKey}</td>
                                       <td>{row.locked ? <span>{row.accountName}</span> : <input className="mini-input" type="text" value={row.accountName} onChange={(event) => updateEditableName(row.colIndex, row.rawName, event.target.value)} />}</td>
                                       <td className="account-db-preview-value">{typeof row.value === "number" ? <input className="mini-input validate-preview-number" type="number" step={1} value={String(row.value)} onChange={(event) => updateEditableValue(row.rowIndex, row.colIndex, row.rawValue, event.target.value)} /> : <span>{row.value ?? ""}</span>}</td>
@@ -3422,7 +3469,14 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                   const isSourceOpen = activeAccountDbSourceKey === entry.entryKey;
 
                                   return (
-                                    <tr key={`account-db-entry-${entry.entryKey}`}>
+                                    <tr
+                                      key={`account-db-entry-${entry.entryKey}`}
+                                      ref={(el) => {
+                                        if (el) accountDbRowRefsRef.current.set(entry.entryKey, el);
+                                        else accountDbRowRefsRef.current.delete(entry.entryKey);
+                                      }}
+                                      style={activeAccountDbHighlightKey === entry.entryKey ? { outline: "2px solid #eab308", outlineOffset: "-2px" } : undefined}
+                                    >
                                       <td>{entry.sectionKey}</td>
                                       <td>{entry.accountName}</td>
                                       <td>
@@ -3430,7 +3484,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                           <button
                                             className={`account-db-source-button ${isSourceOpen ? "active" : ""}`.trim()}
                                             type="button"
-                                            onClick={() => setActiveAccountDbSourceKey((prev) => prev === entry.entryKey ? null : entry.entryKey)}
+                                            onClick={() => {
+                                              setActiveAccountDbSourceKey((prev) => prev === entry.entryKey ? null : entry.entryKey);
+                                              setActiveAccountDbHighlightKey(null);
+                                            }}
                                             aria-label={`${entry.accountName} 출처 보기`}
                                           >
                                             💬
@@ -3445,7 +3502,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                                     key={`${entry.entryKey}-${source.datasetId}`}
                                                     className="account-db-source-link"
                                                     type="button"
-                                                    onClick={() => openAccountDbSourceDataset(source.datasetId, entry.accountName)}
+                                                    onClick={() => openAccountDbSourceDataset(source.datasetId, entry.accountName, entry.entryKey)}
                                                   >
                                                     <span>{getDisplayCompanyName(source.companyName)}</span>
                                                     <strong>{source.quarterLabel}</strong>
