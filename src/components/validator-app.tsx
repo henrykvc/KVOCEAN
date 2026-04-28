@@ -2841,7 +2841,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                         if (el) previewRowRefsRef.current.set(refKey, el);
                                         else previewRowRefsRef.current.delete(refKey);
                                       }}
-                                      style={lastEditedCell === `${row.rowIndex}_${row.colIndex}` ? { outline: "3px solid #eab308", outlineOffset: "-3px" } : undefined}
+                                      style={lastEditedCell === `${row.rowIndex}_${row.colIndex}` ? { boxShadow: "inset 0 0 0 3px #eab308" } : undefined}
                                     >
                                       <td>{row.sectionKey}</td>
                                       <td>{row.locked ? <span>{row.accountName}</span> : <input className="mini-input" type="text" value={row.accountName} onChange={(event) => updateEditableName(row.colIndex, row.rawName, event.target.value)} />}</td>
