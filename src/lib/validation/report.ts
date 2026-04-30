@@ -502,6 +502,9 @@ export function normalizePasteEditsForValidation(args: {
     if (meta.signCode !== 1) {
       return;
     }
+    if (meta.accountName === "기타포괄손익누계액") {
+      return;
+    }
 
     periods.forEach((period) => {
       const key = pasteEditKey(period.rowIndex, meta.sourceCol);
