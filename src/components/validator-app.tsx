@@ -771,10 +771,6 @@ function formatCompactQuarterLabel(value: string) {
   return value;
 }
 
-function getDisplayCompanyName(companyName: string) {
-  return companyName.trim() === "로지스팟재무제표" ? "로지스팟" : companyName;
-}
-
 function buildPastedTextFromMatrix(catRow: string[], nameRow: string[], dataRows: Array<Array<string | number | null>>) {
   const rows = [catRow, nameRow, ...dataRows].map((row) => row.map((cell) => cell ?? "").join("\t"));
   return rows.join("\n");
@@ -2582,7 +2578,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                           : activeTab === "trash"
                             ? `삭제된 데이터 ${trashedDatasets.length}건이 휴지통에 있습니다. 필요하면 복구하고, 정말 필요 없을 때만 완전삭제하세요.`
                           : activeTab === "report"
-                              ? `${selectedDataset ? `${getDisplayCompanyName(selectedDataset.companyName)} ${selectedDataset.quarterLabel}` : "저장된 데이터"} 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
+                              ? `${selectedDataset ? `${selectedDataset.companyName} ${selectedDataset.quarterLabel}` : "저장된 데이터"} 기준으로 결과물을 생성합니다. 먼저 OCR검증에서 저장하기를 누르세요.`
                             : activeTab === "classify"
                               ? "표준 항목별 분류를 카드 형태로 수정할 수 있습니다. 계정명 추가/삭제 후 저장하면 이후 계산에 바로 반영됩니다."
                     : activeTab === "formulas"
@@ -2942,7 +2938,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                           <article className={`data-company-card ${activeDataset ? "selected" : ""}`} key={`company-group-${companyName}`}>
                             <div className="data-company-row">
                               <div className="data-company-main">
-                                <strong>{getDisplayCompanyName(companyName)}</strong>
+                                <strong>{companyName}</strong>
                                 <div className="industry-badge-wrap">
                                   <span className="industry-icon" aria-hidden="true">{companyIndustryIcon}</span>
                                   <span>{companyIndustryLabel}</span>
@@ -3058,7 +3054,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                               <span className="industry-icon" aria-hidden="true">{getIndustryIcon(getCompanyIndustry(dataset.companyName) || "미분류")}</span>
                               <span>{getCompanyIndustry(dataset.companyName) || "미분류"}</span>
                             </div>
-                            <strong>{getDisplayCompanyName(dataset.companyName)}</strong>
+                            <strong>{dataset.companyName}</strong>
                           </div>
                           <div className="data-quarter-chip-list">
                             <span className="data-quarter-chip active">{formatCompactQuarterLabel(dataset.quarterLabel)}</span>
@@ -3093,7 +3089,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                     <div className="section-title">
                       <div>
                         <span className="section-kicker">3. 보고서</span>
-                        <h3>{getDisplayCompanyName(resultReporting.companyName ?? resultReporting.detectedCompany ?? "미지정 회사")} 결과물</h3>
+                        <h3>{resultReporting.companyName ?? resultReporting.detectedCompany ?? "미지정 회사"} 결과물</h3>
                         <p className="result-meta">엑셀의 `재무제표 → 재무제표_음양반영 → 최종결과물` 흐름을 현재 입력 데이터 기준으로 바로 보여줍니다.</p>
                       </div>
                       <div className="result-actions">
@@ -3536,7 +3532,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                                     type="button"
                                                     onClick={() => openAccountDbSourceDataset(source.datasetId, entry.accountName, entry.entryKey)}
                                                   >
-                                                    <span>{getDisplayCompanyName(source.companyName)}</span>
+                                                    <span>{source.companyName}</span>
                                                     <strong>{source.quarterLabel}</strong>
                                                   </button>
                                                 ))}
@@ -3574,7 +3570,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                       <div className="section-title">
                         <div>
                           <span className="section-kicker">출처 3줄 미리보기</span>
-                          <h3>{getDisplayCompanyName(activeAccountDbPreviewDataset.companyName)}</h3>
+                          <h3>{activeAccountDbPreviewDataset.companyName}</h3>
                           <p className="result-meta">{activeAccountDbPreviewDataset.quarterLabel} · {activeAccountDbPreview?.accountName ?? "선택 계정"}</p>
                         </div>
                         <div className="inline-actions">
@@ -3660,7 +3656,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                   <span className="industry-icon" aria-hidden="true">{getIndustryIcon(selectedIndustryLabel)}</span>
                                   <span>{selectedIndustryLabel}</span>
                                 </span>
-                                <span className="comparison-company-name">{getDisplayCompanyName(selection.companyName)}</span>
+                                <span className="comparison-company-name">{selection.companyName}</span>
                               </div>
                             )}
                             <select
@@ -3671,7 +3667,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                             >
                               <option value="">기업 선택</option>
                               {comparisonCompanyOptions.map((company) => (
-                                <option key={`${selection.slotId}-${company}`} value={company}>{`${getIndustryIcon(getCompanyIndustry(company) || "미분류")} ${getCompanyIndustry(company) || "미분류"} · ${getDisplayCompanyName(company)}`}</option>
+                                <option key={`${selection.slotId}-${company}`} value={company}>{`${getIndustryIcon(getCompanyIndustry(company) || "미분류")} ${getCompanyIndustry(company) || "미분류"} · ${company}`}</option>
                               ))}
                             </select>
                             <select
