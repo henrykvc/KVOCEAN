@@ -51,7 +51,6 @@ export const MANAGED_CLASSIFICATION_KEYS = [
   "가수금",
   "가지급금",
   "퇴직급여충당부채",
-  "매출원가",
   "변동비"
 ] as const;
 

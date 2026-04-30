@@ -982,10 +982,6 @@ function inferManagedClassificationKey(accountName: string, sectionKey: string) 
     if (/배송비|포장비|운반비|차량유지비|수출제비용|여비|교통|출장|통신비|세금과공과|공과금|도서인쇄|인쇄비|소모품|사무용품|대손|판촉|판매촉진|대외협력|행사비|기술이전|경상기술|전산운영|시스템운영|전산비|반품|촬영경비/.test(normalizedName)) return "변동비";
   }
 
-  if (sectionKey === "매출원가") {
-    return "매출원가";
-  }
-
   if (sectionKey === "영업외비용") {
     if (/이자비용|금융비용/.test(normalizedName)) return "이자비용";
   }
@@ -1045,7 +1041,7 @@ function applyManagedAssignmentsFromSavedDatasets(
 
     appendAliasToGroup(inferredKey);
 
-    if (["매출원가", "인건비", "연구개발비", "광고선전비", "접대비", "복리후생비", "지급수수료", "외주용역비", "임차료", "변동비"].includes(inferredKey)) {
+    if (["인건비", "연구개발비", "광고선전비", "접대비", "복리후생비", "지급수수료", "외주용역비", "임차료", "변동비"].includes(inferredKey)) {
       appendAliasToGroup("변동비");
     }
   });
