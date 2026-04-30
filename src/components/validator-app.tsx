@@ -309,6 +309,15 @@ type MapRow = {
   parent: string;
 };
 
+type ConfigRulesSnapshot = {
+  logicConfig: LogicConfig;
+  globalOverrideRows: OverrideRow[];
+  pasteSectionRows: MapRow[];
+  capitalRuleRows: CapitalRuleRow[];
+  capitalMemoRows: CapitalMemoRow[];
+  companyOverrideRows: OverrideRow[];
+};
+
 type PreviewGroup = {
   label: string;
   start: number;
@@ -1090,6 +1099,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [capitalRuleRows, setCapitalRuleRows] = useState<CapitalRuleRow[]>(capitalRulesToRows(DEFAULT_LOGIC_CONFIG.capitalL1Signs, DEFAULT_LOGIC_CONFIG.capitalL1Parent));
   const [capitalMemoRows, setCapitalMemoRows] = useState<CapitalMemoRow[]>(capitalMemoAccountsToRows(DEFAULT_LOGIC_CONFIG.capitalMemoAccounts));
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
+  const [configRulesHistory, setConfigRulesHistory] = useState<ConfigRulesSnapshot[]>([]);
+  const configRulesSnapshotPendingRef = useRef(false);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>(initialDatasets ?? []);
   const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>(initialTrashedDatasets ?? []);
@@ -2188,6 +2199,41 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     });
   }
 
+  function pushConfigRulesSnapshot() {
+    if (configRulesSnapshotPendingRef.current) {
+      return;
+    }
+    configRulesSnapshotPendingRef.current = true;
+    const snapshot: ConfigRulesSnapshot = {
+      logicConfig: cloneLogicConfig(logicConfig),
+      globalOverrideRows: globalOverrideRows.map((row) => ({ ...row })),
+      pasteSectionRows: pasteSectionRows.map((row) => ({ ...row })),
+      capitalRuleRows: capitalRuleRows.map((row) => ({ ...row })),
+      capitalMemoRows: capitalMemoRows.map((row) => ({ ...row })),
+      companyOverrideRows: companyOverrideRows.map((row) => ({ ...row }))
+    };
+    setConfigRulesHistory((prev) => [...prev.slice(-49), snapshot]);
+    window.setTimeout(() => {
+      configRulesSnapshotPendingRef.current = false;
+    }, 500);
+  }
+
+  function undoConfigRulesEdit() {
+    setConfigRulesHistory((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last) {
+        return prev;
+      }
+      setLogicConfig(cloneLogicConfig(last.logicConfig));
+      setGlobalOverrideRows(last.globalOverrideRows.map((row) => ({ ...row })));
+      setPasteSectionRows(last.pasteSectionRows.map((row) => ({ ...row })));
+      setCapitalRuleRows(last.capitalRuleRows.map((row) => ({ ...row })));
+      setCapitalMemoRows(last.capitalMemoRows.map((row) => ({ ...row })));
+      setCompanyOverrideRows(last.companyOverrideRows.map((row) => ({ ...row })));
+      return prev.slice(0, -1);
+    });
+  }
+
   function toggleResultCard(cardKey: string, defaultOpen: boolean) {
     setResultOpenState((prev) => ({
       ...prev,
@@ -2261,20 +2307,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }));
   }
 
-  function resetConfig() {
-    const defaults = getDefaultPersistedState();
-    setLogicConfig(cloneLogicConfig(defaults.logicConfig));
-    setCompanyConfigs(cloneCompanyConfigs(defaults.companyConfigs));
-    setClassificationGroups(cloneClassificationGroups(defaults.classificationGroups));
-    setClassificationCatalog(cloneClassificationCatalog(defaults.classificationCatalog));
-    setGlobalOverrideRows(overridesToRows(defaults.logicConfig.sectionSignOverrides));
-    setPasteSectionRows(objectEntriesToRows(defaults.logicConfig.pasteSectToParent));
-    setCapitalRuleRows(capitalRulesToRows(defaults.logicConfig.capitalL1Signs, defaults.logicConfig.capitalL1Parent));
-    setCapitalMemoRows(capitalMemoAccountsToRows(defaults.logicConfig.capitalMemoAccounts));
-    setClassificationHistory([]);
-  }
-
   function saveConfigEditors() {
+    pushConfigRulesSnapshot();
     setConfigApplyState("applying");
     setLogicConfig((prev) => ({
       ...prev,
@@ -3187,7 +3221,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   <p className="muted" style={{ margin: "6px 0 0" }}>붙여넣기 검증에 실제 쓰는 키워드/섹션/회사 규칙만 남겼습니다.</p>
                 </div>
                 <div className="inline-actions">
-                  <button className="ghost-button" onClick={resetConfig}>기본값 복원</button>
+                  <button className="ghost-button" disabled={!configRulesHistory.length} onClick={undoConfigRulesEdit}>되돌리기</button>
                   <button className={`button ${configApplyState === "applied" ? "is-saved" : ""} ${configApplyState === "applying" ? "is-loading" : ""}`.trim()} onClick={saveConfigEditors}>{configApplyState === "applying" ? "반영 중..." : configApplyState === "applied" ? "반영 완료" : "편집값 반영"}</button>
                 </div>
               </div>
@@ -3197,15 +3231,15 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   <h3>부호 키워드</h3>
                   <label className="field">
                     <span>양수 우선 키워드</span>
-                    <textarea className="textarea" value={logicConfig.plusOverrideKeywords.join("\n")} onChange={(event) => setLogicConfig((prev) => ({ ...prev, plusOverrideKeywords: parseKeywordList(event.target.value) }))} />
+                    <textarea className="textarea" value={logicConfig.plusOverrideKeywords.join("\n")} onChange={(event) => { pushConfigRulesSnapshot(); setLogicConfig((prev) => ({ ...prev, plusOverrideKeywords: parseKeywordList(event.target.value) })); }} />
                   </label>
                   <label className="field">
                     <span>차감 키워드</span>
-                    <textarea className="textarea" value={logicConfig.minusKeywords.join("\n")} onChange={(event) => setLogicConfig((prev) => ({ ...prev, minusKeywords: parseKeywordList(event.target.value) }))} />
+                    <textarea className="textarea" value={logicConfig.minusKeywords.join("\n")} onChange={(event) => { pushConfigRulesSnapshot(); setLogicConfig((prev) => ({ ...prev, minusKeywords: parseKeywordList(event.target.value) })); }} />
                   </label>
                   <label className="field">
                     <span>비용 가산 키워드</span>
-                    <textarea className="textarea" value={logicConfig.plusCostKeywords.join("\n")} onChange={(event) => setLogicConfig((prev) => ({ ...prev, plusCostKeywords: parseKeywordList(event.target.value) }))} />
+                    <textarea className="textarea" value={logicConfig.plusCostKeywords.join("\n")} onChange={(event) => { pushConfigRulesSnapshot(); setLogicConfig((prev) => ({ ...prev, plusCostKeywords: parseKeywordList(event.target.value) })); }} />
                   </label>
                 </section>
 
@@ -3214,12 +3248,12 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   <div className="list-editor">
                     {pasteSectionRows.map((row, index) => (
                       <div className="map-row" key={`paste-map-${index}`}>
-                        <input className="input" value={row.section} placeholder="섹션명" onChange={(event) => setPasteSectionRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item))} />
-                        <input className="input" value={row.parent} placeholder="비교할 합계 계정" onChange={(event) => setPasteSectionRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, parent: event.target.value } : item))} />
-                        <button className="danger-button" onClick={() => setPasteSectionRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                        <input className="input" value={row.section} placeholder="섹션명" onChange={(event) => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item)); }} />
+                        <input className="input" value={row.parent} placeholder="비교할 합계 계정" onChange={(event) => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, parent: event.target.value } : item)); }} />
+                        <button className="danger-button" onClick={() => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
                       </div>
                     ))}
-                    <button className="ghost-button" onClick={() => setPasteSectionRows((prev) => [...prev, { section: "", parent: "" }])}>섹션 규칙 추가</button>
+                    <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => [...prev, { section: "", parent: "" }]); }}>섹션 규칙 추가</button>
                   </div>
                 </section>
 
@@ -3229,16 +3263,16 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   <div className="list-editor">
                     {capitalRuleRows.map((row, index) => (
                       <div className="override-row" key={`capital-rule-${index}`}>
-                        <input className="input" value={row.account} placeholder="계정명" onChange={(event) => setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, account: event.target.value } : item))} />
-                        <select className="select" value={String(row.sign)} onChange={(event) => setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as 0 | 1 } : item))}>
+                        <input className="input" value={row.account} placeholder="계정명" onChange={(event) => { pushConfigRulesSnapshot(); setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, account: event.target.value } : item)); }} />
+                        <select className="select" value={String(row.sign)} onChange={(event) => { pushConfigRulesSnapshot(); setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as 0 | 1 } : item)); }}>
                           <option value="0">가산(+)</option>
                           <option value="1">차감(-)</option>
                         </select>
-                        <input className="input" value={row.parent} placeholder="상위 항목이 있으면 제외" onChange={(event) => setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, parent: event.target.value } : item))} />
-                        <button className="danger-button" onClick={() => setCapitalRuleRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                        <input className="input" value={row.parent} placeholder="상위 항목이 있으면 제외" onChange={(event) => { pushConfigRulesSnapshot(); setCapitalRuleRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, parent: event.target.value } : item)); }} />
+                        <button className="danger-button" onClick={() => { pushConfigRulesSnapshot(); setCapitalRuleRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
                       </div>
                     ))}
-                    <button className="ghost-button" onClick={() => setCapitalRuleRows((prev) => [...prev, { account: "", sign: 0, parent: "" }])}>자본 규칙 추가</button>
+                    <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setCapitalRuleRows((prev) => [...prev, { account: "", sign: 0, parent: "" }]); }}>자본 규칙 추가</button>
                   </div>
                 </section>
               </div>
@@ -3249,17 +3283,17 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   <div className="list-editor">
                     {globalOverrideRows.map((row, index) => (
                       <div className="override-row" key={`global-override-${index}`}>
-                        <input className="input" value={row.section} placeholder="섹션명" onChange={(event) => setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item))} />
-                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" onChange={(event) => setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item))} />
-                        <select className="select" value={String(row.sign)} onChange={(event) => setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item))}>
+                        <input className="input" value={row.section} placeholder="섹션명" onChange={(event) => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item)); }} />
+                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" onChange={(event) => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item)); }} />
+                        <select className="select" value={String(row.sign)} onChange={(event) => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item)); }}>
                           <option value="0">가산(+)</option>
                           <option value="1">차감(−)</option>
                           <option value="2">제외</option>
                         </select>
-                        <button className="danger-button" onClick={() => setGlobalOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                        <button className="danger-button" onClick={() => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
                       </div>
                     ))}
-                    <button className="ghost-button" onClick={() => setGlobalOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }])}>전역 규칙 추가</button>
+                    <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }]); }}>전역 규칙 추가</button>
                   </div>
                 </section>
 
@@ -3269,17 +3303,17 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   <div className="list-editor">
                     {companyOverrideRows.map((row, index) => (
                       <div className="override-row" key={`company-override-${selectedCompany || "empty"}-${index}`}>
-                        <input className="input" value={row.section} placeholder="섹션명" disabled={!selectedCompany.trim()} onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item))} />
-                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" disabled={!selectedCompany.trim()} onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item))} />
-                        <select className="select" value={String(row.sign)} disabled={!selectedCompany.trim()} onChange={(event) => setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item))}>
+                        <input className="input" value={row.section} placeholder="섹션명" disabled={!selectedCompany.trim()} onChange={(event) => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item)); }} />
+                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" disabled={!selectedCompany.trim()} onChange={(event) => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item)); }} />
+                        <select className="select" value={String(row.sign)} disabled={!selectedCompany.trim()} onChange={(event) => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item)); }}>
                           <option value="0">가산(+)</option>
                           <option value="1">차감(−)</option>
                           <option value="2">제외</option>
                         </select>
-                        <button className="danger-button" disabled={!selectedCompany.trim()} onClick={() => setCompanyOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                        <button className="danger-button" disabled={!selectedCompany.trim()} onClick={() => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
                       </div>
                     ))}
-                    <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => setCompanyOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }])}>회사 규칙 추가</button>
+                    <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }]); }}>회사 규칙 추가</button>
                   </div>
                 </section>
 
@@ -3289,11 +3323,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   <div className="list-editor">
                     {capitalMemoRows.map((row, index) => (
                       <div className="map-row" key={`capital-memo-${index}`}>
-                        <input className="input" value={row.account} placeholder="제외할 계정명" onChange={(event) => setCapitalMemoRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, account: event.target.value } : item))} />
-                        <button className="danger-button" onClick={() => setCapitalMemoRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button>
+                        <input className="input" value={row.account} placeholder="제외할 계정명" onChange={(event) => { pushConfigRulesSnapshot(); setCapitalMemoRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, account: event.target.value } : item)); }} />
+                        <button className="danger-button" onClick={() => { pushConfigRulesSnapshot(); setCapitalMemoRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
                       </div>
                     ))}
-                    <button className="ghost-button" onClick={() => setCapitalMemoRows((prev) => [...prev, { account: "" }])}>제외 항목 추가</button>
+                    <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setCapitalMemoRows((prev) => [...prev, { account: "" }]); }}>제외 항목 추가</button>
                   </div>
                 </section>
 
