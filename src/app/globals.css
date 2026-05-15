@@ -499,6 +499,37 @@ a {
   flex: 1;
 }
 
+.memo-meta {
+  font-size: 11px;
+  margin: 0;
+  opacity: 0.75;
+}
+
+.sheets-sync-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.sheets-sync-syncing {
+  background: rgba(49, 130, 246, 0.12);
+  color: rgb(38, 95, 175);
+}
+
+.sheets-sync-ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: rgb(21, 128, 61);
+}
+
+.sheets-sync-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: rgb(153, 27, 27);
+}
+
 .memo-textarea {
   min-height: 0;
   height: 100%;

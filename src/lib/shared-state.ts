@@ -18,6 +18,9 @@ export type SharedConfigRecord = {
   companyConfigs: CompanyConfigs;
   classificationCatalog: ClassificationCatalogGroup[];
   classificationGroups: ClassificationGroups;
+  workspaceMemo: string;
+  workspaceMemoUpdatedAt?: string | null;
+  workspaceMemoUpdatedBy?: string | null;
 };
 
 export type SharedStateResponse = {
@@ -25,7 +28,7 @@ export type SharedStateResponse = {
   datasets: SavedQuarterSnapshot[];
 };
 
-export function normalizeSharedConfig(input: Partial<PersistedState> | null | undefined): SharedConfigRecord {
+export function normalizeSharedConfig(input: Partial<PersistedState> | null | undefined): PersistedState {
   return parsePersistedState(JSON.stringify(input ?? getDefaultPersistedState()));
 }
 
@@ -46,15 +49,25 @@ export function deserializeSharedConfig(row: {
   logic_config?: LogicConfig | null;
   company_configs?: CompanyConfigs | null;
   classification_catalog?: ClassificationCatalogGroup[] | null;
+  workspace_memo?: string | null;
+  workspace_memo_updated_at?: string | null;
+  workspace_memo_updated_by?: string | null;
 } | null | undefined): SharedConfigRecord {
   const catalog = Array.isArray(row?.classification_catalog)
     ? mergeDefaultClassificationCatalog(row?.classification_catalog)
     : structuredClone(DEFAULT_CLASSIFICATION_CATALOG);
 
-  return normalizeSharedConfig({
+  const persisted = normalizeSharedConfig({
     logicConfig: row?.logic_config ?? structuredClone(DEFAULT_LOGIC_CONFIG),
     companyConfigs: row?.company_configs ?? structuredClone(DEFAULT_COMPANY_CONFIGS),
     classificationCatalog: catalog,
     classificationGroups: classificationCatalogToGroups(catalog)
   });
+
+  return {
+    ...persisted,
+    workspaceMemo: typeof row?.workspace_memo === "string" ? row!.workspace_memo : "",
+    workspaceMemoUpdatedAt: row?.workspace_memo_updated_at ?? null,
+    workspaceMemoUpdatedBy: row?.workspace_memo_updated_by ?? null
+  };
 }

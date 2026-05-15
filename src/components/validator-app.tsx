@@ -72,6 +72,21 @@ type DatasetApiResponse = {
   trashedDatasets: SavedQuarterSnapshot[];
 };
 
+function formatMemoTimestamp(iso: string | null | undefined) {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const diffMs = Date.now() - t;
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return "방금 전";
+  if (diffMin < 60) return `${diffMin}분 전`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}시간 전`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}일 전`;
+  return new Date(iso).toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
+}
+
 function parseDatasetApiResponse(raw: DatasetApiResponse) {
   return {
     datasets: sortSavedDatasets(parseSavedDatasets(JSON.stringify(raw.datasets))),
@@ -1079,6 +1094,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
   const [mounted, setMounted] = useState(false);
   const [workspaceMemo, setWorkspaceMemo] = useState("");
+  const [workspaceMemoMeta, setWorkspaceMemoMeta] = useState<{ updatedAt: string | null; updatedBy: string | null }>({ updatedAt: null, updatedBy: null });
+  const memoSyncInitializedRef = useRef(false);
+  const [sheetsSyncState, setSheetsSyncState] = useState<{ status: "idle" | "syncing" | "ok" | "error" | "disabled"; message?: string }>({ status: "idle" });
   const [pastedText, setPastedText] = useState("");
   const [tolerance, setTolerance] = useState(1);
   const [selectedCompany, setSelectedCompany] = useState("");
@@ -1125,25 +1143,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const accountDbRowRefsRef = useRef<Map<string, HTMLElement>>(new Map());
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const savedMemo = window.localStorage.getItem("kvocean-workspace-memo");
-    if (savedMemo) {
-      setWorkspaceMemo(savedMemo);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    window.localStorage.setItem("kvocean-workspace-memo", workspaceMemo);
-  }, [workspaceMemo]);
-
-  useEffect(() => {
     let cancelled = false;
 
     async function loadSharedState() {
@@ -1177,6 +1176,36 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         }
 
         const remote = await configResponse.json() as SharedStateResponse;
+        const remoteMemo = typeof remote.config.workspaceMemo === "string" ? remote.config.workspaceMemo : "";
+        const legacyMemo = typeof window !== "undefined" ? window.localStorage.getItem("kvocean-workspace-memo") : null;
+        const shouldMigrateLegacy = !!legacyMemo && !remoteMemo;
+        const initialMemo = shouldMigrateLegacy ? legacyMemo! : remoteMemo;
+        setWorkspaceMemo(initialMemo);
+        setWorkspaceMemoMeta({
+          updatedAt: remote.config.workspaceMemoUpdatedAt ?? null,
+          updatedBy: remote.config.workspaceMemoUpdatedBy ?? null
+        });
+        if (typeof window !== "undefined" && legacyMemo !== null) {
+          window.localStorage.removeItem("kvocean-workspace-memo");
+        }
+        if (shouldMigrateLegacy) {
+          fetch("/api/shared-state", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ memo: { value: initialMemo } })
+          })
+            .then(async (res) => {
+              if (!res.ok) return;
+              const payload = await res.json().catch(() => null) as { updatedAt?: string; updatedBy?: string } | null;
+              if (payload?.updatedAt || payload?.updatedBy) {
+                setWorkspaceMemoMeta({
+                  updatedAt: payload.updatedAt ?? new Date().toISOString(),
+                  updatedBy: payload.updatedBy ?? null
+                });
+              }
+            })
+            .catch(() => {});
+        }
         const remotePersisted = parsePersistedState(JSON.stringify(remote.config));
         const recoveredPersisted = recoverClassificationConfigFromDatasets(remoteSaved);
         const shouldRecoverRemoteClassification = !hasCustomConfig(remotePersisted) && hasCustomConfig(recoveredPersisted);
@@ -1281,6 +1310,41 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
 
     return () => window.clearTimeout(timeout);
   }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
+
+  useEffect(() => {
+    if (!mounted || !sharedStateReady) {
+      return;
+    }
+
+    if (!memoSyncInitializedRef.current) {
+      memoSyncInitializedRef.current = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      fetch("/api/shared-state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memo: { value: workspaceMemo } })
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null) as { error?: string } | null;
+            throw new Error(payload?.error ?? "메모 저장에 실패했습니다.");
+          }
+          const payload = await response.json().catch(() => null) as { updatedAt?: string; updatedBy?: string } | null;
+          if (payload?.updatedAt || payload?.updatedBy) {
+            setWorkspaceMemoMeta({
+              updatedAt: payload.updatedAt ?? new Date().toISOString(),
+              updatedBy: payload.updatedBy ?? null
+            });
+          }
+        })
+        .catch((error) => setSharedStateError(error instanceof Error ? error.message : "메모 저장에 실패했습니다."));
+    }, 700);
+
+    return () => window.clearTimeout(timeout);
+  }, [mounted, sharedStateReady, workspaceMemo]);
 
   useEffect(() => {
     const company = selectedCompany.trim();
@@ -1622,6 +1686,30 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       setComparisonSelections(buildInitialComparisonSelections(nextSaved));
       setSharedStateError(null);
       setActiveTab("data");
+
+      const syncCompany = snapshots[0]?.companyName?.trim();
+      if (syncCompany) {
+        setSheetsSyncState({ status: "syncing" });
+        fetch("/api/datasets/sheets-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ companyName: syncCompany })
+        })
+          .then(async (res) => {
+            const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; rowCount?: number } | null;
+            if (data?.ok) {
+              setSheetsSyncState({ status: "ok", message: `구글시트 동기화 완료 (${data.rowCount ?? 0}개 분기)` });
+              window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 4000);
+            } else if (data?.reason === "disabled") {
+              setSheetsSyncState({ status: "disabled" });
+            } else {
+              setSheetsSyncState({ status: "error", message: data?.error ?? "구글시트 동기화 실패" });
+            }
+          })
+          .catch((err) => {
+            setSheetsSyncState({ status: "error", message: err instanceof Error ? err.message : "구글시트 동기화 실패" });
+          });
+      }
     } catch (error) {
       setSharedStateError(error instanceof Error ? error.message : "데이터 저장에 실패했습니다.");
     } finally {
@@ -2440,15 +2528,21 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
             <div>
               <span className="section-kicker">Memo</span>
             </div>
-            <span className="soft-badge">자동 저장</span>
+            <span className="soft-badge">팀 공유 · 자동 저장</span>
           </div>
-          <p className="muted">확인할 계정, 회사별 이슈, 다음 작업을 바로 적어두세요.</p>
+          <p className="muted">확인할 계정, 회사별 이슈, 다음 작업을 바로 적어두세요. 팀 전체와 공유됩니다.</p>
           <textarea
             className="textarea memo-textarea"
             value={workspaceMemo}
             onChange={(event) => setWorkspaceMemo(event.target.value)}
             placeholder={"예시\n- 스탠다임 영업비용 구조 재확인\n- 스마트레이더시스템 계정 DB 분류\n- 휴지통 복구 시나리오 점검"}
           />
+          {(workspaceMemoMeta.updatedBy || workspaceMemoMeta.updatedAt) && (
+            <p className="muted memo-meta">
+              마지막 수정: {workspaceMemoMeta.updatedBy ?? "-"}
+              {workspaceMemoMeta.updatedAt ? ` · ${formatMemoTimestamp(workspaceMemoMeta.updatedAt)}` : ""}
+            </p>
+          )}
         </div>
       </aside>
 
@@ -2620,6 +2714,13 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                         <button className={`button ${datasetActionState === "saving" ? "is-loading" : ""}`.trim()} disabled={!canSaveCurrentDataset || datasetActionState === "saving"} onClick={saveCurrentDataset}>{datasetActionState === "saving" ? "저장 중..." : "저장하기"}</button>
                         <button className="tiny-button" onClick={focusFailedResultCards}>실패만 펼치기</button>
                         <button className="tiny-button" onClick={openAllResultCards}>전체 펼치기</button>
+                        {sheetsSyncState.status !== "idle" && sheetsSyncState.status !== "disabled" && (
+                          <span className={`sheets-sync-status sheets-sync-${sheetsSyncState.status}`}>
+                            {sheetsSyncState.status === "syncing" && "구글시트 동기화 중..."}
+                            {sheetsSyncState.status === "ok" && (sheetsSyncState.message ?? "구글시트 동기화 완료")}
+                            {sheetsSyncState.status === "error" && (sheetsSyncState.message ?? "구글시트 동기화 실패")}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="metric-grid compact-metrics">
