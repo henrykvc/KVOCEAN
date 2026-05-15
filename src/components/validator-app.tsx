@@ -1097,6 +1097,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [workspaceMemoMeta, setWorkspaceMemoMeta] = useState<{ updatedAt: string | null; updatedBy: string | null }>({ updatedAt: null, updatedBy: null });
   const memoSyncInitializedRef = useRef(false);
   const [sheetsSyncState, setSheetsSyncState] = useState<{ status: "idle" | "syncing" | "ok" | "error" | "disabled"; message?: string }>({ status: "idle" });
+  const sheetsAutoSyncInitializedRef = useRef(false);
   const [pastedText, setPastedText] = useState("");
   const [tolerance, setTolerance] = useState(1);
   const [selectedCompany, setSelectedCompany] = useState("");
@@ -1307,6 +1308,40 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         })
         .catch((error) => setSharedStateError(error instanceof Error ? error.message : "공용 설정 저장에 실패했습니다. 새로고침 후 다시 시도해 주세요."));
     }, 600);
+
+    return () => window.clearTimeout(timeout);
+  }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
+
+  useEffect(() => {
+    if (!mounted || !sharedStateReady) {
+      return;
+    }
+
+    if (!sheetsAutoSyncInitializedRef.current) {
+      sheetsAutoSyncInitializedRef.current = true;
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setSheetsSyncState({ status: "syncing", message: "규칙 변경 감지 → 전체 시트 자동 동기화 중..." });
+      fetch("/api/datasets/sheets-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true })
+      })
+        .then(async (res) => {
+          const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; companyCount?: number; rowCount?: number } | null;
+          if (data?.ok) {
+            setSheetsSyncState({ status: "ok", message: `자동 동기화 완료 (회사 ${data.companyCount ?? 0} · 행 ${data.rowCount ?? 0})` });
+            window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 4000);
+          } else if (data?.reason === "disabled") {
+            setSheetsSyncState({ status: "idle" });
+          } else {
+            setSheetsSyncState({ status: "error", message: data?.error ?? "자동 시트 동기화 실패" });
+          }
+        })
+        .catch(() => setSheetsSyncState({ status: "idle" }));
+    }, 3000);
 
     return () => window.clearTimeout(timeout);
   }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
