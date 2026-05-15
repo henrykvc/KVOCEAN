@@ -1717,6 +1717,28 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }
   }
 
+  async function bulkSyncSheets() {
+    setSheetsSyncState({ status: "syncing", message: "전체 회사 동기화 중..." });
+    try {
+      const res = await fetch("/api/datasets/sheets-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true })
+      });
+      const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; companyCount?: number; rowCount?: number } | null;
+      if (data?.ok) {
+        setSheetsSyncState({ status: "ok", message: `전체 동기화 완료 (회사 ${data.companyCount ?? 0} · 행 ${data.rowCount ?? 0})` });
+        window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 6000);
+      } else if (data?.reason === "disabled") {
+        setSheetsSyncState({ status: "error", message: "Vercel 환경변수가 설정되지 않았습니다." });
+      } else {
+        setSheetsSyncState({ status: "error", message: data?.error ?? "구글시트 동기화 실패" });
+      }
+    } catch (err) {
+      setSheetsSyncState({ status: "error", message: err instanceof Error ? err.message : "구글시트 동기화 실패" });
+    }
+  }
+
   async function patchDatasetStatementType(datasetId: string, newType: string) {
     const res = await fetch(`/api/datasets/${encodeURIComponent(datasetId)}`, {
       method: "PATCH",
@@ -3195,6 +3217,20 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                       </div>
                       <div className="result-actions">
                         {selectedReportPeriod && <span className="soft-badge">{selectedReportPeriod.label}</span>}
+                        <button
+                          className="ghost-button"
+                          onClick={bulkSyncSheets}
+                          disabled={sheetsSyncState.status === "syncing"}
+                          title="저장된 모든 회사의 최종결과물을 구글시트에 한 번에 push"
+                        >
+                          {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
+                        </button>
+                        {sheetsSyncState.status !== "idle" && sheetsSyncState.status !== "syncing" && (
+                          <span className={`sheets-sync-status sheets-sync-${sheetsSyncState.status}`}>
+                            {sheetsSyncState.status === "ok" && (sheetsSyncState.message ?? "동기화 완료")}
+                            {sheetsSyncState.status === "error" && (sheetsSyncState.message ?? "동기화 실패")}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </section>
