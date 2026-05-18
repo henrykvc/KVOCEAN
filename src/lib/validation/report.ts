@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, MANAGED_CLASSIFICATION_KEY_SET, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, MANAGED_CLASSIFICATION_KEY_SET, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 import { applySign, detectCompanyFromPaste, formatNumber, inferSignFromName, parsePastedText, pasteEditKey, resolveEditedNameRow, safeFloat, type SessionSignFixes } from "./engine";
 
 export type ReportPeriod = {
@@ -219,12 +219,6 @@ function resolveBaseCanonicalAccountKey(accountName: string, sectionKey: string,
     }
   }
 
-  for (const canonicalKey of Object.keys(ACCOUNT_ALIASES)) {
-    if (normalizedName === normalizeText(canonicalKey)) {
-      return canonicalKey;
-    }
-  }
-
   for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
     if (aliases.some((alias) => normalizedName === normalizeText(alias))) {
       return canonicalKey;
@@ -232,18 +226,6 @@ function resolveBaseCanonicalAccountKey(accountName: string, sectionKey: string,
   }
 
   for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
-    if (aliases.some((alias) => normalizedName.includes(normalizeText(alias)))) {
-      return canonicalKey;
-    }
-  }
-
-  for (const [canonicalKey, aliases] of Object.entries(ACCOUNT_ALIASES)) {
-    if (aliases.some((alias) => normalizedName === normalizeText(alias))) {
-      return canonicalKey;
-    }
-  }
-
-  for (const [canonicalKey, aliases] of Object.entries(ACCOUNT_ALIASES)) {
     if (aliases.some((alias) => normalizedName.includes(normalizeText(alias)))) {
       return canonicalKey;
     }
@@ -295,7 +277,7 @@ function buildMetricCandidateSet(names: string[], classificationGroups: Classifi
     candidates.add(normalizeText(candidate));
     const aliases = MANAGED_CLASSIFICATION_KEY_SET.has(candidate)
       ? (classificationGroups[candidate] ?? [])
-      : (classificationGroups[candidate] ?? ACCOUNT_ALIASES[candidate] ?? []);
+      : (classificationGroups[candidate] ?? []);
     aliases.forEach((alias) => {
       candidates.add(normalizeText(alias));
     });
@@ -304,7 +286,7 @@ function buildMetricCandidateSet(names: string[], classificationGroups: Classifi
   names.forEach((name) => {
     const aliases = MANAGED_CLASSIFICATION_KEY_SET.has(name)
       ? (classificationGroups[name] ?? [])
-      : (classificationGroups[name] ?? ACCOUNT_ALIASES[name] ?? []);
+      : (classificationGroups[name] ?? []);
     aliases.forEach((alias) => {
       candidates.add(normalizeText(alias));
       const derived = resolveCanonicalAccountKey(alias, "기타", classificationGroups);
@@ -530,7 +512,7 @@ export function normalizePasteEditsForValidation(args: {
 function getRowValues(rows: StatementMatrixRow[], periodKey: string, candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
   const canonicalCandidates = candidates.flatMap((candidate) => {
     const base = [candidate];
-    const aliases = classificationGroups[candidate] ?? ACCOUNT_ALIASES[candidate] ?? [];
+    const aliases = classificationGroups[candidate] ?? [];
     return [...base, ...aliases].map(normalizeText);
   });
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;

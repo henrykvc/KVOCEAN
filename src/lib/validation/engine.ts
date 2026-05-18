@@ -1,4 +1,4 @@
-import { ACCOUNT_ALIASES, COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, mergeDefaultClassificationCatalog, sanitizeClassificationGroups, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, findEntryByAlias, mergeDefaultClassificationCatalog, sanitizeClassificationGroups, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 
 export type ParsedPaste = {
   catRow: string[];
@@ -310,49 +310,17 @@ export function applySign(value: number | null | undefined, signCode: SignCode |
   return signCode === 1 ? -numeric : numeric;
 }
 
-function normalizeSectionForSign(sectionName?: string) {
-  const normalized = (sectionName ?? "").replace(/\s+/g, "").trim();
-  if (["판매비와관리비", "판관비", "영업비용"].includes(normalized)) {
-    return "영업비용";
+export function inferSignFromName(name: string, _logicConfig: LogicConfig, _sectionName?: string): SignCode | null {
+  // Single source of truth: the seed catalog (분류DB).
+  // Returns null when the account isn't in the seed — caller treats null as
+  // "user must classify this" and the row falls into the 미분류 bucket.
+  const seedEntry = findEntryByAlias(name);
+  if (seedEntry) {
+    return seedEntry.sign as SignCode;
   }
-  if (["영업외비용", "기타비용", "금융비용"].includes(normalized)) {
-    return "영업외비용";
-  }
-  if (["매출원가"].includes(normalized)) {
-    return "매출원가";
-  }
-  return normalized;
-}
-
-const EXPENSE_CONTRA_KEYWORDS = ["국고보조금", "정부보조금", "국가보조금", "지원금", "환입", "충당금환입", "매출차감", "현할차", "할인차금"];
-
-export function inferSignFromName(name: string, logicConfig: LogicConfig, sectionName?: string): SignCode | null {
-  const normalizedSection = normalizeSectionForSign(sectionName);
-  const isExpenseSection = ["영업비용", "영업외비용", "매출원가"].includes(normalizedSection);
-  if (name.includes("_양수") || name.endsWith("양수")) {
-    return 0;
-  }
-  if (name.includes("_음수") || name.endsWith("음수")) {
-    return 1;
-  }
-  if (logicConfig.plusOverrideKeywords.some((keyword) => name.includes(keyword))) {
-    return 0;
-  }
-  if (isExpenseSection && name.includes("반환")) {
-    return 0;
-  }
-  if (normalizedSection === "영업비용" && logicConfig.plusCostKeywords.some((keyword) => name.includes(keyword))) {
-    const hasContraKeyword = EXPENSE_CONTRA_KEYWORDS.some((keyword) => name.includes(keyword));
-    if (!hasContraKeyword) {
-      return 0;
-    }
-  }
-  if (logicConfig.minusKeywords.some((keyword) => name.includes(keyword))) {
-    return 1;
-  }
-  if (logicConfig.plusCostKeywords.some((keyword) => name.includes(keyword))) {
-    return 0;
-  }
+  // Explicit _양수/_음수 suffix still respected — these are legacy migration tags.
+  if (name.includes("_양수") || name.endsWith("양수")) return 0;
+  if (name.includes("_음수") || name.endsWith("음수")) return 1;
   return null;
 }
 
@@ -362,7 +330,10 @@ function getAccountValue(nameToValue: Record<string, { value: number | null; col
 }
 
 function getAccountMatch(nameToValue: Record<string, { value: number | null; col: number }>, account: string): { alias: string; value: number; col: number } | null {
-  for (const alias of ACCOUNT_ALIASES[account] ?? [account]) {
+  // All matching now flows through the seed-derived classificationGroups.
+  // Resolve aliases from DEFAULT_CLASSIFICATION_GROUPS — single source of truth.
+  const aliases = DEFAULT_CLASSIFICATION_GROUPS[account] ?? [account];
+  for (const alias of aliases) {
     const item = nameToValue[alias];
     if (item && item.value !== null && item.value !== undefined) {
       return { alias, value: item.value, col: item.col };

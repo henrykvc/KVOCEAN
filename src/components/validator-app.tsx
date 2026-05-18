@@ -2,19 +2,24 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
+  CLASSIFICATION_ENTRIES,
   DEFAULT_CLASSIFICATION_CATALOG,
   DEFAULT_CLASSIFICATION_GROUPS,
   DEFAULT_COMPANY_CONFIGS,
   DEFAULT_LOGIC_CONFIG,
   MANAGED_CLASSIFICATION_KEYS,
   MANAGED_CLASSIFICATION_KEY_SET,
+  applyAliasOverridesToCatalog,
   classificationCatalogToGroups,
   classificationGroupsToCatalog,
+  diffSnapshotRowAgainstSeed,
+  findEntryByAlias,
   isSystemFixedClassificationKey,
   mergeDefaultClassificationCatalog,
   sanitizeClassificationAliases,
   sanitizeClassificationGroups,
   type ClassificationCatalogGroup,
+  type ClassificationEntry,
   type ClassificationGroups,
   type CompanyConfigs,
   type LogicConfig,
@@ -38,7 +43,9 @@ import {
   buildQuarterRows as buildSheetsQuarterRows,
   collectDistinctQuarters as collectSheetsQuarters,
   toSheetTabName,
-  type SheetCellValue
+  buildClassificationDbTab,
+  type SheetCellValue,
+  type AccountOccurrence
 } from "@/lib/sheets-export";
 import {
   buildCompanyReport,
@@ -126,13 +133,48 @@ function buildSheetsSyncPayload(
   const quarters = collectSheetsQuarters(Array.from(companyReports.values()));
   const headers = buildSheetsHeaderRow();
 
+  // 분류DB 탭 — collect OCR account occurrences across all saved datasets.
+  const accountOccurrences = collectAccountOccurrences(savedDatasets);
+  const classificationDbTab = buildClassificationDbTab(accountOccurrences);
+
+  const quarterTabs = quarters.map((q) => ({
+    tabName: toSheetTabName(q.key),
+    headers,
+    rows: buildSheetsQuarterRows({ quarterKey: q.key, companyReports })
+  }));
+
+  // Prepend 분류DB so it's the first/visible tab when users open the sheet.
   return {
-    quarterTabs: quarters.map((q) => ({
-      tabName: toSheetTabName(q.key),
-      headers,
-      rows: buildSheetsQuarterRows({ quarterKey: q.key, companyReports })
-    }))
+    quarterTabs: [classificationDbTab, ...quarterTabs]
   };
+}
+
+/**
+ * Walk every saved snapshot and collect (accountName, source) pairs.
+ * Used to render the 출처 column in the 분류DB sheet tab.
+ */
+function collectAccountOccurrences(savedDatasets: SavedQuarterSnapshot[]): AccountOccurrence[] {
+  const byName = new Map<string, AccountOccurrence>();
+  for (const dataset of savedDatasets) {
+    for (const row of dataset.adjustedStatementRows) {
+      const name = (row.accountName ?? "").trim();
+      if (!name) continue;
+      const existing = byName.get(name);
+      const source = {
+        companyName: dataset.companyName,
+        quarterLabel: dataset.quarterLabel
+      };
+      if (existing) {
+        const dup = existing.sources.some(
+          (s) => s.companyName === source.companyName && s.quarterLabel === source.quarterLabel
+        );
+        if (!dup) existing.sources.push(source);
+      } else {
+        byName.set(name, { accountName: name, sources: [source] });
+      }
+    }
+  }
+  return Array.from(byName.values());
 }
 
 type ComparisonColumn = {
@@ -163,7 +205,7 @@ type PendingInsertedRow = {
   value: string;
 };
 
-type SectionAccountDbEntry = {
+export type SectionAccountDbEntry = {
   entryKey: string;
   section: string;
   sectionKey: string;
@@ -606,6 +648,822 @@ function rowsToCapitalSigns(rows: CapitalRuleRow[]) {
     acc[account] = row.sign === 0;
     return acc;
   }, {});
+}
+
+// ===========================================================================
+// 5-level classification tree — builds a 대 > 중 > 소 > 세 hierarchy from the
+// seed catalog, attaching live OCR-encountered accounts (occurrences). Used by
+// the 3-1 분류 탭 to give the user a navigable tree instead of a flat list.
+// ===========================================================================
+
+type ClassificationLeafOccurrence = {
+  accountName: string;
+  occurrences: number;
+  sources: Array<{ companyName: string; quarterLabel: string }>;
+};
+
+type ClassificationTreeLeaf = {
+  kind: "leaf";
+  nodeId: string;
+  code: number;
+  sign: 0 | 1;
+  세분류: string;
+  aliases: string[];
+  encountered: ClassificationLeafOccurrence[]; // OCR-seen alias forms
+  encounteredCount: number;
+};
+
+type ClassificationTreeBranch = {
+  kind: "branch";
+  nodeId: string;
+  level: "대분류" | "중분류" | "소분류";
+  name: string;
+  isUnclassified: boolean;
+  children: ClassificationTreeNode[];
+  leafCount: number;
+  encounteredCount: number;
+};
+
+type ClassificationTreeNode = ClassificationTreeLeaf | ClassificationTreeBranch;
+
+const UNCLASSIFIED_LABEL = "미분류";
+
+function normalizeAliasKey(value: string): string {
+  return (value ?? "").replace(/\s+/g, "").toLowerCase();
+}
+
+function buildClassificationTree(
+  accountEntries: SectionAccountDbEntry[]
+): ClassificationTreeNode[] {
+  // Map alias → leaf occurrences (from saved OCR data)
+  const aliasOccurrences = new Map<string, { entry: ClassificationEntry; account: SectionAccountDbEntry }[]>();
+  const unclassifiedAccounts: SectionAccountDbEntry[] = [];
+
+  for (const acct of accountEntries) {
+    const matched = findEntryByAlias(acct.accountName);
+    if (matched) {
+      // Find which alias matched (case-insensitive)
+      const target = normalizeAliasKey(acct.accountName);
+      const aliasHit = matched.aliases.find((a) => normalizeAliasKey(a) === target) ?? matched.세분류;
+      const key = `${matched.code}::${normalizeAliasKey(aliasHit)}`;
+      const list = aliasOccurrences.get(key) ?? [];
+      list.push({ entry: matched, account: acct });
+      aliasOccurrences.set(key, list);
+    } else {
+      unclassifiedAccounts.push(acct);
+    }
+  }
+
+  // Group entries by 대 > 중 > 소
+  type AccumNode = Map<string, { node: ClassificationTreeBranch; subgroups?: AccumNode; leaves?: ClassificationTreeLeaf[] }>;
+  const root: AccumNode = new Map();
+
+  function ensureBranch(map: AccumNode, level: ClassificationTreeBranch["level"], name: string, idPrefix: string): { node: ClassificationTreeBranch; subgroups: AccumNode; leaves: ClassificationTreeLeaf[] } {
+    const displayName = name?.trim() || UNCLASSIFIED_LABEL;
+    const existing = map.get(displayName);
+    if (existing) {
+      if (!existing.subgroups) existing.subgroups = new Map();
+      if (!existing.leaves) existing.leaves = [];
+      return { node: existing.node, subgroups: existing.subgroups, leaves: existing.leaves };
+    }
+    const node: ClassificationTreeBranch = {
+      kind: "branch",
+      nodeId: `${idPrefix}::${displayName}`,
+      level,
+      name: displayName,
+      isUnclassified: displayName === UNCLASSIFIED_LABEL,
+      children: [],
+      leafCount: 0,
+      encounteredCount: 0
+    };
+    const slot = { node, subgroups: new Map() as AccumNode, leaves: [] as ClassificationTreeLeaf[] };
+    map.set(displayName, slot);
+    return slot;
+  }
+
+  for (const entry of CLASSIFICATION_ENTRIES) {
+    const 대 = ensureBranch(root, "대분류", entry.대분류, "L1");
+    const 중 = ensureBranch(대.subgroups, "중분류", entry.중분류, 대.node.nodeId);
+    const 소 = ensureBranch(중.subgroups, "소분류", entry.소분류, 중.node.nodeId);
+
+    const encountered: ClassificationLeafOccurrence[] = [];
+    for (const alias of entry.aliases) {
+      const key = `${entry.code}::${normalizeAliasKey(alias)}`;
+      const hits = aliasOccurrences.get(key) ?? [];
+      if (!hits.length) continue;
+      const sources: Array<{ companyName: string; quarterLabel: string }> = [];
+      let totalOccurrences = 0;
+      for (const hit of hits) {
+        totalOccurrences += hit.account.occurrences;
+        for (const src of hit.account.sources) {
+          if (!sources.some((s) => s.companyName === src.companyName && s.quarterLabel === src.quarterLabel)) {
+            sources.push({ companyName: src.companyName, quarterLabel: src.quarterLabel });
+          }
+        }
+      }
+      encountered.push({ accountName: alias, occurrences: totalOccurrences, sources });
+    }
+    const encounteredCount = encountered.reduce((acc, e) => acc + e.occurrences, 0);
+
+    const leaf: ClassificationTreeLeaf = {
+      kind: "leaf",
+      nodeId: `leaf::${entry.code}`,
+      code: entry.code,
+      sign: entry.sign,
+      세분류: entry.세분류,
+      aliases: entry.aliases,
+      encountered,
+      encounteredCount
+    };
+    소.leaves.push(leaf);
+    소.node.leafCount += 1;
+    소.node.encounteredCount += encounteredCount;
+    중.node.leafCount += 1;
+    중.node.encounteredCount += encounteredCount;
+    대.node.leafCount += 1;
+    대.node.encounteredCount += encounteredCount;
+  }
+
+  // Attach 미분류 accounts at the top level — they have no 대분류 to anchor to.
+  if (unclassifiedAccounts.length) {
+    const unc = ensureBranch(root, "대분류", UNCLASSIFIED_LABEL, "L1");
+    // Group accounts as fake leaves with just OCR data
+    for (const acct of unclassifiedAccounts) {
+      const leaf: ClassificationTreeLeaf = {
+        kind: "leaf",
+        nodeId: `unclassified::${acct.entryKey}`,
+        code: 9999999,
+        sign: 0,
+        세분류: acct.accountName,
+        aliases: [acct.accountName],
+        encountered: [{
+          accountName: acct.accountName,
+          occurrences: acct.occurrences,
+          sources: acct.sources.map((s) => ({ companyName: s.companyName, quarterLabel: s.quarterLabel }))
+        }],
+        encounteredCount: acct.occurrences
+      };
+      unc.leaves.push(leaf);
+      unc.node.leafCount += 1;
+      unc.node.encounteredCount += acct.occurrences;
+    }
+  }
+
+  // Walk the accumulator to assemble children arrays, with "미분류" branches always last
+  function finalize(map: AccumNode): ClassificationTreeNode[] {
+    const result: (ClassificationTreeBranch | ClassificationTreeLeaf)[] = [];
+    for (const slot of map.values()) {
+      const childBranches = slot.subgroups ? finalize(slot.subgroups) : [];
+      const childLeaves = (slot.leaves ?? []).slice().sort((a, b) => a.code - b.code);
+      slot.node.children = [...childBranches, ...childLeaves];
+      result.push(slot.node);
+    }
+    // 미분류는 항상 맨 밑
+    result.sort((a, b) => {
+      const aUnc = a.kind === "branch" && a.isUnclassified;
+      const bUnc = b.kind === "branch" && b.isUnclassified;
+      if (aUnc && !bUnc) return 1;
+      if (!aUnc && bUnc) return -1;
+      // Leaves: sort by code; branches: sort by name (Korean)
+      if (a.kind === "leaf" && b.kind === "leaf") return a.code - b.code;
+      if (a.kind === "branch" && b.kind === "branch") return a.name.localeCompare(b.name, "ko");
+      return a.kind === "branch" ? -1 : 1;
+    });
+    return result;
+  }
+
+  return finalize(root);
+}
+
+// Render a single tree node (branch or leaf) recursively.
+function ClassificationTreeNodeView({
+  node,
+  expanded,
+  onToggle,
+  depth = 0
+}: {
+  node: ClassificationTreeNode;
+  expanded: Set<string>;
+  onToggle: (nodeId: string) => void;
+  depth?: number;
+}) {
+  const isOpen = expanded.has(node.nodeId);
+  const indentStyle = { paddingLeft: 8 + depth * 16 } as const;
+
+  if (node.kind === "leaf") {
+    const signLabel = node.code === 9999999 ? "" : node.sign === 1 ? "−" : "+";
+    const signClass = node.code === 9999999 ? "" : node.sign === 1 ? "tree-sign tree-sign-minus" : "tree-sign tree-sign-plus";
+    return (
+      <li className={`tree-leaf${node.code === 9999999 ? " tree-leaf-unclassified" : ""}`}>
+        <div className="tree-row" style={indentStyle}>
+          <button
+            type="button"
+            className="tree-toggle"
+            onClick={() => onToggle(node.nodeId)}
+            aria-label={isOpen ? "접기" : "펼치기"}
+          >{isOpen ? "▼" : "▶"}</button>
+          <span className="tree-code">{node.code === 9999999 ? "—" : node.code}</span>
+          <span className="tree-leaf-name">{node.세분류}</span>
+          {signLabel && <span className={signClass}>{signLabel}</span>}
+          <span className="tree-count-badge" title="실제 OCR 등장 항목 수">
+            {node.encountered.length}/{node.aliases.length}
+          </span>
+        </div>
+        {isOpen && (
+          <ul className="tree-leaf-aliases">
+            {node.aliases.map((alias) => {
+              const occ = node.encountered.find((e) => e.accountName === alias);
+              return (
+                <li key={`${node.nodeId}-${alias}`} className={`tree-alias${occ ? " tree-alias-seen" : ""}`} style={{ paddingLeft: 8 + (depth + 1) * 16 }}>
+                  <span className="tree-alias-dot">•</span>
+                  <span className="tree-alias-name">{alias}</span>
+                  {occ && (
+                    <>
+                      <span className="tree-alias-count">×{occ.occurrences}</span>
+                      <span className="tree-alias-sources">{occ.sources.slice(0, 3).map((s) => `${s.companyName}${s.quarterLabel}`).join(", ")}{occ.sources.length > 3 ? ` 외 ${occ.sources.length - 3}건` : ""}</span>
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </li>
+    );
+  }
+
+  // Branch
+  const levelClass = `tree-branch tree-branch-${node.level}${node.isUnclassified ? " tree-branch-unclassified" : ""}`;
+  return (
+    <li className={levelClass}>
+      <div className="tree-row" style={indentStyle}>
+        <button
+          type="button"
+          className="tree-toggle"
+          onClick={() => onToggle(node.nodeId)}
+          aria-label={isOpen ? "접기" : "펼치기"}
+        >{isOpen ? "▼" : "▶"}</button>
+        <span className={`tree-level-tag tree-level-${node.level}`}>{node.level}</span>
+        <span className="tree-branch-name">{node.name}</span>
+        <span className="tree-count-badge">세분류 {node.leafCount}{node.encounteredCount ? ` · 등장 ${node.encounteredCount}` : ""}</span>
+      </div>
+      {isOpen && (
+        <ul className="tree-children">
+          {node.children.map((child) => (
+            <ClassificationTreeNodeView
+              key={child.nodeId}
+              node={child}
+              expanded={expanded}
+              onToggle={onToggle}
+              depth={depth + 1}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+// ===========================================================================
+// 분류DB 표 — 엑셀 양식과 동일한 평탄 표. 코드 ASC 정렬 + 검색 + 페이지네이션.
+// 한 행 = 한 (코드, alias) 페어. 미분류는 코드 9999999로 맨 아래.
+// ===========================================================================
+
+type ClassificationTableRow = {
+  rowKey: string;
+  code: number;
+  대분류: string;
+  중분류: string;
+  소분류: string;
+  세분류: string;
+  항목명: string;
+  sign: 0 | 1;
+  occurrences: number;
+  sources: Array<{ companyName: string; quarterLabel: string }>;
+  isUnclassified: boolean;
+};
+
+const UNCLASSIFIED_ROW_CODE = 9999999;
+
+function buildClassificationTableRows(
+  accountEntries: SectionAccountDbEntry[]
+): ClassificationTableRow[] {
+  const rows: ClassificationTableRow[] = [];
+
+  // Occurrences keyed by normalized account name
+  const occByName = new Map<string, { occurrences: number; sources: Array<{ companyName: string; quarterLabel: string }> }>();
+  for (const acct of accountEntries) {
+    const key = normalizeAliasKey(acct.accountName);
+    if (!key) continue;
+    const existing = occByName.get(key);
+    const newSources = acct.sources.map((s) => ({ companyName: s.companyName, quarterLabel: s.quarterLabel }));
+    if (existing) {
+      existing.occurrences += acct.occurrences;
+      for (const src of newSources) {
+        if (!existing.sources.some((s) => s.companyName === src.companyName && s.quarterLabel === src.quarterLabel)) {
+          existing.sources.push(src);
+        }
+      }
+    } else {
+      occByName.set(key, { occurrences: acct.occurrences, sources: newSources });
+    }
+  }
+
+  const matchedAliasKeys = new Set<string>();
+
+  // Seed rows
+  for (const entry of CLASSIFICATION_ENTRIES) {
+    const aliasList = entry.aliases.length ? entry.aliases : [entry.세분류];
+    for (const alias of aliasList) {
+      const aliasKey = normalizeAliasKey(alias);
+      matchedAliasKeys.add(aliasKey);
+      const occ = occByName.get(aliasKey);
+      rows.push({
+        rowKey: `seed::${entry.code}::${aliasKey}`,
+        code: entry.code,
+        대분류: entry.대분류,
+        중분류: entry.중분류,
+        소분류: entry.소분류,
+        세분류: entry.세분류,
+        항목명: alias,
+        sign: entry.sign,
+        occurrences: occ?.occurrences ?? 0,
+        sources: occ?.sources ?? [],
+        isUnclassified: false
+      });
+    }
+  }
+
+  // 미분류 — OCR 항목 중 매칭 안 된 것
+  for (const acct of accountEntries) {
+    const aliasKey = normalizeAliasKey(acct.accountName);
+    if (matchedAliasKeys.has(aliasKey)) continue;
+    rows.push({
+      rowKey: `unclassified::${acct.entryKey}`,
+      code: UNCLASSIFIED_ROW_CODE,
+      대분류: "",
+      중분류: "",
+      소분류: "",
+      세분류: "",
+      항목명: acct.accountName,
+      sign: 0,
+      occurrences: acct.occurrences,
+      sources: acct.sources.map((s) => ({ companyName: s.companyName, quarterLabel: s.quarterLabel })),
+      isUnclassified: true
+    });
+  }
+
+  return rows;
+}
+
+function formatRowSources(sources: ClassificationTableRow["sources"]): string {
+  if (!sources.length) return "";
+  const fmt = (s: { companyName: string; quarterLabel: string }) => {
+    const m = /^(\d{4})-(\d{2})/.exec(s.quarterLabel ?? "");
+    const yymm = m ? `${m[1].slice(2)}${m[2]}` : (s.quarterLabel ?? "");
+    return `${s.companyName}${yymm}`;
+  };
+  const first = sources.slice(0, 3).map(fmt).join(", ");
+  return sources.length > 3 ? `${first} 외 ${sources.length - 3}건` : first;
+}
+
+type SortField = "code" | "대분류" | "중분류" | "소분류" | "세분류" | "항목명" | "occurrences";
+type SortDir = "asc" | "desc";
+
+type EditableDraft = {
+  대분류: string;
+  중분류: string;
+  소분류: string;
+  세분류: string;
+  sign: 0 | 1;
+};
+
+// Build dropdown options derived from the seed catalog
+type ClassificationOptions = {
+  대분류_OPTIONS: string[];
+  중분류_BY_대: Map<string, string[]>;
+  소분류_BY_대중: Map<string, string[]>;
+  세분류_BY_대중소: Map<string, Array<{ 세분류: string; code: number; sign: 0 | 1 }>>;
+};
+
+function buildClassificationOptions(): ClassificationOptions {
+  const 대Set = new Set<string>();
+  const 중Map = new Map<string, Set<string>>();
+  const 소Map = new Map<string, Set<string>>();
+  const 세Map = new Map<string, Array<{ 세분류: string; code: number; sign: 0 | 1 }>>();
+
+  for (const e of CLASSIFICATION_ENTRIES) {
+    if (!e.대분류) continue;
+    대Set.add(e.대분류);
+    const k중 = e.대분류;
+    if (!중Map.has(k중)) 중Map.set(k중, new Set());
+    if (e.중분류) 중Map.get(k중)!.add(e.중분류);
+
+    const k소 = `${e.대분류}|${e.중분류}`;
+    if (!소Map.has(k소)) 소Map.set(k소, new Set());
+    if (e.소분류) 소Map.get(k소)!.add(e.소분류);
+
+    const k세 = `${e.대분류}|${e.중분류}|${e.소분류}`;
+    if (!세Map.has(k세)) 세Map.set(k세, []);
+    세Map.get(k세)!.push({ 세분류: e.세분류, code: e.code, sign: e.sign });
+  }
+
+  return {
+    대분류_OPTIONS: Array.from(대Set).sort((a, b) => a.localeCompare(b, "ko")),
+    중분류_BY_대: new Map(Array.from(중Map.entries()).map(([k, v]) => [k, Array.from(v).sort((a, b) => a.localeCompare(b, "ko"))])),
+    소분류_BY_대중: new Map(Array.from(소Map.entries()).map(([k, v]) => [k, Array.from(v).sort((a, b) => a.localeCompare(b, "ko"))])),
+    세분류_BY_대중소: new Map(Array.from(세Map.entries()).map(([k, v]) => [k, v.slice().sort((a, b) => a.code - b.code)]))
+  };
+}
+
+// Validate a draft against the seed tree.
+// Returns the matched ClassificationEntry (code+sign), or an error message.
+function validateDraft(draft: EditableDraft, options: ClassificationOptions): { entry: { code: number; sign: 0 | 1 } | null; error: string | null } {
+  if (!draft.대분류) return { entry: null, error: "대분류를 선택하세요" };
+  if (!options.대분류_OPTIONS.includes(draft.대분류)) return { entry: null, error: "유효하지 않은 대분류" };
+
+  if (!draft.중분류) return { entry: null, error: "중분류를 선택하세요" };
+  const 중List = options.중분류_BY_대.get(draft.대분류) ?? [];
+  if (!중List.includes(draft.중분류)) return { entry: null, error: `${draft.대분류} 안에 없는 중분류` };
+
+  if (!draft.소분류) return { entry: null, error: "소분류를 선택하세요" };
+  const 소List = options.소분류_BY_대중.get(`${draft.대분류}|${draft.중분류}`) ?? [];
+  if (!소List.includes(draft.소분류)) return { entry: null, error: `${draft.대분류} > ${draft.중분류} 안에 없는 소분류` };
+
+  if (!draft.세분류) return { entry: null, error: "세분류를 선택하세요" };
+  const 세List = options.세분류_BY_대중소.get(`${draft.대분류}|${draft.중분류}|${draft.소분류}`) ?? [];
+  // Match by 세분류 name AND sign — same name can exist with both + and − (e.g. 매출채권 / 매출채권_대손충당금)
+  const matched = 세List.find((e) => e.세분류 === draft.세분류 && e.sign === draft.sign);
+  if (!matched) {
+    const available = 세List.find((e) => e.세분류 === draft.세분류);
+    if (available) return { entry: null, error: `세분류 부호 불일치 (선택한 부호 ${draft.sign === 1 ? "−" : "+"})` };
+    return { entry: null, error: `${draft.소분류} 안에 없는 세분류` };
+  }
+  return { entry: matched, error: null };
+}
+
+function compareRows(a: ClassificationTableRow, b: ClassificationTableRow, field: SortField, dir: SortDir): number {
+  const sign = dir === "asc" ? 1 : -1;
+  if (field === "code" || field === "occurrences") {
+    return ((a[field] as number) - (b[field] as number)) * sign;
+  }
+  return String(a[field] ?? "").localeCompare(String(b[field] ?? ""), "ko") * sign;
+}
+
+type AliasOverride = {
+  // Destination seed entry (validated)
+  code: number;
+  대분류: string;
+  중분류: string;
+  소분류: string;
+  세분류: string;
+  sign: 0 | 1;
+};
+
+export function ClassificationTableView({
+  accountEntries,
+  onOverridesChange,
+  initialFilters
+}: {
+  accountEntries: SectionAccountDbEntry[];
+  onOverridesChange?: (overrides: Map<string, AliasOverride>) => void;
+  initialFilters?: { showOnlyUnclassified?: boolean; showOnlyEncountered?: boolean };
+}) {
+  const baseRows = useMemo(() => buildClassificationTableRows(accountEntries), [accountEntries]);
+  const options = useMemo(() => buildClassificationOptions(), []);
+  const [overrides, setOverrides] = useState<Map<string, AliasOverride>>(new Map());
+
+  // Apply overrides on top of baseRows
+  const allRows = useMemo(() => {
+    if (!overrides.size) return baseRows;
+    return baseRows.map((row) => {
+      const ov = overrides.get(row.항목명);
+      if (!ov) return row;
+      return {
+        ...row,
+        code: ov.code,
+        대분류: ov.대분류,
+        중분류: ov.중분류,
+        소분류: ov.소분류,
+        세분류: ov.세분류,
+        sign: ov.sign,
+        isUnclassified: false
+      };
+    });
+  }, [baseRows, overrides]);
+
+  const [search, setSearch] = useState("");
+  const [sortField, setSortField] = useState<SortField>("code");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(0);
+  const [showOnlyUnclassified, setShowOnlyUnclassified] = useState(initialFilters?.showOnlyUnclassified ?? false);
+  const [showOnlyEncountered, setShowOnlyEncountered] = useState(initialFilters?.showOnlyEncountered ?? false);
+  const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
+  const [draft, setDraft] = useState<EditableDraft | null>(null);
+
+  function startEdit(row: ClassificationTableRow) {
+    setEditingRowKey(row.rowKey);
+    setDraft({
+      대분류: row.대분류,
+      중분류: row.중분류,
+      소분류: row.소분류,
+      세분류: row.세분류,
+      sign: row.sign
+    });
+  }
+  function cancelEdit() {
+    setEditingRowKey(null);
+    setDraft(null);
+  }
+  function saveEdit(row: ClassificationTableRow) {
+    if (!draft) return;
+    const result = validateDraft(draft, options);
+    if (!result.entry) return; // button disabled anyway
+    const next = new Map(overrides);
+    next.set(row.항목명, {
+      code: result.entry.code,
+      대분류: draft.대분류,
+      중분류: draft.중분류,
+      소분류: draft.소분류,
+      세분류: draft.세분류,
+      sign: result.entry.sign
+    });
+    setOverrides(next);
+    setEditingRowKey(null);
+    setDraft(null);
+    onOverridesChange?.(next);
+  }
+  function revertOverride(itemName: string) {
+    if (!overrides.has(itemName)) return;
+    const next = new Map(overrides);
+    next.delete(itemName);
+    setOverrides(next);
+    onOverridesChange?.(next);
+  }
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allRows.filter((row) => {
+      if (showOnlyUnclassified && !row.isUnclassified) return false;
+      if (showOnlyEncountered && row.occurrences === 0) return false;
+      if (!q) return true;
+      return (
+        String(row.code).includes(q)
+        || row.대분류.toLowerCase().includes(q)
+        || row.중분류.toLowerCase().includes(q)
+        || row.소분류.toLowerCase().includes(q)
+        || row.세분류.toLowerCase().includes(q)
+        || row.항목명.toLowerCase().includes(q)
+      );
+    });
+  }, [allRows, search, showOnlyUnclassified, showOnlyEncountered]);
+
+  const sorted = useMemo(() => {
+    return filtered.slice().sort((a, b) => compareRows(a, b, sortField, sortDir));
+  }, [filtered, sortField, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = sorted.slice(safePage * pageSize, (safePage + 1) * pageSize);
+
+  function toggleSort(field: SortField) {
+    if (sortField === field) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir(field === "occurrences" ? "desc" : "asc");
+    }
+    setPage(0);
+  }
+
+  function arrow(field: SortField): string {
+    if (sortField !== field) return "";
+    return sortDir === "asc" ? " ▲" : " ▼";
+  }
+
+  const unclassifiedCount = allRows.filter((r) => r.isUnclassified).length;
+  const encounteredCount = allRows.filter((r) => r.occurrences > 0 && !r.isUnclassified).length;
+
+  return (
+    <div className="classification-table-view">
+      <div className="classification-table-toolbar">
+        <input
+          className="input"
+          placeholder="코드/이름/항목명 검색"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+          style={{ minWidth: 240, flex: "0 1 320px" }}
+        />
+        <label className="filter-chip">
+          <input type="checkbox" checked={showOnlyEncountered} onChange={(e) => { setShowOnlyEncountered(e.target.checked); setPage(0); }} />
+          OCR ({encounteredCount})
+        </label>
+        <label className="filter-chip">
+          <input type="checkbox" checked={showOnlyUnclassified} onChange={(e) => { setShowOnlyUnclassified(e.target.checked); setPage(0); }} />
+          미분류만 ({unclassifiedCount})
+        </label>
+        <span className="muted" style={{ marginLeft: "auto", fontSize: 12 }}>
+          전체 {allRows.length.toLocaleString()} · 필터 후 {sorted.length.toLocaleString()}
+        </span>
+      </div>
+
+      <div className="classification-table-scroll">
+        <table className="table report-table classification-flat-table">
+          <thead>
+            <tr>
+              <th onClick={() => toggleSort("code")} className="sortable">코드{arrow("code")}</th>
+              <th onClick={() => toggleSort("대분류")} className="sortable">대분류{arrow("대분류")}</th>
+              <th onClick={() => toggleSort("중분류")} className="sortable">중분류{arrow("중분류")}</th>
+              <th onClick={() => toggleSort("소분류")} className="sortable">소분류{arrow("소분류")}</th>
+              <th onClick={() => toggleSort("세분류")} className="sortable">세분류{arrow("세분류")}</th>
+              <th onClick={() => toggleSort("항목명")} className="sortable">항목명{arrow("항목명")}</th>
+              <th>부호</th>
+              <th>출처</th>
+              <th>편집</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((row) => {
+              const isEditing = editingRowKey === row.rowKey && draft;
+              const hasOverride = overrides.has(row.항목명);
+              const rowClass = `${row.isUnclassified ? "row-unclassified" : ""}${row.occurrences > 0 && !row.isUnclassified ? " row-encountered" : ""}${hasOverride ? " row-override" : ""}${isEditing ? " row-editing" : ""}`.trim();
+
+              if (isEditing && draft) {
+                const validation = validateDraft(draft, options);
+                const 중Options = options.중분류_BY_대.get(draft.대분류) ?? [];
+                const 소Options = options.소분류_BY_대중.get(`${draft.대분류}|${draft.중분류}`) ?? [];
+                const 세Options = options.세분류_BY_대중소.get(`${draft.대분류}|${draft.중분류}|${draft.소분류}`) ?? [];
+                // 세분류 names (unique) — sign chooses between +/− variants
+                const 세Names = Array.from(new Set(세Options.map((x) => x.세분류))).sort((a, b) => a.localeCompare(b, "ko"));
+                return (
+                  <Fragment key={row.rowKey}>
+                    <tr className={rowClass}>
+                      <td className="cell-code">{validation.entry ? validation.entry.code : "—"}</td>
+                      <td>
+                        <select className="select cell-select" value={draft.대분류} onChange={(e) => setDraft({ 대분류: e.target.value, 중분류: "", 소분류: "", 세분류: "", sign: 0 })}>
+                          <option value="">선택</option>
+                          {options.대분류_OPTIONS.map((x) => <option key={x} value={x}>{x}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select className="select cell-select" value={draft.중분류} disabled={!draft.대분류} onChange={(e) => setDraft({ ...draft, 중분류: e.target.value, 소분류: "", 세분류: "" })}>
+                          <option value="">선택</option>
+                          {중Options.map((x) => <option key={x} value={x}>{x}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select className="select cell-select" value={draft.소분류} disabled={!draft.중분류} onChange={(e) => setDraft({ ...draft, 소분류: e.target.value, 세분류: "" })}>
+                          <option value="">선택</option>
+                          {소Options.map((x) => <option key={x} value={x}>{x}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select className="select cell-select" value={draft.세분류} disabled={!draft.소분류} onChange={(e) => {
+                          const name = e.target.value;
+                          // Pick first matching code/sign as default (user can flip sign next)
+                          const first = 세Options.find((x) => x.세분류 === name);
+                          setDraft({ ...draft, 세분류: name, sign: first ? first.sign : draft.sign });
+                        }}>
+                          <option value="">선택</option>
+                          {세Names.map((x) => <option key={x} value={x}>{x}</option>)}
+                        </select>
+                      </td>
+                      <td className="cell-name">{row.항목명}</td>
+                      <td>
+                        <select className="select cell-select-narrow" value={String(draft.sign)} onChange={(e) => setDraft({ ...draft, sign: Number(e.target.value) as 0 | 1 })}>
+                          <option value="0">+</option>
+                          <option value="1">−</option>
+                        </select>
+                      </td>
+                      <td className="cell-source">{formatRowSources(row.sources)}</td>
+                      <td className="cell-actions">
+                        <button type="button" className="button button-tiny" disabled={!validation.entry} onClick={() => saveEdit(row)}>저장</button>
+                        <button type="button" className="ghost-button button-tiny" onClick={cancelEdit}>취소</button>
+                      </td>
+                    </tr>
+                    {validation.error && (
+                      <tr className="row-validation-error">
+                        <td colSpan={9} className="validation-error-cell">⚠️ {validation.error}</td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              }
+
+              return (
+                <tr key={row.rowKey} className={rowClass}>
+                  <td className="cell-code">{row.code === UNCLASSIFIED_ROW_CODE ? "—" : row.code}</td>
+                  <td>{row.대분류}</td>
+                  <td>{row.중분류}</td>
+                  <td>{row.소분류 || (row.isUnclassified ? "미분류" : "")}</td>
+                  <td>{row.세분류}</td>
+                  <td className="cell-name">{row.항목명}{hasOverride && <span className="override-tag">수정됨</span>}</td>
+                  <td className={row.sign === 1 ? "cell-sign cell-sign-minus" : "cell-sign cell-sign-plus"}>
+                    {row.isUnclassified ? "" : row.sign === 1 ? "−" : "+"}
+                  </td>
+                  <td className="cell-source">{formatRowSources(row.sources)}</td>
+                  <td className="cell-actions">
+                    <button type="button" className="ghost-button button-tiny" onClick={() => startEdit(row)}>편집</button>
+                    {hasOverride && <button type="button" className="ghost-button button-tiny" onClick={() => revertOverride(row.항목명)} title="원래대로">↺</button>}
+                  </td>
+                </tr>
+              );
+            })}
+            {pageRows.length === 0 && (
+              <tr><td colSpan={9} style={{ textAlign: "center", color: "#9ca3af", padding: 24 }}>표시할 행이 없습니다.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="classification-table-pager">
+        <button type="button" className="ghost-button" disabled={safePage === 0} onClick={() => setPage(0)}>« 처음</button>
+        <button type="button" className="ghost-button" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>‹ 이전</button>
+        <span className="muted" style={{ fontSize: 13 }}>
+          {safePage + 1} / {totalPages} 페이지
+        </span>
+        <button type="button" className="ghost-button" disabled={safePage >= totalPages - 1} onClick={() => setPage(safePage + 1)}>다음 ›</button>
+        <button type="button" className="ghost-button" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>끝 »</button>
+        <select className="select" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }} style={{ marginLeft: 8 }}>
+          <option value={25}>25행</option>
+          <option value={50}>50행</option>
+          <option value={100}>100행</option>
+          <option value={200}>200행</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
+// Top-level tree view with expand-all / collapse-all controls.
+export function ClassificationTreeView({
+  accountEntries
+}: {
+  accountEntries: SectionAccountDbEntry[];
+}) {
+  const tree = useMemo(() => buildClassificationTree(accountEntries), [accountEntries]);
+  // Default: top-level (대분류) expanded so user sees structure at a glance
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const init = new Set<string>();
+    for (const node of tree) {
+      if (node.kind === "branch") init.add(node.nodeId);
+    }
+    return init;
+  });
+
+  function toggle(nodeId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }
+
+  function collectAllIds(nodes: ClassificationTreeNode[], acc: Set<string>) {
+    for (const n of nodes) {
+      acc.add(n.nodeId);
+      if (n.kind === "branch") collectAllIds(n.children, acc);
+    }
+  }
+
+  function expandAll() {
+    const all = new Set<string>();
+    collectAllIds(tree, all);
+    setExpanded(all);
+  }
+
+  function collapseAll() {
+    setExpanded(new Set());
+  }
+
+  const totalLeaves = tree.reduce((acc, n) => acc + (n.kind === "branch" ? n.leafCount : 1), 0);
+  const totalEncountered = tree.reduce((acc, n) => acc + (n.kind === "branch" ? n.encounteredCount : n.encounteredCount), 0);
+
+  return (
+    <div className="classification-tree">
+      <div className="classification-tree-controls">
+        <span className="soft-badge">세분류 {totalLeaves}</span>
+        <span className="soft-badge">등장 {totalEncountered}</span>
+        <div className="inline-actions" style={{ marginLeft: "auto" }}>
+          <button type="button" className="ghost-button" onClick={expandAll}>전체 펼치기</button>
+          <button type="button" className="ghost-button" onClick={collapseAll}>전체 접기</button>
+        </div>
+      </div>
+      <ul className="tree-root">
+        {tree.map((node) => (
+          <ClassificationTreeNodeView
+            key={node.nodeId}
+            node={node}
+            expanded={expanded}
+            onToggle={toggle}
+            depth={0}
+          />
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function rowsToCapitalParents(rows: CapitalRuleRow[]) {
@@ -1159,6 +2017,14 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const configRulesSnapshotPendingRef = useRef(false);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>(initialDatasets ?? []);
+  const [consistencyResults, setConsistencyResults] = useState<Array<{
+    datasetId: string;
+    companyName: string;
+    quarterLabel: string;
+    diffs: Array<{ accountName: string; oldSignFlag: 0 | 1; newSignFlag: 0 | 1; oldValue: number | null; newValue: number | null; oldCanonicalKey: string; newCanonicalKey: string }>;
+  }> | null>(null);
+  const [consistencyApplying, setConsistencyApplying] = useState(false);
+  const [consistencyMessage, setConsistencyMessage] = useState<string | null>(null);
   const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>(initialTrashedDatasets ?? []);
   const [activeAccountDbSourceKey, setActiveAccountDbSourceKey] = useState<string | null>(null);
   const [activeAccountDbPreview, setActiveAccountDbPreview] = useState<{ datasetId: string; accountName: string } | null>(null);
@@ -2385,6 +3251,92 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }
   }
 
+  function runConsistencyCheck() {
+    const results: Array<{
+      datasetId: string;
+      companyName: string;
+      quarterLabel: string;
+      diffs: Array<{ accountName: string; oldSignFlag: 0 | 1; newSignFlag: 0 | 1; oldValue: number | null; newValue: number | null; oldCanonicalKey: string; newCanonicalKey: string }>;
+    }> = [];
+    for (const dataset of savedDatasets) {
+      const diffs: Array<{ accountName: string; oldSignFlag: 0 | 1; newSignFlag: 0 | 1; oldValue: number | null; newValue: number | null; oldCanonicalKey: string; newCanonicalKey: string }> = [];
+      for (const row of dataset.rawStatementRows) {
+        const diff = diffSnapshotRowAgainstSeed({
+          signFlag: row.signFlag,
+          accountName: row.accountName,
+          canonicalKey: row.canonicalKey,
+          value: row.value
+        });
+        if (diff) {
+          diffs.push({
+            accountName: diff.accountName,
+            oldSignFlag: diff.oldSignFlag,
+            newSignFlag: diff.newSignFlag,
+            oldValue: diff.oldValue,
+            newValue: diff.newValue,
+            oldCanonicalKey: diff.oldCanonicalKey,
+            newCanonicalKey: diff.newCanonicalKey
+          });
+        }
+      }
+      if (diffs.length) {
+        results.push({ datasetId: dataset.id, companyName: dataset.companyName, quarterLabel: dataset.quarterLabel, diffs });
+      }
+    }
+    setConsistencyResults(results);
+    setConsistencyMessage(results.length
+      ? `${results.length}건의 저장 데이터에서 총 ${results.reduce((a, r) => a + r.diffs.length, 0)}개 행이 시드와 다릅니다.`
+      : "모든 저장 데이터가 시드와 일치합니다.");
+  }
+
+  async function applyConsistencyFix() {
+    if (!consistencyResults || !consistencyResults.length) return;
+    setConsistencyApplying(true);
+    try {
+      const datasetIdToDiffs = new Map(consistencyResults.map((r) => [r.datasetId, new Map(r.diffs.map((d) => [d.accountName, d]))]));
+      const changedIds = new Set(consistencyResults.map((r) => r.datasetId));
+      const next = savedDatasets.map((dataset) => {
+        const diffMap = datasetIdToDiffs.get(dataset.id);
+        if (!diffMap) return dataset;
+        const rebuildRows = (rows: SavedQuarterSnapshot["rawStatementRows"]) => rows.map((row) => {
+          const diff = diffMap.get(row.accountName);
+          if (!diff) return row;
+          return {
+            ...row,
+            signFlag: diff.newSignFlag,
+            canonicalKey: diff.newCanonicalKey,
+            value: diff.newValue
+          };
+        });
+        return {
+          ...dataset,
+          rawStatementRows: rebuildRows(dataset.rawStatementRows),
+          adjustedStatementRows: rebuildRows(dataset.adjustedStatementRows)
+        };
+      });
+
+      const changedSnapshots = next.filter((d) => changedIds.has(d.id));
+      const response = await fetch("/api/datasets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshots: changedSnapshots, validatedText: "" })
+      });
+      if (!response.ok) {
+        const errPayload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(errPayload?.error ?? "정정 적용 실패");
+      }
+      const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
+      setSavedDatasets(payload.datasets);
+      const totalFixed = consistencyResults.reduce((a, r) => a + r.diffs.length, 0);
+      setConsistencyMessage(`✅ ${consistencyResults.length}건 데이터, ${totalFixed}개 행을 새 시드 기준으로 정정 + 영구 저장했습니다.`);
+      setConsistencyResults(null);
+    } catch (err) {
+      setConsistencyMessage(`❌ 정정 실패: ${err instanceof Error ? err.message : "알 수 없는 오류"}`);
+    } finally {
+      setConsistencyApplying(false);
+    }
+  }
+
   function updateClassificationCatalog(updater: (prev: ClassificationCatalogGroup[]) => ClassificationCatalogGroup[]) {
     setClassificationCatalog((prev) => {
       setClassificationHistory((history) => [...history, prev]);
@@ -2722,9 +3674,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <button className={`side-nav-item ${activeTab === "config" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("config")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>1-1. 검증 규칙관리</button>
               <button className={`side-nav-item tab-highlighted ${activeTab === "data" ? "active" : ""}`} onClick={() => setActiveTab("data")}>2. 데이터</button>
               <button className={`side-nav-item tab-highlighted ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
-              <button className={`side-nav-item ${activeTab === "classify" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("classify")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>3-1. 분류</button>
-              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("formulas")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>3-2. 수식</button>
-              <button className={`side-nav-item tab-highlighted ${activeTab === "account-db" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("account-db")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>4. 계정 DB</button>
+              <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("formulas")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>3-1. 수식</button>
+              <button className={`side-nav-item tab-highlighted ${activeTab === "account-db" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("account-db")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>4. 분류DB</button>
             </div>
             <div className="side-nav-divider" />
             <div className="side-nav-utils">
@@ -3457,37 +4408,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                 </div>
               </div>
 
+              <div className="notice" style={{ marginBottom: 12 }}>
+                ℹ️ 부호 키워드와 섹션 검증 범위 규칙은 이제 <strong>3-1 분류</strong> 탭의 시드 카탈로그(코드·부호·중분류)가 자동 처리합니다. 여기엔 시드로 처리 안 되는 회사별 특수 케이스만 남겨 두세요.
+              </div>
+
               <div className="two-col">
-                <section className="config-card">
-                  <h3>부호 키워드</h3>
-                  <label className="field">
-                    <span>양수 우선 키워드</span>
-                    <textarea className="textarea" value={logicConfig.plusOverrideKeywords.join("\n")} onChange={(event) => { pushConfigRulesSnapshot(); setLogicConfig((prev) => ({ ...prev, plusOverrideKeywords: parseKeywordList(event.target.value) })); }} />
-                  </label>
-                  <label className="field">
-                    <span>차감 키워드</span>
-                    <textarea className="textarea" value={logicConfig.minusKeywords.join("\n")} onChange={(event) => { pushConfigRulesSnapshot(); setLogicConfig((prev) => ({ ...prev, minusKeywords: parseKeywordList(event.target.value) })); }} />
-                  </label>
-                  <label className="field">
-                    <span>비용 가산 키워드</span>
-                    <textarea className="textarea" value={logicConfig.plusCostKeywords.join("\n")} onChange={(event) => { pushConfigRulesSnapshot(); setLogicConfig((prev) => ({ ...prev, plusCostKeywords: parseKeywordList(event.target.value) })); }} />
-                  </label>
-                </section>
-
-                <section className="config-card">
-                  <h3>섹션 검증 범위</h3>
-                  <div className="list-editor">
-                    {pasteSectionRows.map((row, index) => (
-                      <div className="map-row" key={`paste-map-${index}`}>
-                        <input className="input" value={row.section} placeholder="섹션명" onChange={(event) => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item)); }} />
-                        <input className="input" value={row.parent} placeholder="비교할 합계 계정" onChange={(event) => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, parent: event.target.value } : item)); }} />
-                        <button className="danger-button" onClick={() => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
-                      </div>
-                    ))}
-                    <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setPasteSectionRows((prev) => [...prev, { section: "", parent: "" }]); }}>섹션 규칙 추가</button>
-                  </div>
-                </section>
-
                 <section className="config-card">
                   <h3>자본 구성항목 규칙</h3>
                   <p className="muted" style={{ marginTop: 0 }}>자본 검증에서 어떤 계정을 포함하고, 가산/차감과 상위 항목 관계를 어떻게 볼지 설정합니다.</p>
@@ -3577,8 +4502,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                 <div className="section-title">
                   <div>
                     <span className="section-kicker">분류 기준</span>
-                    <h3>번호 묶음 기준 분류</h3>
-                    <p className="result-meta">원본 계정은 그대로 두고, 같은 번호로 묶인 계정을 대표 항목 아래로 관리합니다. 표를 붙여넣어 한 번에 수정할 수 있습니다.</p>
+                    <h3>5단계 분류 트리 (대 → 중 → 소 → 세 → 항목)</h3>
+                    <p className="result-meta">시드 카탈로그(632 세분류) 기준 트리. 노드를 펼쳐 하위 항목을 확인하고, 실제 OCR 등장 항목은 강조됩니다. 미분류 그룹은 맨 밑에 모입니다.</p>
                     {classificationSaveState === "saved" && (
                       <p className="save-feedback success">분류를 저장했고, 저장된 결과물도 현재 분류 기준으로 다시 계산했습니다.</p>
                     )}
@@ -3593,54 +4518,14 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               </section>
 
               <section className="config-card">
-                <div className="section-title">
-                  <div>
-                    <h3>분류 항목 편집</h3>
-                    <p className="muted">수식에 필요한 대표 항목과 원본 계정 목록만 간단하게 관리합니다. 상위 확정 항목은 시스템 고정값으로 유지하고 여기서 숨깁니다.</p>
-                  </div>
-                </div>
-                <div className="report-table-wrap">
-                  <table className="table report-table formula-table classification-table">
-                    <thead>
-                      <tr>
-                        <th>대표항목</th>
-                        <th>원본 계정 목록</th>
-                        <th>삭제</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {editableClassificationCatalog.map(({ group, index }) => (
-                        <tr key={`classification-group-${group.groupId}-${index}`}>
-                          <td>
-                            <div className="classification-key-cell">
-                              <input className="input" value={group.canonicalKey} onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, canonicalKey: event.target.value } : item))} />
-                              {(() => {
-                                const parentLabels = classificationParentLabels.get(normalizeAccountDictionaryKey(group.canonicalKey.trim())) ?? [];
-                                if (!parentLabels.length) {
-                                  return null;
-                                }
-                                return (
-                                  <p className="classification-parent-note">
-                                    {parentLabels.map((label) => `${label}으로 귀속`).join(", ")}
-                                  </p>
-                                );
-                              })()}
-                            </div>
-                          </td>
-                          <td>
-                            <textarea
-                              className="textarea classification-textarea"
-                              value={getDisplayedClassificationAliases(group).join("\n")}
-                              onChange={(event) => updateClassificationCatalog((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, aliases: parseKeywordList(event.target.value) } : item))}
-                              placeholder="실제 세부 계정이 있으면 줄바꿈으로 입력"
-                            />
-                          </td>
-                          <td><button className="danger-button" onClick={() => updateClassificationCatalog((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}>삭제</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ClassificationTableView
+                  accountEntries={accountDictionaryEntries}
+                  onOverridesChange={(overrides) => {
+                    if (!overrides.size) return;
+                    const nextCatalog = applyAliasOverridesToCatalog(classificationCatalog, overrides);
+                    applyClassificationCatalog(nextCatalog, true);
+                  }}
+                />
               </section>
             </>
           )}
@@ -3685,169 +4570,83 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <section className="overview-card report-hero-card">
                 <div className="section-title">
                   <div>
-                    <span className="section-kicker">4. 계정 DB</span>
-                    <h3>회사별 분기 데이터 기준 계정 DB</h3>
-                    <p className="result-meta">지금까지 저장한 회사별 분기 데이터에서 `유동자산`, `비유동자산`, `유동부채`, `비유동부채`, `매출원가`, `판매비와관리비`, `영업외수익`, `영업외비용`, `기타` 아래 실제 하위 계정만 모아 보여줍니다.</p>
-                  </div>
-                  <div className="inline-actions">
-                    <span className="soft-badge">누적 {accountDictionaryEntries.length}건</span>
-                    <span className="soft-badge">섹션 {accountDictionarySectionGroups.length}개</span>
-                    <span className="soft-badge">분류완료 {classifiedAccountDictionaryCount}건</span>
+                    <span className="section-kicker">4. 분류DB</span>
+                    <h3>전체 분류 + 미분류 처리</h3>
+                    <p className="result-meta">표준 분류 카탈로그를 보고, 새로 들어온 OCR 항목 중 매칭 안 된 것(미분류)을 바로 분류합니다. 상단 `미분류만` 필터로 손볼 항목만 추려서 빠르게 처리 가능. 저장하면 다음 검증부터 자동 적용됩니다.</p>
                   </div>
                 </div>
               </section>
 
-              {!accountDictionaryEntries.length && <div className="notice">아직 표시할 손익 계정 DB가 없습니다. `저장하기`로 회사별 분기 데이터를 먼저 쌓아 주세요.</div>}
+              <section className="config-card">
+                <div className="section-title">
+                  <div>
+                    <h3>저장 데이터 정합성 점검</h3>
+                    <p className="muted" style={{ marginTop: 4 }}>현재 시드 기준과 저장된 과거 데이터의 부호·분류를 비교해서 차이를 보여드립니다. `정정 적용` 누르면 과거 데이터에도 새 기준이 적용됩니다.</p>
+                  </div>
+                  <div className="inline-actions">
+                    <button type="button" className="ghost-button" onClick={runConsistencyCheck} disabled={!savedDatasets.length || consistencyApplying}>
+                      점검 실행
+                    </button>
+                    {consistencyResults && consistencyResults.length > 0 && (
+                      <button type="button" className="button" onClick={applyConsistencyFix} disabled={consistencyApplying}>
+                        {consistencyApplying ? "정정 중..." : `정정 적용 (${consistencyResults.reduce((a, r) => a + r.diffs.length, 0)}건)`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {consistencyMessage && (
+                  <div className="notice" style={{ marginTop: 12 }}>{consistencyMessage}</div>
+                )}
+                {consistencyResults && consistencyResults.length > 0 && (
+                  <div className="report-table-wrap" style={{ marginTop: 12, maxHeight: 320, overflow: "auto" }}>
+                    <table className="table report-table" style={{ fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <th>회사</th>
+                          <th>분기</th>
+                          <th>계정명</th>
+                          <th>이전 분류</th>
+                          <th>새 분류</th>
+                          <th>부호</th>
+                          <th>이전 값</th>
+                          <th>새 값</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {consistencyResults.flatMap((r) =>
+                          r.diffs.map((d, i) => (
+                            <tr key={`${r.datasetId}-${d.accountName}-${i}`}>
+                              <td>{r.companyName}</td>
+                              <td>{r.quarterLabel}</td>
+                              <td>{d.accountName}</td>
+                              <td className="muted">{d.oldCanonicalKey}</td>
+                              <td><strong>{d.newCanonicalKey}</strong></td>
+                              <td>
+                                <span style={{ color: "#9ca3af" }}>{d.oldSignFlag === 1 ? "−" : "+"}</span>
+                                {" → "}
+                                <strong style={{ color: d.newSignFlag === 1 ? "#b91c1c" : "#15803d" }}>{d.newSignFlag === 1 ? "−" : "+"}</strong>
+                              </td>
+                              <td className="muted" style={{ textAlign: "right" }}>{d.oldValue === null ? "-" : formatNumber(d.oldValue)}</td>
+                              <td style={{ textAlign: "right" }}><strong>{d.newValue === null ? "-" : formatNumber(d.newValue)}</strong></td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
 
-              {!!accountDictionaryEntries.length && (
-                <section className={`account-db-layout ${activeAccountDbPreviewDataset ? "with-preview" : ""}`.trim()}>
-                  <section className="config-card">
-                    <div className="section-title">
-                      <div>
-                        <h3>상위 항목별 하위 계정</h3>
-                        <p className="muted">새로 쌓이는 하위 계정을 여기서 바로 대표 분류에 연결합니다. 출처 말풍선에서 회사를 누르면 오른쪽에 수정 반영된 3줄 데이터를 새 양식으로 바로 확인할 수 있습니다.</p>
-                      </div>
-                    </div>
-                    <div className="data-list grouped-data-list">
-                      {accountDictionarySectionGroups.map(([sectionKey, entries]) => (
-                        <article className="data-company-card" key={`account-db-section-${sectionKey}`}>
-                          <div className="data-company-row">
-                            <strong>{sectionKey}</strong>
-                            <span className="soft-badge">{entries.length}건</span>
-                          </div>
-                          <div className="report-table-wrap">
-                            <table className="table report-table formula-table">
-                              <thead>
-                                <tr>
-                                  <th>상위 항목</th>
-                                  <th>하위 계정명</th>
-                                  <th>출처</th>
-                                  <th>현재 분류</th>
-                                  <th>분류 지정</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {entries.map((entry) => {
-                                  const currentClassification = resolveManagedClassification(entry.accountName, managedClassificationLookup);
-                                  const isSourceOpen = activeAccountDbSourceKey === entry.entryKey;
-
-                                  return (
-                                    <tr
-                                      key={`account-db-entry-${entry.entryKey}`}
-                                      ref={(el) => {
-                                        if (el) accountDbRowRefsRef.current.set(entry.entryKey, el);
-                                        else accountDbRowRefsRef.current.delete(entry.entryKey);
-                                      }}
-                                      className={activeAccountDbHighlightKey === entry.entryKey ? "row-highlight" : undefined}
-                                    >
-                                      <td>{entry.sectionKey}</td>
-                                      <td>{entry.accountName}</td>
-                                      <td>
-                                        <div className="account-db-source-wrap" data-account-db-source-wrap="true">
-                                          <button
-                                            className={`account-db-source-button ${isSourceOpen ? "active" : ""}`.trim()}
-                                            type="button"
-                                            onClick={() => {
-                                              setActiveAccountDbSourceKey((prev) => prev === entry.entryKey ? null : entry.entryKey);
-                                              setActiveAccountDbHighlightKey(null);
-                                            }}
-                                            aria-label={`${entry.accountName} 출처 보기`}
-                                          >
-                                            💬
-                                          </button>
-                                          {isSourceOpen && (
-                                            <div className="account-db-source-popover">
-                                              <strong>출처 데이터</strong>
-                                              <p>{entry.accountName}이(가) 들어온 회사/분기입니다.</p>
-                                              <div className="account-db-source-list">
-                                                {entry.sources.map((source) => (
-                                                  <button
-                                                    key={`${entry.entryKey}-${source.datasetId}`}
-                                                    className="account-db-source-link"
-                                                    type="button"
-                                                    onClick={() => openAccountDbSourceDataset(source.datasetId, entry.accountName, entry.entryKey)}
-                                                  >
-                                                    <span>{source.companyName}</span>
-                                                    <strong>{source.quarterLabel}</strong>
-                                                  </button>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td>{currentClassification || <span className="muted">미분류</span>}</td>
-                                      <td>
-                                        <select
-                                          className="select"
-                                          value={currentClassification}
-                                          onChange={(event) => assignAccountDbClassification(entry.accountName, event.target.value)}
-                                        >
-                                          <option value="">미분류</option>
-                                          {managedClassificationOptions.map((option) => (
-                                            <option key={`${entry.entryKey}-${option}`} value={option}>{option}</option>
-                                          ))}
-                                        </select>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-
-                  {activeAccountDbPreviewDataset && (
-                    <aside className="panel account-db-preview-panel">
-                      <div className="section-title">
-                        <div>
-                          <span className="section-kicker">출처 3줄 미리보기</span>
-                          <h3>{activeAccountDbPreviewDataset.companyName}</h3>
-                          <p className="result-meta">{activeAccountDbPreviewDataset.quarterLabel} · {activeAccountDbPreview?.accountName ?? "선택 계정"}</p>
-                        </div>
-                        <div className="inline-actions">
-                          <button className="ghost-button" onClick={() => loadDatasetIntoValidator(activeAccountDbPreviewDataset)}>검증기로 열기</button>
-                          <button className="ghost-button" onClick={() => setActiveAccountDbPreview(null)}>닫기</button>
-                        </div>
-                      </div>
-
-                      <div className="account-db-preview-body">
-                        {groupPreviewRowsBySection(activeAccountDbPreviewDataset.adjustedStatementRows).map(([previewSectionKey, previewRows]) => (
-                          <div className="account-db-preview-section" key={`preview-${activeAccountDbPreviewDataset.id}-${previewSectionKey}`}>
-                            <div className="account-db-preview-section-title">{previewSectionKey}</div>
-                            <table className="table account-db-preview-table">
-                              <thead>
-                                <tr>
-                                  <th>계정명</th>
-                                  <th>수정 반영 값</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {previewRows.map((row, index) => {
-                                  const isHighlighted = row.accountName === activeAccountDbPreview?.accountName;
-                                  return (
-                                    <tr
-                                      key={`preview-row-${activeAccountDbPreviewDataset.id}-${previewSectionKey}-${row.accountName}-${index}`}
-                                      data-highlight={isHighlighted ? "true" : undefined}
-                                      style={isHighlighted ? { backgroundColor: "rgba(234,179,8,0.13)" } : undefined}
-                                    >
-                                      <td>{row.accountName}</td>
-                                      <td className="account-db-preview-value">{row.value === null || row.value === undefined ? "-" : formatNumber(row.value)}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        ))}
-                      </div>
-                    </aside>
-                  )}
-                </section>
-              )}
+              <section className="config-card">
+                <ClassificationTableView
+                  accountEntries={accountDictionaryEntries}
+                  onOverridesChange={(overrides) => {
+                    if (!overrides.size) return;
+                    const nextCatalog = applyAliasOverridesToCatalog(classificationCatalog, overrides);
+                    applyClassificationCatalog(nextCatalog, true);
+                  }}
+                />
+              </section>
             </>
           )}
 

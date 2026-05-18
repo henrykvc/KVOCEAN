@@ -1,4 +1,5 @@
 import type { ReportingModel } from "@/lib/validation/report";
+import { CLASSIFICATION_ENTRIES, findEntryByAlias } from "@/lib/validation/defaults";
 
 /**
  * Exact set of metrics to push to the sheet — amount only (no ratio/growth).
@@ -434,4 +435,125 @@ export function collectDistinctQuarters(reports: ReportingModel[]): Array<{ key:
 export function toSheetTabName(quarterKey: string): string {
   const cleaned = quarterKey.replace(/[\\/?*\[\]:]/g, "_").trim();
   return cleaned.slice(0, 100) || "Sheet";
+}
+
+// ===========================================================================
+// 분류DB 시트 빌더 — 5단계 트리 + 코드 + 부호 + 출처
+// ===========================================================================
+
+export const CLASSIFICATION_DB_TAB_NAME = "분류DB";
+export const CLASSIFICATION_DB_HEADERS = [
+  "코드", "대분류", "중분류", "소분류", "세분류", "항목명", "부호", "출처"
+] as const;
+
+/** Sentinel code for unclassified rows so they sort to the bottom. */
+const UNCLASSIFIED_CODE = 9999999;
+
+export type AccountSource = {
+  companyName: string;
+  quarterLabel: string;
+};
+
+export type AccountOccurrence = {
+  accountName: string;
+  sources: AccountSource[];
+};
+
+/**
+ * Convert "YYYY-MM-DD" → "YYMM" (e.g. "2025-12-31" → "2512").
+ * Falls back to the trimmed original when unparseable.
+ */
+function formatQuarterYYMM(label: string): string {
+  const trimmed = (label ?? "").trim();
+  const match = /^(\d{4})-(\d{2})/.exec(trimmed);
+  if (!match) return trimmed;
+  return `${match[1].slice(2)}${match[2]}`;
+}
+
+function formatSourceCell(sources: AccountSource[]): string {
+  return sources
+    .map((s) => `${s.companyName}${formatQuarterYYMM(s.quarterLabel)}`)
+    .join(", ");
+}
+
+function normalizeLookup(s: string): string {
+  return s.replace(/\s+/g, "").toLowerCase();
+}
+
+/**
+ * Build the 분류DB tab payload. One row per seed alias (so every standard
+ * classification is visible) plus extra rows for OCR accounts that don't match
+ * any seed alias (사용자가 시트에서 직접 분류해 줄 미분류 영역).
+ */
+export function buildClassificationDbTab(
+  accountOccurrences: AccountOccurrence[]
+): { tabName: string; headers: string[]; rows: SheetCellValue[][] } {
+  // Group occurrences by normalized account name for lookup.
+  const occurrencesByName = new Map<string, AccountSource[]>();
+  for (const occ of accountOccurrences) {
+    const key = normalizeLookup(occ.accountName);
+    if (!key) continue;
+    const existing = occurrencesByName.get(key) ?? [];
+    existing.push(...occ.sources);
+    occurrencesByName.set(key, existing);
+  }
+
+  const matchedAliasKeys = new Set<string>();
+  const rows: SheetCellValue[][] = [];
+
+  // Seed-driven rows
+  for (const entry of CLASSIFICATION_ENTRIES) {
+    const signLabel = entry.sign === 1 ? "−" : "+";
+    const aliases = entry.aliases.length ? entry.aliases : [entry.세분류];
+    for (const alias of aliases) {
+      const aliasKey = normalizeLookup(alias);
+      matchedAliasKeys.add(aliasKey);
+      const sources = occurrencesByName.get(aliasKey) ?? [];
+      rows.push([
+        entry.code,
+        entry.대분류,
+        entry.중분류,
+        entry.소분류,
+        entry.세분류,
+        alias,
+        signLabel,
+        formatSourceCell(sources)
+      ]);
+    }
+  }
+
+  // 미분류 — OCR 계정명 중 시드 어느 alias와도 매칭 안 된 것
+  for (const [normKey, sources] of occurrencesByName.entries()) {
+    if (matchedAliasKeys.has(normKey)) continue;
+    const accountName = sources[0]
+      ? accountOccurrences.find((o) => normalizeLookup(o.accountName) === normKey)?.accountName ?? ""
+      : "";
+    rows.push([
+      UNCLASSIFIED_CODE,
+      "", "", "미분류", "", accountName, "",
+      formatSourceCell(sources)
+    ]);
+  }
+
+  // Sort: 코드 ASC (미분류는 9999999로 자동 맨 밑), then 항목명
+  rows.sort((a, b) => {
+    const codeA = typeof a[0] === "number" ? a[0] : 0;
+    const codeB = typeof b[0] === "number" ? b[0] : 0;
+    if (codeA !== codeB) return codeA - codeB;
+    return String(a[5] ?? "").localeCompare(String(b[5] ?? ""), "ko");
+  });
+
+  return {
+    tabName: CLASSIFICATION_DB_TAB_NAME,
+    headers: [...CLASSIFICATION_DB_HEADERS],
+    rows
+  };
+}
+
+/**
+ * Mirror helper: lookup which seed entry an account would land in, if any.
+ * Re-exported so callers don't need to import findEntryByAlias directly.
+ */
+export function lookupClassification(accountName: string) {
+  return findEntryByAlias(accountName);
 }

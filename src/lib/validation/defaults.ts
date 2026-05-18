@@ -1,4 +1,64 @@
+import { CLASSIFICATION_SEED, type ClassificationSeedEntry } from "./classification-seed";
+
 export type SignCode = 0 | 1 | 2;
+
+export type ClassificationEntry = ClassificationSeedEntry;
+export const CLASSIFICATION_ENTRIES: ClassificationEntry[] = CLASSIFICATION_SEED;
+
+function normalizeLookupKey(value: string): string {
+  return value.replace(/\s+/g, "").toLowerCase();
+}
+
+const SEED_ALIAS_LOOKUP: Map<string, ClassificationEntry> = (() => {
+  const map = new Map<string, ClassificationEntry>();
+  for (const entry of CLASSIFICATION_ENTRIES) {
+    const key = normalizeLookupKey(entry.세분류);
+    if (key && !map.has(key)) map.set(key, entry);
+    for (const alias of entry.aliases) {
+      const aliasKey = normalizeLookupKey(alias);
+      if (aliasKey && !map.has(aliasKey)) map.set(aliasKey, entry);
+    }
+  }
+  return map;
+})();
+
+const SEED_CODE_LOOKUP: Map<number, ClassificationEntry> = (() => {
+  const map = new Map<number, ClassificationEntry>();
+  for (const entry of CLASSIFICATION_ENTRIES) {
+    map.set(entry.code, entry);
+  }
+  return map;
+})();
+
+export function findEntryByAlias(alias: string): ClassificationEntry | null {
+  if (!alias) return null;
+  return SEED_ALIAS_LOOKUP.get(normalizeLookupKey(alias)) ?? null;
+}
+
+export function findEntryByCode(code: number): ClassificationEntry | null {
+  return SEED_CODE_LOOKUP.get(code) ?? null;
+}
+
+/**
+ * Find all seed entries whose code shares the given prefix.
+ * Used for summing groups by level — e.g. all 매출채권 (+/−) share prefix 1001.
+ * - prefix 1001 → matches 1001000, 1001100
+ * - prefix 100 → matches all 당좌자산 codes (1000000..1004xxx)
+ */
+export function findEntriesByCodePrefix(codePrefix: number): ClassificationEntry[] {
+  const prefixStr = String(codePrefix);
+  return CLASSIFICATION_ENTRIES.filter((entry) => String(entry.code).startsWith(prefixStr));
+}
+
+/** Find seed entries by their hierarchical name (대/중/소). */
+export function findEntriesByLayer(
+  layer: "대분류" | "중분류" | "소분류" | "세분류",
+  name: string
+): ClassificationEntry[] {
+  const target = name.trim();
+  if (!target) return [];
+  return CLASSIFICATION_ENTRIES.filter((entry) => entry[layer]?.trim() === target);
+}
 
 export type LogicConfig = {
   plusOverrideKeywords: string[];
@@ -115,28 +175,6 @@ export const RESULT_ORDER = [
   "당기순이익", "당기순손실"
 ] as const;
 
-export const ACCOUNT_ALIASES: Record<string, string[]> = {
-  이익잉여금: ["이익잉여금", "미처분이익잉여금", "이익잉여금결손금"],
-  결손금: ["결손금", "미처리결손금"],
-  영업이익: ["영업이익", "영업이익(손실)", "영업손익", "영업이익(손익)", "영업이익또는손실", "영업이익(영업손실)", "영업손실"],
-  법인세차감전이익: [
-    "법인세차감전이익",
-    "법인세차감전순이익",
-    "법인세비용차감전순이익",
-    "세전계속사업이익",
-    "법인세차감전이익(손실)",
-    "법인세비용차감전순이익(손실)",
-    "법인세비용차감전계속사업이익",
-    "법인세차감전손실",
-    "법인세차감전순손실",
-    "법인세비용차감전순손실"
-  ],
-  당기순이익: ["당기순이익", "당기순이익(손실)", "당기순손익", "연결당기순이익", "당기순이익(당기순손실)", "당기순손실"],
-  판매비와관리비: ["판매비와관리비", "판관비", "판매관리비", "판매비및관리비", "판매비와관리비합계"],
-  영업외수익: ["영업외수익", "기타수익", "영업외수익합계", "금융수익"],
-  영업외비용: ["영업외비용", "기타비용", "영업외비용합계", "금융비용"],
-  법인세등: ["법인세등", "법인세 등", "법인세비용", "법인세비용(수익)", "법인세수익", "계속사업법인세비용", "당기법인세비용", "이연법인세비용", "법인세환급"]
-};
 
 export const LOSS_ACCOUNTS = new Set([
   "영업손실",
@@ -201,7 +239,12 @@ export const DEFAULT_LOGIC_CONFIG: LogicConfig = {
 
 export const DEFAULT_COMPANY_CONFIGS: CompanyConfigs = {};
 
-export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = {
+/**
+ * Legacy hand-curated parent groups — kept as starting point.
+ * Seed-derived 세분류 groups are merged in by `buildDefaultClassificationGroups()` below,
+ * which is what actually populates DEFAULT_CLASSIFICATION_GROUPS.
+ */
+const LEGACY_PARENT_GROUPS: ClassificationGroups = {
   유동자산: ["유동자산"],
   당좌자산: [
     "당좌자산",
@@ -228,6 +271,12 @@ export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = {
   영업외비용: ["영업외비용"],
   영업이익: ["영업이익", "영업이익(손실)"],
   계속사업당기순이익: ["당기순이익", "당기순손실", "당기순이익(손실)", "당기순손익", "계속사업당기순이익", "계속사업당기순손실", "계속사업당기순이익(손실)"],
+  // Absorbed from legacy ACCOUNT_ALIASES so all matching goes through a single layer.
+  당기순이익: ["당기순이익", "당기순이익(손실)", "당기순손익", "연결당기순이익", "당기순이익(당기순손실)", "당기순손실"],
+  법인세차감전이익: ["법인세차감전이익", "법인세차감전순이익", "법인세비용차감전순이익", "세전계속사업이익", "법인세차감전이익(손실)", "법인세비용차감전순이익(손실)", "법인세비용차감전계속사업이익", "법인세차감전손실", "법인세차감전순손실", "법인세비용차감전순손실"],
+  판매비와관리비: ["판매비와관리비", "판관비", "판매관리비", "판매비및관리비", "판매비와관리비합계"],
+  영업외수익: ["영업외수익", "기타수익", "영업외수익합계", "금융수익"],
+  법인세등: ["법인세등", "법인세 등", "법인세비용", "법인세비용(수익)", "법인세수익", "계속사업법인세비용", "당기법인세비용", "이연법인세비용", "법인세환급"],
   차입금: [
     "차입금",
     "차입금",
@@ -341,16 +390,62 @@ export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = {
   "감가상각비계": ["감가상각비계", "감가상각비", "무형자산상각비", "무형고정자산상각", "무형자산상각", "사용권자산상각비"]
 };
 
+/**
+ * Build the runtime DEFAULT_CLASSIFICATION_GROUPS by merging the seed catalog (632 entries)
+ * with hand-curated parent groups (SYSTEM_FIXED + MANAGED roll-ups).
+ *
+ * Resulting structure: { canonicalKey: aliases[] } where canonicalKey is the 세분류 name
+ * (from seed) or a hand-curated parent name (자산, 차입금 등).
+ */
+function buildDefaultClassificationGroups(): ClassificationGroups {
+  const groups: ClassificationGroups = {};
+
+  for (const entry of CLASSIFICATION_ENTRIES) {
+    const key = entry.세분류.trim();
+    if (!key) continue;
+    const merged = new Set<string>([key, ...entry.aliases.map((a) => a.trim()).filter(Boolean)]);
+    if (groups[key]) {
+      groups[key].forEach((alias) => merged.add(alias));
+    }
+    groups[key] = Array.from(merged);
+  }
+
+  for (const [key, aliases] of Object.entries(LEGACY_PARENT_GROUPS)) {
+    const existing = groups[key] ?? [];
+    const merged = new Set<string>([key, ...existing, ...aliases]);
+    groups[key] = Array.from(merged);
+  }
+
+  return groups;
+}
+
+export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = buildDefaultClassificationGroups();
+
 export function classificationGroupsToCatalog(groups: ClassificationGroups): ClassificationCatalogGroup[] {
-  return Object.entries(groups).map(([canonicalKey, aliases], index) => ({
-    groupId: `${String(index + 1).padStart(4, "0")}000`,
-    majorCategory: "",
-    middleCategory: "",
-    smallCategory: "",
-    sign: "",
-    canonicalKey,
-    aliases: Array.from(new Set(aliases.filter((alias) => alias.trim() && alias.trim() !== canonicalKey.trim())))
-  }));
+  return Object.entries(groups).map(([canonicalKey, aliases], index) => {
+    // Try to enrich with seed metadata: look up by canonicalKey itself, then by any alias.
+    let seed = findEntryByAlias(canonicalKey);
+    if (!seed) {
+      for (const alias of aliases) {
+        const hit = findEntryByAlias(alias);
+        if (hit) { seed = hit; break; }
+      }
+    }
+
+    const groupId = seed
+      ? String(seed.code).padStart(7, "0")
+      : `${String(index + 1).padStart(4, "0")}000`;
+
+    return {
+      groupId,
+      majorCategory: seed?.대분류 ?? "",
+      middleCategory: seed?.중분류 ?? "",
+      smallCategory: seed?.소분류 ?? "",
+      sign: seed ? (seed.sign === 1 ? "−" : "+") : "",
+      canonicalKey,
+      aliases: Array.from(new Set(aliases.filter((alias) => alias.trim() && alias.trim() !== canonicalKey.trim())))
+    };
+  });
 }
 
 export const DEFAULT_CLASSIFICATION_CATALOG: ClassificationCatalogGroup[] = classificationGroupsToCatalog(DEFAULT_CLASSIFICATION_GROUPS);
@@ -493,3 +588,77 @@ function normalizeCashHierarchyCatalog(catalog: ClassificationCatalogGroup[]) {
 }
 
 export const COMPANY_LABELS = ["회사명", "회사", "법인명", "company", "Company"];
+
+/**
+ * Compare a stored snapshot row's sign/canonicalKey against the seed catalog.
+ * Returns the discrepancy info if seed says something different.
+ */
+export type SnapshotSignDiff = {
+  accountName: string;
+  oldSignFlag: 0 | 1;
+  newSignFlag: 0 | 1;
+  oldCanonicalKey: string;
+  newCanonicalKey: string;
+  oldValue: number | null;
+  newValue: number | null;
+};
+
+export function diffSnapshotRowAgainstSeed(row: {
+  signFlag: 0 | 1;
+  accountName: string;
+  canonicalKey: string;
+  value: number | null;
+}): SnapshotSignDiff | null {
+  const seed = findEntryByAlias(row.accountName);
+  if (!seed) return null; // unclassified — leave as-is
+  const newSign = seed.sign as 0 | 1;
+  const newCanonical = seed.세분류;
+  if (newSign === row.signFlag && newCanonical === row.canonicalKey) return null;
+  // Reconstruct absolute value: stored value is sign-applied; undo and reapply
+  const abs = row.signFlag === 1 ? -(row.value ?? 0) : (row.value ?? 0);
+  const newValue = newSign === 1 ? -abs : abs;
+  return {
+    accountName: row.accountName,
+    oldSignFlag: row.signFlag,
+    newSignFlag: newSign,
+    oldCanonicalKey: row.canonicalKey,
+    newCanonicalKey: newCanonical,
+    oldValue: row.value,
+    newValue: row.value === null ? null : newValue
+  };
+}
+
+/**
+ * Apply per-alias overrides to a classification catalog.
+ * For each (alias, targetCode) pair: remove the alias from its current group
+ * and add it to the group whose groupId matches the target code.
+ * Returns a new catalog (does not mutate input).
+ */
+export function applyAliasOverridesToCatalog(
+  catalog: ClassificationCatalogGroup[],
+  overrides: Map<string, { code: number }>
+): ClassificationCatalogGroup[] {
+  if (!overrides.size) return catalog;
+
+  const next = catalog.map((g) => ({ ...g, aliases: g.aliases.slice() }));
+
+  for (const [aliasName, { code }] of overrides.entries()) {
+    const trimmed = aliasName.trim();
+    if (!trimmed) continue;
+    const norm = (s: string) => s.trim();
+
+    for (const group of next) {
+      group.aliases = group.aliases.filter((a) => norm(a) !== trimmed);
+    }
+
+    const targetGroupId = String(code).padStart(7, "0");
+    const target = next.find((g) => g.groupId === targetGroupId);
+    if (target) {
+      if (!target.aliases.some((a) => norm(a) === trimmed)) {
+        target.aliases.push(trimmed);
+      }
+    }
+  }
+
+  return next;
+}

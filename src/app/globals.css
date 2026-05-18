@@ -1580,6 +1580,353 @@ a {
   min-height: 120px;
 }
 
+/* ---- 5단계 분류 트리 ---- */
+.classification-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.classification-tree-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  border: 1px solid #e3e6ec;
+}
+
+.classification-tree .tree-root,
+.classification-tree .tree-children,
+.classification-tree .tree-leaf-aliases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.classification-tree .tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.classification-tree .tree-row:hover {
+  background: #f1f4f9;
+}
+
+.classification-tree .tree-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  width: 18px;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.classification-tree .tree-toggle:hover { color: #111827; }
+
+.classification-tree .tree-level-tag {
+  display: inline-flex;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+  color: #fff;
+  background: #6b7280;
+  flex-shrink: 0;
+}
+.classification-tree .tree-level-대분류 { background: #1f2937; }
+.classification-tree .tree-level-중분류 { background: #2563eb; }
+.classification-tree .tree-level-소분류 { background: #0891b2; }
+
+.classification-tree .tree-branch-name {
+  font-weight: 600;
+  color: #111827;
+}
+
+.classification-tree .tree-branch-unclassified > .tree-row {
+  background: #fff7ed;
+}
+.classification-tree .tree-branch-unclassified .tree-level-tag {
+  background: #ea580c;
+}
+
+.classification-tree .tree-leaf .tree-row {
+  background: #fcfcfd;
+  border-left: 2px solid #e3e6ec;
+}
+
+.classification-tree .tree-leaf-unclassified .tree-row {
+  background: #fff7ed;
+  border-left-color: #ea580c;
+}
+
+.classification-tree .tree-code {
+  font-family: ui-monospace, "SF Mono", Monaco, monospace;
+  font-size: 11px;
+  color: #6b7280;
+  flex-shrink: 0;
+  min-width: 54px;
+}
+
+.classification-tree .tree-leaf-name {
+  font-weight: 500;
+  color: #111827;
+}
+
+.classification-tree .tree-sign {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.classification-tree .tree-sign-plus { background: #dcfce7; color: #15803d; }
+.classification-tree .tree-sign-minus { background: #fee2e2; color: #b91c1c; }
+
+.classification-tree .tree-count-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  background: #eef2f7;
+  color: #4b5563;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.classification-tree .tree-alias {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.classification-tree .tree-alias-seen {
+  color: #111827;
+  background: #f0f9ff;
+  border-radius: 4px;
+}
+.classification-tree .tree-alias-dot {
+  color: #9ca3af;
+  font-size: 10px;
+}
+.classification-tree .tree-alias-name {
+  font-weight: 500;
+}
+.classification-tree .tree-alias-count {
+  color: #2563eb;
+  font-weight: 700;
+  font-size: 11px;
+}
+.classification-tree .tree-alias-sources {
+  color: #6b7280;
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ---- 분류DB 평탄 표 (엑셀 양식) ---- */
+.classification-table-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.classification-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  border: 1px solid #e3e6ec;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+}
+.filter-chip:hover { background: #f3f4f6; }
+.filter-chip input { margin: 0; cursor: pointer; }
+
+.classification-table-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid #e3e6ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.classification-flat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.classification-flat-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f3f4f6;
+  border-bottom: 1px solid #d1d5db;
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 700;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.classification-flat-table thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.classification-flat-table thead th.sortable:hover { background: #e5e7eb; }
+
+.classification-flat-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #f1f3f7;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.classification-flat-table tbody tr:hover { background: #f9fafb; }
+
+.classification-flat-table tr.row-encountered { background: #f0f9ff; }
+.classification-flat-table tr.row-encountered:hover { background: #e0f2fe; }
+.classification-flat-table tr.row-unclassified { background: #fff7ed; }
+.classification-flat-table tr.row-unclassified:hover { background: #ffedd5; }
+
+.classification-flat-table .cell-code {
+  font-family: ui-monospace, "SF Mono", Monaco, monospace;
+  color: #6b7280;
+  font-size: 11.5px;
+}
+
+.classification-flat-table .cell-name {
+  font-weight: 500;
+  color: #111827;
+}
+
+.classification-flat-table .cell-sign {
+  text-align: center;
+  font-weight: 800;
+  font-size: 14px;
+}
+.classification-flat-table .cell-sign-plus { color: #15803d; }
+.classification-flat-table .cell-sign-minus { color: #b91c1c; }
+
+.classification-flat-table .cell-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.classification-flat-table .cell-source {
+  color: #6b7280;
+  font-size: 11.5px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.classification-table-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  border: 1px solid #e3e6ec;
+}
+.classification-table-pager .ghost-button { padding: 4px 10px; font-size: 12px; }
+.classification-table-pager .select { padding: 4px 8px; font-size: 12px; }
+
+.classification-flat-table .cell-select {
+  width: 100%;
+  min-width: 100px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid #c4c9d3;
+  border-radius: 4px;
+  background: #fff;
+}
+.classification-flat-table .cell-select:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+}
+.classification-flat-table .cell-select-narrow {
+  width: auto;
+  min-width: 50px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid #c4c9d3;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.classification-flat-table .cell-actions {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+.classification-flat-table .button-tiny {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.classification-flat-table .row-editing {
+  background: #fef9c3 !important;
+  outline: 2px solid #facc15;
+  outline-offset: -1px;
+}
+
+.classification-flat-table .row-override {
+  background: #ecfdf5 !important;
+}
+.classification-flat-table .override-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #047857;
+  background: #d1fae5;
+  border-radius: 999px;
+}
+
+.classification-flat-table .row-validation-error .validation-error-cell {
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-top: none;
+}
+
 .account-db-source-wrap {
   position: relative;
   display: inline-flex;
