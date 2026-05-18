@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   CLASSIFICATION_ENTRIES,
   DEFAULT_CLASSIFICATION_CATALOG,
@@ -12,7 +12,6 @@ import {
   applyAliasOverridesToCatalog,
   classificationCatalogToGroups,
   classificationGroupsToCatalog,
-  diffSnapshotRowAgainstSeed,
   findEntryByAlias,
   isSystemFixedClassificationKey,
   mergeDefaultClassificationCatalog,
@@ -948,9 +947,7 @@ const UNCLASSIFIED_ROW_CODE = 9999999;
 function buildClassificationTableRows(
   accountEntries: SectionAccountDbEntry[]
 ): ClassificationTableRow[] {
-  const rows: ClassificationTableRow[] = [];
-
-  // Occurrences keyed by normalized account name
+  // Build occurrence lookup from current saved data.
   const occByName = new Map<string, { occurrences: number; sources: Array<{ companyName: string; quarterLabel: string }> }>();
   for (const acct of accountEntries) {
     const key = normalizeAliasKey(acct.accountName);
@@ -969,29 +966,21 @@ function buildClassificationTableRows(
     }
   }
 
+  // Use cached seed rows — only attach live occurrences here.
+  const seedRows = getSeedTableRows();
   const matchedAliasKeys = new Set<string>();
-
-  // Seed rows
-  for (const entry of CLASSIFICATION_ENTRIES) {
-    const aliasList = entry.aliases.length ? entry.aliases : [entry.세분류];
-    for (const alias of aliasList) {
-      const aliasKey = normalizeAliasKey(alias);
-      matchedAliasKeys.add(aliasKey);
-      const occ = occByName.get(aliasKey);
-      rows.push({
-        rowKey: `seed::${entry.code}::${aliasKey}`,
-        code: entry.code,
-        대분류: entry.대분류,
-        중분류: entry.중분류,
-        소분류: entry.소분류,
-        세분류: entry.세분류,
-        항목명: alias,
-        sign: entry.sign,
-        occurrences: occ?.occurrences ?? 0,
-        sources: occ?.sources ?? [],
-        isUnclassified: false
-      });
-    }
+  const rows: ClassificationTableRow[] = new Array(seedRows.length);
+  for (let i = 0; i < seedRows.length; i++) {
+    const seed = seedRows[i];
+    const aliasKey = normalizeAliasKey(seed.항목명);
+    matchedAliasKeys.add(aliasKey);
+    const occ = occByName.get(aliasKey);
+    rows[i] = {
+      ...seed,
+      occurrences: occ?.occurrences ?? 0,
+      sources: occ?.sources ?? [],
+      isUnclassified: false
+    };
   }
 
   // 미분류 — OCR 항목 중 매칭 안 된 것
@@ -1045,6 +1034,39 @@ type ClassificationOptions = {
   소분류_BY_대중: Map<string, string[]>;
   세분류_BY_대중소: Map<string, Array<{ 세분류: string; code: number; sign: 0 | 1 }>>;
 };
+
+// Build once at module load — seed data is immutable per build.
+let _cachedOptions: ClassificationOptions | null = null;
+function getClassificationOptions(): ClassificationOptions {
+  if (!_cachedOptions) _cachedOptions = buildClassificationOptions();
+  return _cachedOptions;
+}
+
+// Same idea for the seed-only portion of table rows (everything except live OCR occurrences).
+// We cache the seed rows and only attach occurrences per render.
+type SeedTableRow = Omit<ClassificationTableRow, "occurrences" | "sources" | "isUnclassified">;
+let _cachedSeedRows: SeedTableRow[] | null = null;
+function getSeedTableRows(): SeedTableRow[] {
+  if (_cachedSeedRows) return _cachedSeedRows;
+  const rows: SeedTableRow[] = [];
+  for (const entry of CLASSIFICATION_ENTRIES) {
+    const aliasList = entry.aliases.length ? entry.aliases : [entry.세분류];
+    for (const alias of aliasList) {
+      rows.push({
+        rowKey: `seed::${entry.code}::${normalizeAliasKey(alias)}`,
+        code: entry.code,
+        대분류: entry.대분류,
+        중분류: entry.중분류,
+        소분류: entry.소분류,
+        세분류: entry.세분류,
+        항목명: alias,
+        sign: entry.sign
+      });
+    }
+  }
+  _cachedSeedRows = rows;
+  return rows;
+}
 
 function buildClassificationOptions(): ClassificationOptions {
   const 대Set = new Set<string>();
@@ -1130,7 +1152,7 @@ export function ClassificationTableView({
   initialFilters?: { showOnlyUnclassified?: boolean; showOnlyEncountered?: boolean };
 }) {
   const baseRows = useMemo(() => buildClassificationTableRows(accountEntries), [accountEntries]);
-  const options = useMemo(() => buildClassificationOptions(), []);
+  const options = useMemo(() => getClassificationOptions(), []);
   const [overrides, setOverrides] = useState<Map<string, AliasOverride>>(new Map());
 
   // Apply overrides on top of baseRows
@@ -1202,11 +1224,16 @@ export function ClassificationTableView({
     onOverridesChange?.(next);
   }
 
+  // Defer heavy filtering until typing pauses so the input stays responsive.
+  const deferredSearch = useDeferredValue(search);
+  const deferredShowOnlyUnclassified = useDeferredValue(showOnlyUnclassified);
+  const deferredShowOnlyEncountered = useDeferredValue(showOnlyEncountered);
+
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     return allRows.filter((row) => {
-      if (showOnlyUnclassified && !row.isUnclassified) return false;
-      if (showOnlyEncountered && row.occurrences === 0) return false;
+      if (deferredShowOnlyUnclassified && !row.isUnclassified) return false;
+      if (deferredShowOnlyEncountered && row.occurrences === 0) return false;
       if (!q) return true;
       return (
         String(row.code).includes(q)
@@ -1217,7 +1244,7 @@ export function ClassificationTableView({
         || row.항목명.toLowerCase().includes(q)
       );
     });
-  }, [allRows, search, showOnlyUnclassified, showOnlyEncountered]);
+  }, [allRows, deferredSearch, deferredShowOnlyUnclassified, deferredShowOnlyEncountered]);
 
   const sorted = useMemo(() => {
     return filtered.slice().sort((a, b) => compareRows(a, b, sortField, sortDir));
@@ -2021,9 +2048,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     datasetId: string;
     companyName: string;
     quarterLabel: string;
-    diffs: Array<{ accountName: string; oldSignFlag: 0 | 1; newSignFlag: 0 | 1; oldValue: number | null; newValue: number | null; oldCanonicalKey: string; newCanonicalKey: string }>;
+    totalChecks: number;
+    failedChecks: Array<{ rule: string; parent: string; expected: number; actual: number; diff: number }>;
   }> | null>(null);
-  const [consistencyApplying, setConsistencyApplying] = useState(false);
+  const [consistencyChecking, setConsistencyChecking] = useState(false);
   const [consistencyMessage, setConsistencyMessage] = useState<string | null>(null);
   const [trashedDatasets, setTrashedDatasets] = useState<SavedQuarterSnapshot[]>(initialTrashedDatasets ?? []);
   const [activeAccountDbSourceKey, setActiveAccountDbSourceKey] = useState<string | null>(null);
@@ -3252,88 +3280,58 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   }
 
   function runConsistencyCheck() {
-    const results: Array<{
-      datasetId: string;
-      companyName: string;
-      quarterLabel: string;
-      diffs: Array<{ accountName: string; oldSignFlag: 0 | 1; newSignFlag: 0 | 1; oldValue: number | null; newValue: number | null; oldCanonicalKey: string; newCanonicalKey: string }>;
-    }> = [];
-    for (const dataset of savedDatasets) {
-      const diffs: Array<{ accountName: string; oldSignFlag: 0 | 1; newSignFlag: 0 | 1; oldValue: number | null; newValue: number | null; oldCanonicalKey: string; newCanonicalKey: string }> = [];
-      for (const row of dataset.rawStatementRows) {
-        const diff = diffSnapshotRowAgainstSeed({
-          signFlag: row.signFlag,
-          accountName: row.accountName,
-          canonicalKey: row.canonicalKey,
-          value: row.value
+    setConsistencyChecking(true);
+    try {
+      const results: Array<{
+        datasetId: string;
+        companyName: string;
+        quarterLabel: string;
+        totalChecks: number;
+        failedChecks: Array<{ rule: string; parent: string; expected: number; actual: number; diff: number }>;
+      }> = [];
+
+      for (const dataset of savedDatasets) {
+        const result = runValidation({
+          pastedText: dataset.source.pastedText,
+          selectedCompany: dataset.companyName,
+          tolerance: dataset.source.tolerance ?? 0,
+          logicConfig,
+          companyConfigs,
+          pasteEdits: dataset.source.pasteEdits ?? {},
+          nameEdits: dataset.source.nameEdits ?? {},
+          sessionSignFixes: dataset.source.sessionSignFixes ?? {}
         });
-        if (diff) {
-          diffs.push({
-            accountName: diff.accountName,
-            oldSignFlag: diff.oldSignFlag,
-            newSignFlag: diff.newSignFlag,
-            oldValue: diff.oldValue,
-            newValue: diff.newValue,
-            oldCanonicalKey: diff.oldCanonicalKey,
-            newCanonicalKey: diff.newCanonicalKey
+
+        const failed: Array<{ rule: string; parent: string; expected: number; actual: number; diff: number }> = [];
+        for (const r of result.allResults) {
+          if (!r.passed) {
+            failed.push({
+              rule: r.rule,
+              parent: r.parent,
+              expected: r.parent_val,
+              actual: r.computed,
+              diff: r.diff
+            });
+          }
+        }
+        if (failed.length) {
+          results.push({
+            datasetId: dataset.id,
+            companyName: dataset.companyName,
+            quarterLabel: dataset.quarterLabel,
+            totalChecks: result.stats.total,
+            failedChecks: failed
           });
         }
       }
-      if (diffs.length) {
-        results.push({ datasetId: dataset.id, companyName: dataset.companyName, quarterLabel: dataset.quarterLabel, diffs });
-      }
-    }
-    setConsistencyResults(results);
-    setConsistencyMessage(results.length
-      ? `${results.length}건의 저장 데이터에서 총 ${results.reduce((a, r) => a + r.diffs.length, 0)}개 행이 시드와 다릅니다.`
-      : "모든 저장 데이터가 시드와 일치합니다.");
-  }
 
-  async function applyConsistencyFix() {
-    if (!consistencyResults || !consistencyResults.length) return;
-    setConsistencyApplying(true);
-    try {
-      const datasetIdToDiffs = new Map(consistencyResults.map((r) => [r.datasetId, new Map(r.diffs.map((d) => [d.accountName, d]))]));
-      const changedIds = new Set(consistencyResults.map((r) => r.datasetId));
-      const next = savedDatasets.map((dataset) => {
-        const diffMap = datasetIdToDiffs.get(dataset.id);
-        if (!diffMap) return dataset;
-        const rebuildRows = (rows: SavedQuarterSnapshot["rawStatementRows"]) => rows.map((row) => {
-          const diff = diffMap.get(row.accountName);
-          if (!diff) return row;
-          return {
-            ...row,
-            signFlag: diff.newSignFlag,
-            canonicalKey: diff.newCanonicalKey,
-            value: diff.newValue
-          };
-        });
-        return {
-          ...dataset,
-          rawStatementRows: rebuildRows(dataset.rawStatementRows),
-          adjustedStatementRows: rebuildRows(dataset.adjustedStatementRows)
-        };
-      });
-
-      const changedSnapshots = next.filter((d) => changedIds.has(d.id));
-      const response = await fetch("/api/datasets", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshots: changedSnapshots, validatedText: "" })
-      });
-      if (!response.ok) {
-        const errPayload = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(errPayload?.error ?? "정정 적용 실패");
-      }
-      const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
-      setSavedDatasets(payload.datasets);
-      const totalFixed = consistencyResults.reduce((a, r) => a + r.diffs.length, 0);
-      setConsistencyMessage(`✅ ${consistencyResults.length}건 데이터, ${totalFixed}개 행을 새 시드 기준으로 정정 + 영구 저장했습니다.`);
-      setConsistencyResults(null);
-    } catch (err) {
-      setConsistencyMessage(`❌ 정정 실패: ${err instanceof Error ? err.message : "알 수 없는 오류"}`);
+      setConsistencyResults(results);
+      const totalFailed = results.reduce((a, r) => a + r.failedChecks.length, 0);
+      setConsistencyMessage(results.length
+        ? `⚠️ ${results.length}건 데이터에서 ${totalFailed}개 검증 항목이 지금 기준으로 통과하지 못합니다. 아래 목록의 회사·분기를 검증기로 다시 불러와 확인해 주세요.`
+        : "✅ 모든 저장 데이터가 현재 기준으로 검증 통과합니다.");
     } finally {
-      setConsistencyApplying(false);
+      setConsistencyChecking(false);
     }
   }
 
@@ -4581,53 +4579,51 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                 <div className="section-title">
                   <div>
                     <h3>저장 데이터 정합성 점검</h3>
-                    <p className="muted" style={{ marginTop: 4 }}>현재 시드 기준과 저장된 과거 데이터의 부호·분류를 비교해서 차이를 보여드립니다. `정정 적용` 누르면 과거 데이터에도 새 기준이 적용됩니다.</p>
+                    <p className="muted" style={{ marginTop: 4 }}>지금 시드·규칙으로 저장된 데이터를 다시 검증합니다. 합산이 안 맞는 회사·분기가 있으면 아래에 표시되니, 해당 데이터를 검증기로 다시 불러와 확인하세요.</p>
                   </div>
                   <div className="inline-actions">
-                    <button type="button" className="ghost-button" onClick={runConsistencyCheck} disabled={!savedDatasets.length || consistencyApplying}>
-                      점검 실행
+                    <button type="button" className="ghost-button" onClick={runConsistencyCheck} disabled={!savedDatasets.length || consistencyChecking}>
+                      {consistencyChecking ? "점검 중..." : "점검 실행"}
                     </button>
-                    {consistencyResults && consistencyResults.length > 0 && (
-                      <button type="button" className="button" onClick={applyConsistencyFix} disabled={consistencyApplying}>
-                        {consistencyApplying ? "정정 중..." : `정정 적용 (${consistencyResults.reduce((a, r) => a + r.diffs.length, 0)}건)`}
-                      </button>
-                    )}
                   </div>
                 </div>
                 {consistencyMessage && (
                   <div className="notice" style={{ marginTop: 12 }}>{consistencyMessage}</div>
                 )}
                 {consistencyResults && consistencyResults.length > 0 && (
-                  <div className="report-table-wrap" style={{ marginTop: 12, maxHeight: 320, overflow: "auto" }}>
+                  <div className="report-table-wrap" style={{ marginTop: 12, maxHeight: 360, overflow: "auto" }}>
                     <table className="table report-table" style={{ fontSize: 12 }}>
                       <thead>
                         <tr>
                           <th>회사</th>
                           <th>분기</th>
-                          <th>계정명</th>
-                          <th>이전 분류</th>
-                          <th>새 분류</th>
-                          <th>부호</th>
-                          <th>이전 값</th>
-                          <th>새 값</th>
+                          <th>실패한 검증</th>
+                          <th>합계 항목</th>
+                          <th style={{ textAlign: "right" }}>기대값(OCR)</th>
+                          <th style={{ textAlign: "right" }}>계산값</th>
+                          <th style={{ textAlign: "right" }}>차이</th>
+                          <th>처리</th>
                         </tr>
                       </thead>
                       <tbody>
                         {consistencyResults.flatMap((r) =>
-                          r.diffs.map((d, i) => (
-                            <tr key={`${r.datasetId}-${d.accountName}-${i}`}>
-                              <td>{r.companyName}</td>
+                          r.failedChecks.map((f, i) => (
+                            <tr key={`${r.datasetId}-${i}`}>
+                              <td><strong>{r.companyName}</strong></td>
                               <td>{r.quarterLabel}</td>
-                              <td>{d.accountName}</td>
-                              <td className="muted">{d.oldCanonicalKey}</td>
-                              <td><strong>{d.newCanonicalKey}</strong></td>
+                              <td>{f.rule}</td>
+                              <td>{f.parent}</td>
+                              <td style={{ textAlign: "right" }}>{formatNumber(f.expected)}</td>
+                              <td style={{ textAlign: "right" }}>{formatNumber(f.actual)}</td>
+                              <td style={{ textAlign: "right", color: "#b91c1c" }}><strong>{formatNumber(f.diff)}</strong></td>
                               <td>
-                                <span style={{ color: "#9ca3af" }}>{d.oldSignFlag === 1 ? "−" : "+"}</span>
-                                {" → "}
-                                <strong style={{ color: d.newSignFlag === 1 ? "#b91c1c" : "#15803d" }}>{d.newSignFlag === 1 ? "−" : "+"}</strong>
+                                {i === 0 && (() => {
+                                  const ds = savedDatasets.find((d) => d.id === r.datasetId);
+                                  return ds ? (
+                                    <button type="button" className="ghost-button button-tiny" onClick={() => { loadDatasetIntoValidator(ds); setActiveTab("validate"); }}>검증기로 열기</button>
+                                  ) : null;
+                                })()}
                               </td>
-                              <td className="muted" style={{ textAlign: "right" }}>{d.oldValue === null ? "-" : formatNumber(d.oldValue)}</td>
-                              <td style={{ textAlign: "right" }}><strong>{d.newValue === null ? "-" : formatNumber(d.newValue)}</strong></td>
                             </tr>
                           ))
                         )}
