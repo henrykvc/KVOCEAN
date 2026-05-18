@@ -1049,11 +1049,20 @@ let _cachedSeedRows: SeedTableRow[] | null = null;
 function getSeedTableRows(): SeedTableRow[] {
   if (_cachedSeedRows) return _cachedSeedRows;
   const rows: SeedTableRow[] = [];
+  // Dedup by (code, normalized alias) so visually-identical variants like
+  // "현금및현금성자산" vs "현금 및 현금성자산" collapse to one display row.
+  // OCR matching still uses the full SEED_ALIAS_LOOKUP, so both spellings remain matchable.
+  const seenKeys = new Set<string>();
   for (const entry of CLASSIFICATION_ENTRIES) {
     const aliasList = entry.aliases.length ? entry.aliases : [entry.세분류];
     for (const alias of aliasList) {
+      const normKey = normalizeAliasKey(alias);
+      if (!normKey) continue;
+      const rowKey = `seed::${entry.code}::${normKey}`;
+      if (seenKeys.has(rowKey)) continue;
+      seenKeys.add(rowKey);
       rows.push({
-        rowKey: `seed::${entry.code}::${normalizeAliasKey(alias)}`,
+        rowKey,
         code: entry.code,
         대분류: entry.대분류,
         중분류: entry.중분류,
