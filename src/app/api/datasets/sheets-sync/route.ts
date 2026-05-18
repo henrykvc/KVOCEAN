@@ -7,7 +7,6 @@ import { buildCompanyReport, type ReportingModel, type SavedQuarterSnapshot } fr
 import { getSheetsConfig, type SheetsConfig } from "@/lib/google-sheets";
 import {
   buildHeaderRow,
-  buildMetricColumnsForTargetSections,
   buildQuarterRows,
   collectDistinctQuarters,
   toSheetTabName,
@@ -119,13 +118,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "분기 데이터가 없습니다." }, { status: 404 });
     }
 
-    // Stable metric column set — use the first non-empty report.
-    const sampleReport = Array.from(companyReports.values()).find((r) => r.finalSections.length);
-    const metricColumns = buildMetricColumnsForTargetSections(sampleReport);
-    if (!metricColumns.length) {
-      return NextResponse.json({ ok: false, error: "「핵심 지표」 섹션을 찾지 못했습니다." }, { status: 500 });
-    }
-    const headers = buildHeaderRow(metricColumns);
+    const headers = buildHeaderRow();
 
     // Ensure all required tabs exist.
     const requiredTabs = quarters.map((q) => toSheetTabName(q.key));
@@ -138,9 +131,7 @@ export async function POST(request: Request) {
       const tabName = toSheetTabName(quarter.key);
       const rows = buildQuarterRows({
         quarterKey: quarter.key,
-        quarterLabel: quarter.label,
-        companyReports,
-        metricColumns
+        companyReports
       });
       await writeQuarterTab(config, tabName, headers, rows);
       totalRows += rows.length;
