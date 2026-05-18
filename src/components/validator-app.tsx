@@ -34,6 +34,13 @@ import {
 } from "@/lib/validation/engine";
 import { type SharedStateResponse } from "@/lib/shared-state";
 import {
+  buildHeaderRow as buildSheetsHeaderRow,
+  buildQuarterRows as buildSheetsQuarterRows,
+  collectDistinctQuarters as collectSheetsQuarters,
+  toSheetTabName,
+  type SheetCellValue
+} from "@/lib/sheets-export";
+import {
   buildCompanyReport,
   buildQuarterSnapshots,
   buildReportingModel,
@@ -91,6 +98,40 @@ function parseDatasetApiResponse(raw: DatasetApiResponse) {
   return {
     datasets: sortSavedDatasets(parseSavedDatasets(JSON.stringify(raw.datasets))),
     trashedDatasets: sortSavedDatasets(parseSavedDatasets(JSON.stringify(raw.trashedDatasets)))
+  };
+}
+
+/**
+ * Build the per-quarter tabs payload from client state. Server just writes it
+ * verbatim — so what goes into the sheet matches what the user sees on screen.
+ */
+function buildSheetsSyncPayload(
+  savedDatasets: SavedQuarterSnapshot[],
+  classificationGroups: ClassificationGroups
+): { quarterTabs: Array<{ tabName: string; headers: string[]; rows: SheetCellValue[][] }> } {
+  const byCompany = new Map<string, SavedQuarterSnapshot[]>();
+  for (const d of savedDatasets) {
+    const name = (d.companyName ?? "").trim();
+    if (!name) continue;
+    const existing = byCompany.get(name) ?? [];
+    existing.push(d);
+    byCompany.set(name, existing);
+  }
+
+  const companyReports = new Map<string, ReportingModel>();
+  for (const [name, snaps] of byCompany.entries()) {
+    companyReports.set(name, buildCompanyReport(snaps, classificationGroups));
+  }
+
+  const quarters = collectSheetsQuarters(Array.from(companyReports.values()));
+  const headers = buildSheetsHeaderRow();
+
+  return {
+    quarterTabs: quarters.map((q) => ({
+      tabName: toSheetTabName(q.key),
+      headers,
+      rows: buildSheetsQuarterRows({ quarterKey: q.key, companyReports })
+    }))
   };
 }
 
@@ -1323,28 +1364,25 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }
 
     const timeout = window.setTimeout(() => {
+      const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups);
+      if (!payload.quarterTabs.length) return;
       setSheetsSyncState({ status: "syncing", message: "규칙 변경 감지 → 전체 시트 자동 동기화 중..." });
-      fetch("/api/datasets/sheets-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ all: true })
-      })
-        .then(async (res) => {
-          const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; companyCount?: number; rowCount?: number } | null;
+      postSheetsSync(payload)
+        .then((data) => {
           if (data?.ok) {
-            setSheetsSyncState({ status: "ok", message: `자동 동기화 완료 (회사 ${data.companyCount ?? 0} · 행 ${data.rowCount ?? 0})` });
+            setSheetsSyncState({ status: "ok", message: `자동 동기화 완료 (탭 ${data.tabsWritten ?? payload.quarterTabs.length} · 행 ${data.rowsTotal ?? 0})` });
             window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 4000);
           } else if (data?.reason === "disabled") {
             setSheetsSyncState({ status: "idle" });
           } else {
-            setSheetsSyncState({ status: "error", message: data?.error ?? "자동 시트 동기화 실패" });
+            setSheetsSyncState({ status: "error", message: describeSheetsError(data) });
           }
         })
         .catch(() => setSheetsSyncState({ status: "idle" }));
     }, 3000);
 
     return () => window.clearTimeout(timeout);
-  }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups]);
+  }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups, savedDatasets]);
 
   useEffect(() => {
     if (!mounted || !sharedStateReady) {
@@ -1722,23 +1760,19 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       setSharedStateError(null);
       setActiveTab("data");
 
-      const syncCompany = snapshots[0]?.companyName?.trim();
-      if (syncCompany) {
-        setSheetsSyncState({ status: "syncing" });
-        fetch("/api/datasets/sheets-sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ companyName: syncCompany })
-        })
-          .then(async (res) => {
-            const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; rowCount?: number } | null;
+      // Use freshly-saved data (nextSaved) — React state may not have propagated yet.
+      const sheetsPayload = buildSheetsSyncPayload(nextSaved, classificationGroups);
+      if (sheetsPayload.quarterTabs.length) {
+        setSheetsSyncState({ status: "syncing", message: "저장 후 시트 동기화 중..." });
+        postSheetsSync(sheetsPayload)
+          .then((data) => {
             if (data?.ok) {
-              setSheetsSyncState({ status: "ok", message: `구글시트 동기화 완료 (${data.rowCount ?? 0}개 분기)` });
+              setSheetsSyncState({ status: "ok", message: `시트 동기화 완료 (탭 ${data.tabsWritten ?? sheetsPayload.quarterTabs.length})` });
               window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 4000);
             } else if (data?.reason === "disabled") {
-              setSheetsSyncState({ status: "disabled" });
+              setSheetsSyncState({ status: "idle" });
             } else {
-              setSheetsSyncState({ status: "error", message: data?.error ?? "구글시트 동기화 실패" });
+              setSheetsSyncState({ status: "error", message: describeSheetsError(data) });
             }
           })
           .catch((err) => {
@@ -1752,28 +1786,50 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }
   }
 
+  async function postSheetsSync(payload: ReturnType<typeof buildSheetsSyncPayload>) {
+    const res = await fetch("/api/datasets/sheets-sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    return await res.json().catch(() => null) as {
+      ok?: boolean;
+      reason?: string;
+      error?: string;
+      tabsWritten?: number;
+      rowsTotal?: number;
+      env?: Record<string, { present: boolean; length: number }>;
+    } | null;
+  }
+
+  function describeSheetsError(data: { reason?: string; error?: string; env?: Record<string, { present: boolean; length: number }> } | null) {
+    if (data?.reason === "disabled") {
+      const env = data.env ?? {};
+      const missing = Object.entries(env).filter(([, v]) => !v.present).map(([k]) => k);
+      const detail = missing.length
+        ? `누락: ${missing.join(", ")}`
+        : `값 길이: ${Object.entries(env).map(([k, v]) => `${k.replace("GOOGLE_SHEETS_", "")}=${v.length}`).join(", ")}`;
+      return `Vercel 환경변수 문제 — ${detail}`;
+    }
+    return data?.error ?? "구글시트 동기화 실패";
+  }
+
   async function bulkSyncSheets() {
-    setSheetsSyncState({ status: "syncing", message: "전체 회사 동기화 중..." });
+    setSheetsSyncState({ status: "syncing", message: "전체 동기화 중..." });
     try {
-      const res = await fetch("/api/datasets/sheets-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ all: true })
-      });
-      const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; companyCount?: number; rowCount?: number; tabsWritten?: number; rowsTotal?: number; env?: Record<string, { present: boolean; length: number }> } | null;
+      const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups);
+      if (!payload.quarterTabs.length) {
+        setSheetsSyncState({ status: "error", message: "저장된 분기 데이터가 없습니다." });
+        return;
+      }
+      const data = await postSheetsSync(payload);
       if (data?.ok) {
-        const tabs = data.tabsWritten ?? 0;
-        const rows = data.rowsTotal ?? data.rowCount ?? 0;
-        const companies = data.companyCount ?? 0;
-        setSheetsSyncState({ status: "ok", message: `동기화 완료 (탭 ${tabs} · 회사 ${companies} · 행 ${rows})` });
+        const tabs = data.tabsWritten ?? payload.quarterTabs.length;
+        const rows = data.rowsTotal ?? 0;
+        setSheetsSyncState({ status: "ok", message: `동기화 완료 (탭 ${tabs} · 행 ${rows})` });
         window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 6000);
-      } else if (data?.reason === "disabled") {
-        const env = data.env ?? {};
-        const missing = Object.entries(env).filter(([, v]) => !v.present).map(([k]) => k);
-        const detail = missing.length ? `누락: ${missing.join(", ")}` : `값 길이: ${Object.entries(env).map(([k, v]) => `${k.replace("GOOGLE_SHEETS_", "")}=${v.length}`).join(", ")}`;
-        setSheetsSyncState({ status: "error", message: `Vercel 환경변수 문제 — ${detail}` });
       } else {
-        setSheetsSyncState({ status: "error", message: data?.error ?? "구글시트 동기화 실패" });
+        setSheetsSyncState({ status: "error", message: describeSheetsError(data) });
       }
     } catch (err) {
       setSheetsSyncState({ status: "error", message: err instanceof Error ? err.message : "구글시트 동기화 실패" });

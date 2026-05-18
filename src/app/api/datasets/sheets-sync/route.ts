@@ -2,16 +2,8 @@ import { NextResponse } from "next/server";
 import type { sheets_v4 } from "googleapis";
 import { createClient } from "@/lib/supabase/server";
 import { getAllowedUser } from "@/lib/supabase/access";
-import { loadDatasets } from "@/lib/datasets";
-import { buildCompanyReport, type ReportingModel, type SavedQuarterSnapshot } from "@/lib/validation/report";
 import { getSheetsConfig, getSheetsEnvDiagnostics, type SheetsConfig } from "@/lib/google-sheets";
-import {
-  buildHeaderRow,
-  buildQuarterRows,
-  collectDistinctQuarters,
-  toSheetTabName,
-  type SheetCellValue
-} from "@/lib/sheets-export";
+import type { SheetCellValue } from "@/lib/sheets-export";
 
 export const runtime = "nodejs";
 
@@ -22,19 +14,17 @@ async function requireAuthorizedUser() {
   return { supabase, user };
 }
 
-function groupByCompany(datasets: SavedQuarterSnapshot[]) {
-  const map = new Map<string, SavedQuarterSnapshot[]>();
-  for (const d of datasets) {
-    const name = (d.companyName ?? "").trim();
-    if (!name) continue;
-    const existing = map.get(name) ?? [];
-    existing.push(d);
-    map.set(name, existing);
-  }
-  return map;
-}
+type QuarterTab = {
+  tabName: string;
+  headers: string[];
+  rows: SheetCellValue[][];
+};
 
-async function ensureSheetTabs(config: SheetsConfig, requiredTabNames: string[]): Promise<Set<string>> {
+type SyncBody = {
+  quarterTabs?: QuarterTab[];
+};
+
+async function ensureSheetTabs(config: SheetsConfig, requiredTabNames: string[]) {
   const meta = await config.sheets.spreadsheets.get({
     spreadsheetId: config.spreadsheetId,
     fields: "sheets.properties(sheetId,title)"
@@ -45,38 +35,33 @@ async function ensureSheetTabs(config: SheetsConfig, requiredTabNames: string[])
       .filter((t): t is string => typeof t === "string")
   );
 
-  const tabsToCreate = requiredTabNames.filter((name) => !existingTitles.has(name));
-  if (tabsToCreate.length) {
-    const requests: sheets_v4.Schema$Request[] = tabsToCreate.map((title) => ({
-      addSheet: { properties: { title } }
-    }));
-    await config.sheets.spreadsheets.batchUpdate({
-      spreadsheetId: config.spreadsheetId,
-      requestBody: { requests }
-    });
-    tabsToCreate.forEach((t) => existingTitles.add(t));
-  }
-  return existingTitles;
+  const toCreate = requiredTabNames.filter((name) => !existingTitles.has(name));
+  if (!toCreate.length) return;
+
+  const requests: sheets_v4.Schema$Request[] = toCreate.map((title) => ({
+    addSheet: { properties: { title } }
+  }));
+  await config.sheets.spreadsheets.batchUpdate({
+    spreadsheetId: config.spreadsheetId,
+    requestBody: { requests }
+  });
 }
 
 async function writeQuarterTab(
   config: SheetsConfig,
-  tabName: string,
-  headers: string[],
-  rows: SheetCellValue[][]
+  tab: QuarterTab
 ) {
-  // Clear the tab first to avoid stale rows when a company is removed.
   await config.sheets.spreadsheets.values.clear({
     spreadsheetId: config.spreadsheetId,
-    range: `${tabName}!A1:ZZ`
+    range: `${tab.tabName}!A1:ZZ`
   });
 
-  const values: SheetCellValue[][] = [headers, ...rows];
+  const values: SheetCellValue[][] = [tab.headers, ...tab.rows];
   if (!values.length) return;
 
   await config.sheets.spreadsheets.values.update({
     spreadsheetId: config.spreadsheetId,
-    range: `${tabName}!A1`,
+    range: `${tab.tabName}!A1`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
       values: values.map((row) => row.map((cell) => (cell === null ? "" : cell)))
@@ -85,14 +70,17 @@ async function writeQuarterTab(
 }
 
 export async function POST(request: Request) {
-  const { supabase, user } = await requireAuthorizedUser();
+  const { user } = await requireAuthorizedUser();
   if (!user?.email) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  // We always do full bulk sync now (single-company partial syncs no longer make
-  // sense with the per-quarter tab structure — each tab spans all companies).
-  await request.json().catch(() => null);
+  const body = await request.json().catch(() => null) as SyncBody | null;
+  const quarterTabs = body?.quarterTabs ?? [];
+
+  if (!Array.isArray(quarterTabs) || !quarterTabs.length) {
+    return NextResponse.json({ ok: false, error: "보낼 분기 데이터가 없습니다." }, { status: 400 });
+  }
 
   const config = getSheetsConfig();
   if (!config) {
@@ -100,50 +88,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { datasets } = await loadDatasets(supabase);
-    const byCompany = groupByCompany(datasets);
-    if (!byCompany.size) {
-      return NextResponse.json({ ok: false, error: "동기화할 회사 데이터가 없습니다." }, { status: 404 });
-    }
+    await ensureSheetTabs(config, quarterTabs.map((t) => t.tabName));
 
-    // Build per-company reports.
-    const companyReports = new Map<string, ReportingModel>();
-    for (const [companyName, snapshots] of byCompany.entries()) {
-      companyReports.set(companyName, buildCompanyReport(snapshots));
-    }
-
-    // Distinct quarters across all companies.
-    const quarters = collectDistinctQuarters(Array.from(companyReports.values()));
-    if (!quarters.length) {
-      return NextResponse.json({ ok: false, error: "분기 데이터가 없습니다." }, { status: 404 });
-    }
-
-    const headers = buildHeaderRow();
-
-    // Ensure all required tabs exist.
-    const requiredTabs = quarters.map((q) => toSheetTabName(q.key));
-    await ensureSheetTabs(config, requiredTabs);
-
-    // Write each quarter's tab.
     let totalRows = 0;
-    const writtenTabs: Array<{ tab: string; rows: number }> = [];
-    for (const quarter of quarters) {
-      const tabName = toSheetTabName(quarter.key);
-      const rows = buildQuarterRows({
-        quarterKey: quarter.key,
-        companyReports
-      });
-      await writeQuarterTab(config, tabName, headers, rows);
-      totalRows += rows.length;
-      writtenTabs.push({ tab: tabName, rows: rows.length });
+    for (const tab of quarterTabs) {
+      await writeQuarterTab(config, tab);
+      totalRows += tab.rows.length;
     }
 
     return NextResponse.json({
       ok: true,
-      tabsWritten: writtenTabs.length,
-      companies: byCompany.size,
-      rowsTotal: totalRows,
-      details: writtenTabs
+      tabsWritten: quarterTabs.length,
+      rowsTotal: totalRows
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "구글시트 동기화에 실패했습니다.";
