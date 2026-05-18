@@ -2264,16 +2264,17 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       return;
     }
 
-    const isFirstSync = !sheetsAutoSyncInitializedRef.current;
-    if (isFirstSync) {
-      sheetsAutoSyncInitializedRef.current = true;
-    }
+    // First load: fire once after a short delay so the initial sheet snapshot is fresh.
+    // Subsequent edits do NOT auto-sync — that path pushes 2.4K rows and was the
+    // main cause of UI lag after every save. Use "전체 회사 시트 동기화" button
+    // (or saveDataset already triggers a focused sync) when an explicit push is needed.
+    if (sheetsAutoSyncInitializedRef.current) return;
+    sheetsAutoSyncInitializedRef.current = true;
 
     const timeout = window.setTimeout(() => {
       const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups);
       if (!payload.quarterTabs.length) return;
-      const reason = isFirstSync ? "페이지 로드 → 시트 자동 동기화 중..." : "규칙 변경 감지 → 전체 시트 자동 동기화 중...";
-      setSheetsSyncState({ status: "syncing", message: reason });
+      setSheetsSyncState({ status: "syncing", message: "페이지 로드 → 시트 자동 동기화 중..." });
       postSheetsSync(payload)
         .then((data) => {
           if (data?.ok) {
@@ -2289,7 +2290,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }, 3000);
 
     return () => window.clearTimeout(timeout);
-  }, [mounted, sharedStateReady, logicConfig, companyConfigs, classificationCatalog, classificationGroups, savedDatasets]);
+  }, [mounted, sharedStateReady]);
 
   useEffect(() => {
     if (!mounted || !sharedStateReady) {
