@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getAllowedUser } from "@/lib/supabase/access";
 import { loadDatasets } from "@/lib/datasets";
 import { buildCompanyReport, type ReportingModel, type SavedQuarterSnapshot } from "@/lib/validation/report";
-import { getSheetsConfig, type SheetsConfig } from "@/lib/google-sheets";
+import { getSheetsConfig, getSheetsEnvDiagnostics, type SheetsConfig } from "@/lib/google-sheets";
 import {
   buildHeaderRow,
   buildQuarterRows,
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
 
   const config = getSheetsConfig();
   if (!config) {
-    return NextResponse.json({ ok: false, reason: "disabled" });
+    return NextResponse.json({ ok: false, reason: "disabled", env: getSheetsEnvDiagnostics() });
   }
 
   try {
