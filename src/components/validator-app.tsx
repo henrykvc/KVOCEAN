@@ -1358,15 +1358,16 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       return;
     }
 
-    if (!sheetsAutoSyncInitializedRef.current) {
+    const isFirstSync = !sheetsAutoSyncInitializedRef.current;
+    if (isFirstSync) {
       sheetsAutoSyncInitializedRef.current = true;
-      return;
     }
 
     const timeout = window.setTimeout(() => {
       const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups);
       if (!payload.quarterTabs.length) return;
-      setSheetsSyncState({ status: "syncing", message: "규칙 변경 감지 → 전체 시트 자동 동기화 중..." });
+      const reason = isFirstSync ? "페이지 로드 → 시트 자동 동기화 중..." : "규칙 변경 감지 → 전체 시트 자동 동기화 중...";
+      setSheetsSyncState({ status: "syncing", message: reason });
       postSheetsSync(payload)
         .then((data) => {
           if (data?.ok) {
