@@ -3803,6 +3803,20 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <button className={`ghost-button ${sameCompanyMode ? "is-selected" : ""}`.trim()} onClick={toggleSameCompanyMode}>
                 동일 회사 {sameCompanyMode ? "켜짐" : "꺼짐"}
               </button>
+              <button
+                className="ghost-button"
+                onClick={bulkSyncSheets}
+                disabled={sheetsSyncState.status === "syncing"}
+                title="저장된 모든 회사의 최종결과물을 구글시트에 한 번에 push"
+              >
+                {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
+              </button>
+              {sheetsSyncState.status !== "idle" && sheetsSyncState.status !== "syncing" && (
+                <span className={`sheets-sync-status sheets-sync-${sheetsSyncState.status}`}>
+                  {sheetsSyncState.status === "ok" && (sheetsSyncState.message ?? "동기화 완료")}
+                  {sheetsSyncState.status === "error" && (sheetsSyncState.message ?? "동기화 실패")}
+                </span>
+              )}
             </div>
           </div>
 

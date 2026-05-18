@@ -1,160 +1,89 @@
 import type { ReportingModel } from "@/lib/validation/report";
 
-export const SHEETS_KEY_COLUMNS = ["회사명", "분기키", "분기명"] as const;
+/**
+ * Exact set of metrics to push to the sheet — amount only (no ratio/growth).
+ * `label` matches the row.label in report.ts; `header` is what shows in the sheet column.
+ * Order here = column order (after 회사명 in column A).
+ */
+export const TARGET_METRICS: Array<{ label: string; header: string }> = [
+  { label: "런웨이(E)", header: "런웨이" },
+  { label: "EBITDA", header: "EBITDA" },
+  { label: "월 평균 지출액", header: "월 평균 지출액" }
+];
 
-export type MetricColumn = {
-  header: string;
-  section: string;
-  label: string;
-  kind: "amount" | "ratio" | "growthRate";
-};
-
-export function buildMetricColumns(report: ReportingModel): MetricColumn[] {
-  const cols: MetricColumn[] = [];
-  for (const section of report.finalSections) {
-    for (const row of section.rows) {
-      (["amount", "ratio", "growthRate"] as const).forEach((kind) => {
-        cols.push({
-          header: `${section.title}::${row.label}::${kindToLabel(kind)}`,
-          section: section.title,
-          label: row.label,
-          kind
-        });
-      });
-    }
-  }
-  return cols;
-}
-
-function kindToLabel(kind: MetricColumn["kind"]) {
-  if (kind === "amount") return "금액";
-  if (kind === "ratio") return "비율";
-  return "증감율";
-}
-
-export function buildHeaderRow(metricColumns: MetricColumn[]): string[] {
-  return [...SHEETS_KEY_COLUMNS, ...metricColumns.map((c) => c.header)];
-}
+export const SHEETS_KEY_COLUMNS = ["회사명"] as const;
 
 export type SheetCellValue = string | number | null;
 
-export function buildCompanyDataRows(report: ReportingModel, metricColumns: MetricColumn[]): SheetCellValue[][] {
-  const sectionIndex = new Map<string, Map<string, ReportingModel["finalSections"][number]["rows"][number]>>();
-  for (const section of report.finalSections) {
-    const rowMap = new Map<string, ReportingModel["finalSections"][number]["rows"][number]>();
-    for (const row of section.rows) {
-      rowMap.set(row.label, row);
-    }
-    sectionIndex.set(section.title, rowMap);
-  }
+export function buildHeaderRow(): string[] {
+  return [...SHEETS_KEY_COLUMNS, ...TARGET_METRICS.map((m) => m.header)];
+}
 
-  return report.periods.map((period) => {
-    const row: SheetCellValue[] = [
-      report.companyName ?? "",
-      period.key,
-      period.label
-    ];
-    for (const col of metricColumns) {
-      const metric = sectionIndex.get(col.section)?.get(col.label);
-      if (!metric) {
+/**
+ * Build rows for ONE quarter.
+ * Each row = one company. Columns = [회사명, 런웨이, EBITDA, 월 평균 지출액].
+ * Companies with no data for this quarter are skipped.
+ */
+export function buildQuarterRows(args: {
+  quarterKey: string;
+  companyReports: Map<string, ReportingModel>;
+}): SheetCellValue[][] {
+  const rows: SheetCellValue[][] = [];
+  const companyNames = Array.from(args.companyReports.keys()).sort((a, b) => a.localeCompare(b, "ko"));
+
+  for (const companyName of companyNames) {
+    const report = args.companyReports.get(companyName)!;
+    const period = report.periods.find((p) => p.key === args.quarterKey);
+    if (!period) continue;
+
+    // Find the rows in any section (핵심 지표 has these three by label).
+    const labelLookup = new Map<string, ReportingModel["finalSections"][number]["rows"][number]>();
+    for (const section of report.finalSections) {
+      for (const row of section.rows) {
+        if (!labelLookup.has(row.label)) {
+          labelLookup.set(row.label, row);
+        }
+      }
+    }
+
+    const row: SheetCellValue[] = [companyName];
+    for (const metric of TARGET_METRICS) {
+      const metricRow = labelLookup.get(metric.label);
+      if (!metricRow) {
         row.push(null);
         continue;
       }
-      const record = col.kind === "amount" ? metric.amounts : col.kind === "ratio" ? metric.ratios : metric.growthRates;
-      const value = record[period.key];
+      const value = metricRow.amounts[period.key];
       row.push(value ?? null);
     }
-    return row;
-  });
-}
-
-export type ExistingSheetState = {
-  headers: string[];
-  rows: SheetCellValue[][];
-};
-
-export function parseExistingSheet(values: unknown[][] | null | undefined): ExistingSheetState {
-  if (!values || !values.length) {
-    return { headers: [], rows: [] };
+    rows.push(row);
   }
-  const rawHeaders = (values[0] ?? []).map((cell) => (typeof cell === "string" ? cell : String(cell ?? "")));
-  const rawRows = values.slice(1).map((row) => row.map((cell) => normalizeCell(cell)));
-  return { headers: rawHeaders, rows: rawRows };
+
+  return rows;
 }
 
-function normalizeCell(cell: unknown): SheetCellValue {
-  if (cell === null || cell === undefined || cell === "") return null;
-  if (typeof cell === "number") return cell;
-  if (typeof cell === "string") {
-    const trimmed = cell.trim();
-    if (!trimmed) return null;
-    const num = Number(trimmed.replace(/,/g, ""));
-    if (Number.isFinite(num) && /^-?[\d,.]+$/.test(trimmed)) return num;
-    return cell;
-  }
-  return String(cell);
-}
-
-export function mergeSheetState(args: {
-  existing: ExistingSheetState;
-  companyName: string;
-  newMetricColumns: MetricColumn[];
-  newDataRows: SheetCellValue[][];
-}): { headers: string[]; rows: SheetCellValue[][] } {
-  const newHeaders = buildHeaderRow(args.newMetricColumns);
-  const existingHeaders = args.existing.headers;
-
-  const headers = existingHeaders.length ? mergeHeaderUnion(existingHeaders, newHeaders) : newHeaders;
-  const headerIndex = new Map(headers.map((h, i) => [h, i] as const));
-
-  const filteredExistingRows = args.existing.rows.filter((row) => {
-    const companyCol = existingHeaders.indexOf(SHEETS_KEY_COLUMNS[0]);
-    if (companyCol < 0) return true;
-    return row[companyCol] !== args.companyName;
-  });
-
-  const remappedExistingRows = filteredExistingRows.map((row) => {
-    const reshaped: SheetCellValue[] = new Array(headers.length).fill(null);
-    existingHeaders.forEach((h, oldIdx) => {
-      const newIdx = headerIndex.get(h);
-      if (newIdx !== undefined) reshaped[newIdx] = row[oldIdx] ?? null;
-    });
-    return reshaped;
-  });
-
-  const newRowsRemapped = args.newDataRows.map((dataRow) => {
-    const reshaped: SheetCellValue[] = new Array(headers.length).fill(null);
-    newHeaders.forEach((h, oldIdx) => {
-      const newIdx = headerIndex.get(h);
-      if (newIdx !== undefined) reshaped[newIdx] = dataRow[oldIdx] ?? null;
-    });
-    return reshaped;
-  });
-
-  const rows = [...remappedExistingRows, ...newRowsRemapped];
-
-  const companyIdx = headerIndex.get(SHEETS_KEY_COLUMNS[0]) ?? 0;
-  const quarterIdx = headerIndex.get(SHEETS_KEY_COLUMNS[1]) ?? 1;
-  rows.sort((a, b) => {
-    const ca = String(a[companyIdx] ?? "");
-    const cb = String(b[companyIdx] ?? "");
-    if (ca !== cb) return ca.localeCompare(cb, "ko");
-    const qa = String(a[quarterIdx] ?? "");
-    const qb = String(b[quarterIdx] ?? "");
-    return qb.localeCompare(qa);
-  });
-
-  return { headers, rows };
-}
-
-function mergeHeaderUnion(existing: string[], incoming: string[]): string[] {
-  const seen = new Set<string>(existing);
-  const merged = [...existing];
-  for (const h of incoming) {
-    if (!seen.has(h)) {
-      seen.add(h);
-      merged.push(h);
+/**
+ * Distinct quarters across all reports. Sorted newest-first (largest key first).
+ */
+export function collectDistinctQuarters(reports: ReportingModel[]): Array<{ key: string; label: string }> {
+  const map = new Map<string, string>();
+  for (const report of reports) {
+    for (const period of report.periods) {
+      if (!map.has(period.key)) {
+        map.set(period.key, period.label || period.key);
+      }
     }
   }
-  return merged;
+  return Array.from(map.entries())
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => b.key.localeCompare(a.key));
+}
+
+/**
+ * Sanitize a quarter key into a valid Google Sheets tab name.
+ * Sheets forbids \ / ? * [ ] : and limits to 100 chars.
+ */
+export function toSheetTabName(quarterKey: string): string {
+  const cleaned = quarterKey.replace(/[\\/?*\[\]:]/g, "_").trim();
+  return cleaned.slice(0, 100) || "Sheet";
 }
