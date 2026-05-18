@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   CLASSIFICATION_ENTRIES,
   DEFAULT_CLASSIFICATION_CATALOG,
@@ -1142,7 +1142,7 @@ type AliasOverride = {
   sign: 0 | 1;
 };
 
-export function ClassificationTableView({
+function ClassificationTableViewInner({
   accountEntries,
   onOverridesChange,
   initialFilters
@@ -1422,6 +1422,9 @@ export function ClassificationTableView({
     </div>
   );
 }
+
+// Memoized so the table doesn't re-render when unrelated parent state changes.
+export const ClassificationTableView = memo(ClassificationTableViewInner);
 
 // Top-level tree view with expand-all / collapse-all controls.
 export function ClassificationTreeView({
@@ -2473,6 +2476,13 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     () => savedDatasets.find((item) => item.id === activeAccountDbPreview?.datasetId) ?? null,
     [activeAccountDbPreview, savedDatasets]
   );
+
+  // Stable callback so ClassificationTableView memo isn't broken by inline closures.
+  const handleClassificationOverrides = useCallback((overrides: Map<string, AliasOverride>) => {
+    if (!overrides.size) return;
+    const nextCatalog = applyAliasOverridesToCatalog(classificationCatalog, overrides);
+    applyClassificationCatalog(nextCatalog, true);
+  }, [classificationCatalog]);
 
   const companyKnown = Boolean(selectedCompany.trim() && companyConfigs[selectedCompany.trim()]);
   const sessionFixCount = countSessionFixes(sessionSignFixes);
@@ -4518,11 +4528,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <section className="config-card">
                 <ClassificationTableView
                   accountEntries={accountDictionaryEntries}
-                  onOverridesChange={(overrides) => {
-                    if (!overrides.size) return;
-                    const nextCatalog = applyAliasOverridesToCatalog(classificationCatalog, overrides);
-                    applyClassificationCatalog(nextCatalog, true);
-                  }}
+                  onOverridesChange={handleClassificationOverrides}
                 />
               </section>
             </>
@@ -4636,11 +4642,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <section className="config-card">
                 <ClassificationTableView
                   accountEntries={accountDictionaryEntries}
-                  onOverridesChange={(overrides) => {
-                    if (!overrides.size) return;
-                    const nextCatalog = applyAliasOverridesToCatalog(classificationCatalog, overrides);
-                    applyClassificationCatalog(nextCatalog, true);
-                  }}
+                  onOverridesChange={handleClassificationOverrides}
                 />
               </section>
             </>
