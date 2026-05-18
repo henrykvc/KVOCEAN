@@ -1760,12 +1760,18 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ all: true })
       });
-      const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; companyCount?: number; rowCount?: number } | null;
+      const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; companyCount?: number; rowCount?: number; tabsWritten?: number; rowsTotal?: number; env?: Record<string, { present: boolean; length: number }> } | null;
       if (data?.ok) {
-        setSheetsSyncState({ status: "ok", message: `전체 동기화 완료 (회사 ${data.companyCount ?? 0} · 행 ${data.rowCount ?? 0})` });
+        const tabs = data.tabsWritten ?? 0;
+        const rows = data.rowsTotal ?? data.rowCount ?? 0;
+        const companies = data.companyCount ?? 0;
+        setSheetsSyncState({ status: "ok", message: `동기화 완료 (탭 ${tabs} · 회사 ${companies} · 행 ${rows})` });
         window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 6000);
       } else if (data?.reason === "disabled") {
-        setSheetsSyncState({ status: "error", message: "Vercel 환경변수가 설정되지 않았습니다." });
+        const env = data.env ?? {};
+        const missing = Object.entries(env).filter(([, v]) => !v.present).map(([k]) => k);
+        const detail = missing.length ? `누락: ${missing.join(", ")}` : `값 길이: ${Object.entries(env).map(([k, v]) => `${k.replace("GOOGLE_SHEETS_", "")}=${v.length}`).join(", ")}`;
+        setSheetsSyncState({ status: "error", message: `Vercel 환경변수 문제 — ${detail}` });
       } else {
         setSheetsSyncState({ status: "error", message: data?.error ?? "구글시트 동기화 실패" });
       }
