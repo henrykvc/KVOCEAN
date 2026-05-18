@@ -2484,6 +2484,46 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     applyClassificationCatalog(nextCatalog, true);
   }, [classificationCatalog]);
 
+  /**
+   * One-click "분류DB에 영구 반영" from the validation diagnosis card.
+   * Locates the seed pair (same 세분류 with opposite sign) and moves the alias
+   * to the correctly-signed entry. Then persists via the standard catalog flow.
+   */
+  function applySeedFix(_sect: string, acct: string, newSign: SignCode) {
+    if (newSign === 2) {
+      window.alert("'제외' 부호는 분류DB에 박을 수 없습니다. 회사별 규칙으로 처리하세요.");
+      return;
+    }
+    const current = findEntryByAlias(acct);
+    if (!current) {
+      window.alert(`'${acct}'은(는) 분류DB에 없는 항목입니다.\n먼저 4. 분류DB 탭에서 추가/분류해주세요.`);
+      return;
+    }
+    if (current.sign === newSign) return;
+
+    // Locate paired code (same 세분류 with opposite sign). Code suffix layout:
+    // positive at xxxx000, negative at xxxx100 — toggle by ±100.
+    const pairedCode = newSign === 1 ? current.code + 100 : current.code - 100;
+    const paired = CLASSIFICATION_ENTRIES.find((e) => e.code === pairedCode && e.sign === newSign);
+    if (!paired) {
+      window.alert(`'${acct}'은(는) 분류DB에 반대 부호 짝이 없어 자동 반영할 수 없습니다.\n4. 분류DB 탭에서 수동으로 처리해주세요.`);
+      return;
+    }
+
+    const overrides = new Map<string, AliasOverride>();
+    overrides.set(acct, {
+      code: paired.code,
+      대분류: paired.대분류,
+      중분류: paired.중분류,
+      소분류: paired.소분류,
+      세분류: paired.세분류,
+      sign: paired.sign
+    });
+    const nextCatalog = applyAliasOverridesToCatalog(classificationCatalog, overrides);
+    applyClassificationCatalog(nextCatalog, true);
+    applySessionFix(_sect, acct, newSign); // also reflect immediately in current validation
+  }
+
   const companyKnown = Boolean(selectedCompany.trim() && companyConfigs[selectedCompany.trim()]);
   const sessionFixCount = countSessionFixes(sessionSignFixes);
   const editedValueCount = Object.keys(pasteEdits).length;
@@ -3738,7 +3778,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                 <ul className="helper-list muted">
                   <li>행 1은 섹션명, 행 2는 계정명, 행 3부터 값입니다.</li>
                   <li>회사명은 저장 데이터 구분용으로만 사용하고, 검증은 공통 규칙으로 처리합니다.</li>
-                  <li>검증 부호는 이번 검증만 적용하거나, 공통 규칙 또는 회사별 규칙으로 바로 저장할 수 있습니다.</li>
+                  <li>부호 문제는 `분류DB에 영구 반영`으로 한 번 박아두면 다음 검증부터 자동 적용됩니다.</li>
                 </ul>
               </div>
             </>
@@ -3961,7 +4001,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                     </div>
                                   ) : null}
 
-                                  {result.detail.length > 0 && <div className="rule-helper muted">`OCR 수정값`과 계정 삭제/추가는 실제 저장 데이터에 반영됩니다. `검증 부호`는 이번 검증에만 적용하거나 공통/회사 규칙으로 저장할 수 있습니다.</div>}
+                                  {result.detail.length > 0 && <div className="rule-helper muted">`OCR 수정값`과 계정 삭제/추가는 실제 저장 데이터에 반영됩니다. 부호 변경은 `분류DB에 영구 반영`이 권장됩니다 (모든 회사·분기 적용).</div>}
 
                                   <div className="two-col">
                                     <div className="diagnosis-card">
@@ -3980,7 +4020,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                   {!result.passed && actions.length > 0 && (
                                     <div className="diagnosis-card">
                                       <strong>원인 추정과 처리 방향</strong>
-                                      <p className="muted diagnosis-note">차이를 0원으로 만드는 후보를 먼저 보여줍니다. 특히 `음수 OCR + 차감`은 검증 부호보다 `OCR 수정값`을 먼저 바로잡도록 안내합니다.</p>
+                                      <p className="muted diagnosis-note">차이를 0원으로 만드는 후보를 먼저 보여줍니다. 부호 문제면 `분류DB에 영구 반영`이 가장 깨끗합니다 — 한 번 박아두면 모든 회사·분기에 자동 적용됩니다.</p>
                                       <div className="list-editor" style={{ marginTop: 12 }}>
                                         {actions.map((action, index) => (
                                           <div key={`${action.text}-${index}`} className="notice">
@@ -3991,10 +4031,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                             <div className="pre diagnosis-copy">{renderDiagnosisText(action.shortText ?? action.text)}</div>
                                             {action.edit ? <div className="inline-actions" style={{ marginTop: 12 }}><button className="secondary-button" onClick={() => applySuggestedEdit(action.edit!.row, action.edit!.col, action.edit!.value)}>{action.editLabel}</button></div> : null}
                                             {action.fix ? (
-                                              <div className="inline-actions" style={{ marginTop: 12 }}>
-                                                <button className="secondary-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>이번 검증만 적용: {action.label}</button>
-                                                <button className="ghost-button" onClick={() => saveGlobalFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>검증 규칙에 적용: {action.label}</button>
-                                                <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>{selectedCompany.trim() ? `회사별 규칙 적용: ${action.label}` : "회사명 입력 필요"}</button>
+                                              <div className="inline-actions" style={{ marginTop: 12, flexWrap: "wrap" }}>
+                                                <button className="button" onClick={() => applySeedFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>분류DB에 영구 반영: {action.label}</button>
+                                                <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>{selectedCompany.trim() ? `이 회사만 예외: ${action.label}` : "회사명 입력 필요"}</button>
+                                                <button className="ghost-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>이번 검증만: {action.label}</button>
                                               </div>
                                             ) : null}
                                           </div>
