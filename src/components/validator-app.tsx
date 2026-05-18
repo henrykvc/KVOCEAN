@@ -4031,10 +4031,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                             <div className="pre diagnosis-copy">{renderDiagnosisText(action.shortText ?? action.text)}</div>
                                             {action.edit ? <div className="inline-actions" style={{ marginTop: 12 }}><button className="secondary-button" onClick={() => applySuggestedEdit(action.edit!.row, action.edit!.col, action.edit!.value)}>{action.editLabel}</button></div> : null}
                                             {action.fix ? (
-                                              <div className="inline-actions" style={{ marginTop: 12, flexWrap: "wrap" }}>
+                                              <div className="inline-actions" style={{ marginTop: 12 }}>
                                                 <button className="button" onClick={() => applySeedFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>분류DB에 영구 반영: {action.label}</button>
-                                                <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => saveCompanyFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>{selectedCompany.trim() ? `이 회사만 예외: ${action.label}` : "회사명 입력 필요"}</button>
-                                                <button className="ghost-button" onClick={() => applySessionFix(action.fix!.sect, action.fix!.acct, action.fix!.newSign)}>이번 검증만: {action.label}</button>
                                               </div>
                                             ) : null}
                                           </div>
@@ -4457,7 +4455,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               </div>
 
               <div className="notice" style={{ marginBottom: 12 }}>
-                ℹ️ 부호 키워드와 섹션 검증 범위 규칙은 이제 <strong>3-1 분류</strong> 탭의 시드 카탈로그(코드·부호·중분류)가 자동 처리합니다. 여기엔 시드로 처리 안 되는 회사별 특수 케이스만 남겨 두세요.
+                ℹ️ 부호·매칭 규칙은 이제 <strong>4. 분류DB</strong> 가 단일 소스로 처리합니다. 검증 실패 시 진단 카드의 <strong>분류DB에 영구 반영</strong> 버튼으로 한 번에 박을 수 있습니다. 이 탭에는 자본 합계 검증 보조 규칙만 남겨 두었습니다.
               </div>
 
               <div className="two-col">
@@ -4479,47 +4477,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                     <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setCapitalRuleRows((prev) => [...prev, { account: "", sign: 0, parent: "" }]); }}>자본 규칙 추가</button>
                   </div>
                 </section>
-              </div>
-
-              <div className="two-col">
-                <section className="config-card">
-                  <h3>전역 섹션별 부호 재정의</h3>
-                  <div className="list-editor">
-                    {globalOverrideRows.map((row, index) => (
-                      <div className="override-row" key={`global-override-${index}`}>
-                        <input className="input" value={row.section} placeholder="섹션명" onChange={(event) => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item)); }} />
-                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" onChange={(event) => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item)); }} />
-                        <select className="select" value={String(row.sign)} onChange={(event) => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item)); }}>
-                          <option value="0">가산(+)</option>
-                          <option value="1">차감(−)</option>
-                          <option value="2">제외</option>
-                        </select>
-                        <button className="danger-button" onClick={() => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
-                      </div>
-                    ))}
-                    <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setGlobalOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }]); }}>전역 규칙 추가</button>
-                  </div>
-                </section>
-
-                <section className="config-card">
-                  <h3>회사별 섹션별 부호 재정의</h3>
-                  <p className="muted" style={{ marginTop: 0 }}>{selectedCompany.trim() ? `현재 회사: ${selectedCompany.trim()}` : "검증 탭에서 회사명을 입력하면 회사별 규칙을 편집할 수 있습니다."}</p>
-                  <div className="list-editor">
-                    {companyOverrideRows.map((row, index) => (
-                      <div className="override-row" key={`company-override-${selectedCompany || "empty"}-${index}`}>
-                        <input className="input" value={row.section} placeholder="섹션명" disabled={!selectedCompany.trim()} onChange={(event) => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, section: event.target.value } : item)); }} />
-                        <input className="input" value={row.keyword} placeholder="계정명 / 키워드" disabled={!selectedCompany.trim()} onChange={(event) => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, keyword: event.target.value } : item)); }} />
-                        <select className="select" value={String(row.sign)} disabled={!selectedCompany.trim()} onChange={(event) => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sign: Number(event.target.value) as SignCode } : item)); }}>
-                          <option value="0">가산(+)</option>
-                          <option value="1">차감(−)</option>
-                          <option value="2">제외</option>
-                        </select>
-                        <button className="danger-button" disabled={!selectedCompany.trim()} onClick={() => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => prev.filter((_, itemIndex) => itemIndex !== index)); }}>삭제</button>
-                      </div>
-                    ))}
-                    <button className="ghost-button" disabled={!selectedCompany.trim()} onClick={() => { pushConfigRulesSnapshot(); setCompanyOverrideRows((prev) => [...prev, { section: "", keyword: "", sign: 0 }]); }}>회사 규칙 추가</button>
-                  </div>
-                </section>
 
                 <section className="config-card">
                   <h3>자본 검증 제외 항목</h3>
@@ -4534,7 +4491,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                     <button className="ghost-button" onClick={() => { pushConfigRulesSnapshot(); setCapitalMemoRows((prev) => [...prev, { account: "" }]); }}>제외 항목 추가</button>
                   </div>
                 </section>
-
               </div>
 
               <section className="config-card">
