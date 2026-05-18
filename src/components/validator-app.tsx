@@ -2433,9 +2433,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         companyConfigs,
         pasteEdits,
         nameEdits,
-        sessionSignFixes
+        sessionSignFixes,
+        classificationCatalog
       }),
-    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, nameEdits, sessionSignFixes]
+    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, nameEdits, sessionSignFixes, classificationCatalog]
   );
   const accountDictionaryEntries = useMemo(() => extractAccountDictionaryEntries(savedDatasets), [savedDatasets]);
   const managedClassificationLookup = useMemo(
@@ -3315,6 +3316,30 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       nameEdits,
       sessionSignFixes: nextSessionSignFixes
     }));
+
+    // Also try to persist into the classification DB so the change isn't lost
+    // on the next validation. Silent on failure (no seed pair exists for this alias)
+    // — the session fix above still keeps the current validation passing.
+    if (nextSign === 0 || nextSign === 1) {
+      const current = findEntryByAlias(acct, sect);
+      if (current && current.sign !== nextSign) {
+        const pairedCode = nextSign === 1 ? current.code + 100 : current.code - 100;
+        const paired = CLASSIFICATION_ENTRIES.find((e) => e.code === pairedCode && e.sign === nextSign);
+        if (paired) {
+          const overrides = new Map<string, AliasOverride>();
+          overrides.set(acct, {
+            code: paired.code,
+            대분류: paired.대분류,
+            중분류: paired.중분류,
+            소분류: paired.소분류,
+            세분류: paired.세분류,
+            sign: paired.sign
+          });
+          const nextCatalog = applyAliasOverridesToCatalog(classificationCatalog, overrides);
+          applyClassificationCatalog(nextCatalog, false);
+        }
+      }
+    }
   }
 
   function applyClassificationCatalog(nextCatalog: ClassificationCatalogGroup[], showFeedback = false) {
@@ -3359,7 +3384,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
           companyConfigs,
           pasteEdits: dataset.source.pasteEdits ?? {},
           nameEdits: dataset.source.nameEdits ?? {},
-          sessionSignFixes: dataset.source.sessionSignFixes ?? {}
+          sessionSignFixes: dataset.source.sessionSignFixes ?? {},
+          classificationCatalog
         });
 
         const failed: Array<{ rule: string; parent: string; expected: number; actual: number; diff: number }> = [];

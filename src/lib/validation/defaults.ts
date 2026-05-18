@@ -658,6 +658,58 @@ export function diffSnapshotRowAgainstSeed(row: {
 }
 
 /**
+ * Convert a catalog group's display-sign string ("+", "−") into a SignCode.
+ */
+export function catalogSignToCode(sign: string): SignCode | null {
+  const trimmed = (sign ?? "").trim();
+  if (trimmed === "+" || trimmed === "0") return 0;
+  if (trimmed === "−" || trimmed === "-" || trimmed === "1") return 1;
+  if (trimmed === "제외" || trimmed === "2") return 2;
+  return null;
+}
+
+export type CatalogAliasMatch = {
+  sign: SignCode;
+  majorCategory: string;
+  middleCategory: string;
+  smallCategory: string;
+  canonicalKey: string;
+  groupId: string;
+};
+
+/**
+ * Build an alias → catalog-entry lookup from the runtime classification catalog.
+ * Used so validation reflects user edits made in 4. 분류DB — not just the immutable seed.
+ * Multiple matches per alias are kept; callers can disambiguate by section hint.
+ */
+export function buildCatalogAliasLookup(catalog: ClassificationCatalogGroup[]): Map<string, CatalogAliasMatch[]> {
+  const map = new Map<string, CatalogAliasMatch[]>();
+  for (const group of catalog) {
+    const sign = catalogSignToCode(group.sign);
+    if (sign === null) continue;
+    const allAliases = [group.canonicalKey, ...group.aliases];
+    for (const alias of allAliases) {
+      const key = normalizeLookupKey(alias);
+      if (!key) continue;
+      const list = map.get(key) ?? [];
+      const match: CatalogAliasMatch = {
+        sign: sign as SignCode,
+        majorCategory: group.majorCategory,
+        middleCategory: group.middleCategory,
+        smallCategory: group.smallCategory,
+        canonicalKey: group.canonicalKey,
+        groupId: group.groupId
+      };
+      if (!list.some((m) => m.groupId === match.groupId)) {
+        list.push(match);
+        map.set(key, list);
+      }
+    }
+  }
+  return map;
+}
+
+/**
  * Apply per-alias overrides to a classification catalog.
  * For each (alias, targetCode) pair: remove the alias from its current group
  * and add it to the group whose groupId matches the target code.

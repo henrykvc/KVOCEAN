@@ -1,4 +1,4 @@
-import { COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, classificationCatalogToGroups, classificationGroupsToCatalog, findEntryByAlias, mergeDefaultClassificationCatalog, sanitizeClassificationGroups, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
+import { COMPANY_LABELS, DEFAULT_CLASSIFICATION_CATALOG, DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG, LAST_PATCH, LOSS_ACCOUNTS, RESULT_ORDER, SUMMARY_RULES, buildCatalogAliasLookup, classificationCatalogToGroups, classificationGroupsToCatalog, findEntryByAlias, mergeDefaultClassificationCatalog, sanitizeClassificationGroups, type CatalogAliasMatch, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 
 export type ParsedPaste = {
   catRow: string[];
@@ -310,14 +310,44 @@ export function applySign(value: number | null | undefined, signCode: SignCode |
   return signCode === 1 ? -numeric : numeric;
 }
 
-export function inferSignFromName(name: string, _logicConfig: LogicConfig, sectionName?: string): SignCode | null {
-  // Single source of truth: the seed catalog (분류DB).
-  // sectionName is forwarded so ambiguous aliases (same name in 자본 vs 영업외비용 etc.)
-  // resolve to the correct entry based on the OCR row's parent section.
-  const seedEntry = findEntryByAlias(name, sectionName);
-  if (seedEntry) {
-    return seedEntry.sign as SignCode;
+function normalizeLookupKeyLocal(s: string) {
+  return (s ?? "").replace(/\s+/g, "").toLowerCase();
+}
+
+/**
+ * Decide the sign for an OCR row.
+ *
+ * Priority:
+ *   1) Live classification catalog (= what the user sees in 4. 분류DB) when provided
+ *      → any edits the user makes there flow into validation immediately.
+ *   2) Immutable seed catalog (fallback when no catalog lookup is supplied).
+ *   3) Explicit _양수/_음수 suffixes (legacy migration tags).
+ *
+ * sectionName disambiguates aliases that exist in multiple groups
+ * (e.g. "전기오류수정손실" appears in both 자본 and 영업외비용).
+ */
+export function inferSignFromName(
+  name: string,
+  _logicConfig: LogicConfig,
+  sectionName?: string,
+  catalogLookup?: Map<string, CatalogAliasMatch[]>
+): SignCode | null {
+  if (catalogLookup) {
+    const candidates = catalogLookup.get(normalizeLookupKeyLocal(name));
+    if (candidates && candidates.length > 0) {
+      if (candidates.length === 1 || !sectionName) return candidates[0].sign;
+      const hint = normalizeLookupKeyLocal(sectionName);
+      const byMiddle = candidates.find((c) => normalizeLookupKeyLocal(c.middleCategory) === hint);
+      if (byMiddle) return byMiddle.sign;
+      const byMajor = candidates.find((c) => normalizeLookupKeyLocal(c.majorCategory) === hint);
+      if (byMajor) return byMajor.sign;
+      const bySmall = candidates.find((c) => normalizeLookupKeyLocal(c.smallCategory) === hint);
+      if (bySmall) return bySmall.sign;
+      return candidates[0].sign;
+    }
   }
+  const seedEntry = findEntryByAlias(name, sectionName);
+  if (seedEntry) return seedEntry.sign as SignCode;
   if (name.includes("_양수") || name.endsWith("양수")) return 0;
   if (name.includes("_음수") || name.endsWith("음수")) return 1;
   return null;
@@ -372,7 +402,8 @@ export function validatePasteSections(
   companyName: string | null,
   sessionSignFixes: SessionSignFixes,
   logicConfig: LogicConfig,
-  companyConfigs: CompanyConfigs
+  companyConfigs: CompanyConfigs,
+  catalogLookup?: Map<string, CatalogAliasMatch[]>
 ): ValidationResult[] {
   const results: ValidationResult[] = [];
   const sectionOverrides = getEffectiveSectionOverrides(logicConfig, companyConfigs, companyName);
@@ -424,7 +455,7 @@ export function validatePasteSections(
         continue;
       }
 
-      let sign = inferSignFromName(child.name, logicConfig, sect);
+      let sign = inferSignFromName(child.name, logicConfig, sect, catalogLookup);
       const sectOverride = sectionOverrides[sect] ?? {};
       for (const [keyword, override] of Object.entries(sectOverride)) {
         if (child.name.includes(keyword)) {
@@ -834,7 +865,13 @@ export function runValidation(args: {
   pasteEdits: Record<string, number>;
   nameEdits: Record<string, string>;
   sessionSignFixes: SessionSignFixes;
+  /** Live classification catalog (4. 분류DB). When supplied, user edits there
+   * take priority over the immutable seed for sign decisions. */
+  classificationCatalog?: ClassificationCatalogGroup[];
 }): ValidationRun {
+  const catalogLookup = args.classificationCatalog
+    ? buildCatalogAliasLookup(args.classificationCatalog)
+    : undefined;
   const parsed = parsePastedText(args.pastedText);
   const detectedCompany = detectCompanyFromPaste(args.pastedText);
   const rawFirst = parsed.dataRows[0] ?? [];
@@ -877,7 +914,8 @@ export function runValidation(args: {
       args.selectedCompany,
       args.sessionSignFixes,
       args.logicConfig,
-      args.companyConfigs
+      args.companyConfigs,
+      catalogLookup
     ).map((result) => ({ ...result, 날짜: label }));
     resultsByDate[label] = results.sort((a, b) => {
       const sortDiff = resultSortKey(a._sort_parent) - resultSortKey(b._sort_parent);
