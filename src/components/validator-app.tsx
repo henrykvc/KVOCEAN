@@ -687,6 +687,22 @@ type ClassificationTreeNode = ClassificationTreeLeaf | ClassificationTreeBranch;
 
 const UNCLASSIFIED_LABEL = "미분류";
 
+// localStorage key for the last 분류DB signature this browser synced its
+// stored datasets against. If the current catalog hashes to the same value,
+// the dataset-sync work can be skipped on boot.
+const CATALOG_SYNC_LS_KEY = "kvocean.lastSyncedCatalogSignature";
+
+/**
+ * Compact fingerprint of the sign-deciding fields of every catalog group.
+ * Identical fingerprint = no change that could affect any dataset's sign.
+ */
+function catalogSyncSignature(catalog: ClassificationCatalogGroup[]): string {
+  return catalog
+    .map((g) => `${g.groupId}|${g.sign}|${g.canonicalKey}|${[...g.aliases].sort().join(",")}`)
+    .sort()
+    .join("\n");
+}
+
 // Same rule as normalizeLookupKey in defaults.ts — keeps OCR-side dedup
 // (occurrences, 미분류 detection) in sync with the validator's matching.
 function normalizeAliasKey(value: string): string {
@@ -2352,17 +2368,42 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   }, [mounted, sharedStateReady, workspaceMemo]);
 
   // After initial Supabase load, re-sync stored datasets against the current
-  // 분류DB once. Catches the case where code/seed/normalization has changed
-  // since the dataset was saved — without it the user would have to click
-  // through and re-save every snapshot manually.
+  // 분류DB — but only when the catalog has actually changed since the last
+  // time this browser synced. We hash the catalog's sign-deciding fields and
+  // stash it in localStorage; subsequent loads with the same hash skip the
+  // dataset rebuild entirely (fast path).
   useEffect(() => {
     if (!mounted || !sharedStateReady) return;
     if (classificationSyncOnceRef.current) return;
     if (!savedDatasets.length) return;
     classificationSyncOnceRef.current = true;
-    void syncStoredDatasetsToClassificationDB();
+
+    const currentSignature = catalogSyncSignature(classificationCatalog);
+    let lastSignature: string | null = null;
+    try {
+      lastSignature = window.localStorage.getItem(CATALOG_SYNC_LS_KEY);
+    } catch {
+      // Private mode / storage disabled — fall through and sync anyway.
+    }
+    if (lastSignature && lastSignature === currentSignature) {
+      // Catalog hasn't moved since this browser last synced — nothing to do.
+      return;
+    }
+
+    // Delay 600ms so the first paint + heavy useMemo work finishes before we
+    // start rebuilding datasets, otherwise the browser flags the tab as
+    // unresponsive on first load.
+    const timeout = window.setTimeout(async () => {
+      await syncStoredDatasetsToClassificationDB();
+      try {
+        window.localStorage.setItem(CATALOG_SYNC_LS_KEY, currentSignature);
+      } catch {
+        // No-op if storage unavailable.
+      }
+    }, 600);
+    return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, sharedStateReady, savedDatasets.length]);
+  }, [mounted, sharedStateReady, savedDatasets.length, classificationCatalog]);
 
   useEffect(() => {
     const company = selectedCompany.trim();
@@ -3417,8 +3458,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
    * and push only the ones whose signs actually changed back to Supabase.
    * No-op when nothing changes.
    *
-   * Pass freshly-applied catalog/groups (not React state) when calling from
-   * applyClassificationCatalog — setState hasn't propagated yet at that point.
+   * Chunked + yielded so a large dataset list doesn't lock the main thread
+   * (each buildQuarterSnapshots call re-parses the paste). Progress shows in
+   * the hero; the rest of the UI stays interactive in the meantime.
    */
   async function syncStoredDatasetsToClassificationDB(
     catalogOverride?: ClassificationCatalogGroup[],
@@ -3427,49 +3469,68 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     if (!savedDatasets.length) return;
     const effectiveCatalog = catalogOverride ?? classificationCatalog;
     const effectiveGroups = groupsOverride ?? classificationGroups;
+    const total = savedDatasets.length;
     const changedSnapshots: SavedQuarterSnapshot[] = [];
+    const yieldToMain = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    const CHUNK = 5;
 
-    for (const dataset of savedDatasets) {
-      const fresh = buildQuarterSnapshots({
-        pastedText: dataset.source.pastedText,
-        selectedCompany: dataset.companyName,
-        tolerance: dataset.source.tolerance ?? 0,
-        logicConfig,
-        companyConfigs,
-        classificationGroups: effectiveGroups,
-        classificationCatalog: effectiveCatalog,
-        pasteEdits: dataset.source.pasteEdits ?? {},
-        nameEdits: dataset.source.nameEdits ?? {},
-        sessionSignFixes: {},
-        statementType: dataset.source.statementType
-      });
-      const matched = fresh.find((s) => s.id === dataset.id);
-      if (!matched) continue;
-      const changed =
-        matched.adjustedStatementRows.length !== dataset.adjustedStatementRows.length
-        || matched.adjustedStatementRows.some((newRow, idx) => {
-          const oldRow = dataset.adjustedStatementRows[idx];
-          return !oldRow || oldRow.signFlag !== newRow.signFlag;
+    setClassificationSyncMessage(`저장 데이터 동기화 중... 0 / ${total}`);
+
+    for (let i = 0; i < total; i += CHUNK) {
+      const slice = savedDatasets.slice(i, i + CHUNK);
+      for (const dataset of slice) {
+        const fresh = buildQuarterSnapshots({
+          pastedText: dataset.source.pastedText,
+          selectedCompany: dataset.companyName,
+          tolerance: dataset.source.tolerance ?? 0,
+          logicConfig,
+          companyConfigs,
+          classificationGroups: effectiveGroups,
+          classificationCatalog: effectiveCatalog,
+          pasteEdits: dataset.source.pasteEdits ?? {},
+          nameEdits: dataset.source.nameEdits ?? {},
+          sessionSignFixes: {},
+          statementType: dataset.source.statementType
         });
-      if (changed) changedSnapshots.push(matched);
+        const matched = fresh.find((s) => s.id === dataset.id);
+        if (!matched) continue;
+        const changed =
+          matched.adjustedStatementRows.length !== dataset.adjustedStatementRows.length
+          || matched.adjustedStatementRows.some((newRow, idx) => {
+            const oldRow = dataset.adjustedStatementRows[idx];
+            return !oldRow || oldRow.signFlag !== newRow.signFlag;
+          });
+        if (changed) changedSnapshots.push(matched);
+      }
+      const done = Math.min(i + CHUNK, total);
+      setClassificationSyncMessage(`저장 데이터 동기화 중... ${done} / ${total}`);
+      // Hand the main thread back so clicks/scroll stay responsive.
+      await yieldToMain();
     }
 
-    if (!changedSnapshots.length) return;
+    if (!changedSnapshots.length) {
+      setClassificationSyncMessage(null);
+      return;
+    }
 
     try {
+      setClassificationSyncMessage(`${changedSnapshots.length}개 데이터 저장 중...`);
       const response = await fetch("/api/datasets", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ snapshots: changedSnapshots, validatedText: "" })
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        setClassificationSyncMessage(null);
+        return;
+      }
       const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
       setSavedDatasets(payload.datasets);
       setTrashedDatasets(payload.trashedDatasets);
       setClassificationSyncMessage(`분류DB 기준으로 ${changedSnapshots.length}개 저장 데이터를 자동 갱신했습니다.`);
       window.setTimeout(() => setClassificationSyncMessage(null), 5000);
     } catch {
-      // Best-effort — leave stored data alone if sync fails, surface nothing.
+      setClassificationSyncMessage(null);
     }
   }
 
