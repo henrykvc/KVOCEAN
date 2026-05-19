@@ -2465,22 +2465,40 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       return;
     }
 
-    // First boot under this CATALOG_SYNC_LS_KEY version → force PUT every
-    // dataset so Supabase rows pick up the new clean source shape (legacy
-    // logicConfig/classificationGroups/etc. stripped) even when signFlag
-    // didn't change. After this initial pass, future runs only PUT rows
-    // whose signFlag actually moved.
+    // First boot under this CATALOG_SYNC_LS_KEY version → wipe stored
+    // 분류DB edits back to the seed and force PUT every dataset. After this
+    // initial pass, future runs only PUT rows whose signFlag actually moved.
     const forceAll = lastSignature === null;
 
     // Delay 600ms so the first paint + heavy useMemo work finishes before we
     // start rebuilding datasets, otherwise the browser flags the tab as
     // unresponsive on first load.
     const timeout = window.setTimeout(async () => {
-      await syncStoredDatasetsToClassificationDB(undefined, undefined, forceAll);
-      try {
-        window.localStorage.setItem(CATALOG_SYNC_LS_KEY, currentSignature);
-      } catch {
-        // No-op if storage unavailable.
+      if (forceAll) {
+        // Reset the catalog itself to the code-side seed so any stale
+        // edits stored in Supabase get overwritten on the next config PUT.
+        const defaultCatalog = cloneClassificationCatalog(DEFAULT_CLASSIFICATION_CATALOG);
+        const defaultGroups = classificationCatalogToGroups(defaultCatalog);
+        setClassificationCatalog(defaultCatalog);
+        setClassificationGroups(defaultGroups);
+        // Pass the fresh values into sync directly — React state hasn't
+        // propagated yet, so reading from state here would still see the
+        // pre-reset catalog.
+        await syncStoredDatasetsToClassificationDB(defaultCatalog, defaultGroups, true);
+        // Recompute the signature against the catalog we just wrote so the
+        // next boot's compare doesn't re-trigger.
+        try {
+          window.localStorage.setItem(CATALOG_SYNC_LS_KEY, catalogSyncSignature(defaultCatalog));
+        } catch {
+          // No-op if storage unavailable.
+        }
+      } else {
+        await syncStoredDatasetsToClassificationDB();
+        try {
+          window.localStorage.setItem(CATALOG_SYNC_LS_KEY, currentSignature);
+        } catch {
+          // No-op if storage unavailable.
+        }
       }
     }, 600);
     return () => window.clearTimeout(timeout);
