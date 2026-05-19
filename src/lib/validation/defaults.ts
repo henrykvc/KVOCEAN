@@ -104,6 +104,13 @@ export type LogicConfig = {
   capitalMemoAccounts: string[];
   pasteSectToParent: Record<string, string>;
   sectionSignOverrides: Record<string, Record<string, SignCode>>;
+  /**
+   * 검증 합산 규칙(SUMMARY_RULES)에서 부모 항목 lookup 시 사용하는 다른 이름들.
+   * 예: paste에 "자본총계"라 적혀있어도 "자본" 부모로 인식.
+   * 이전엔 LEGACY_PARENT_GROUPS에 자식 alias와 섞여있었는데,
+   * 부모 별칭만 떼어 logicConfig로 옮김 — 1-1 검증 규칙 관리 탭에서 편집 가능.
+   */
+  parentAliases?: Record<string, string[]>;
 };
 
 export type CompanyConfig = {
@@ -265,6 +272,20 @@ export const DEFAULT_LOGIC_CONFIG: LogicConfig = {
     영업외수익: "영업외수익",
     영업외비용: "영업외비용"
   },
+  parentAliases: {
+    자본: ["자본", "자본총계", "총자본"],
+    영업이익: ["영업이익", "영업이익(손실)"],
+    판매비와관리비: ["판매비와관리비", "판관비", "판매관리비", "판매비및관리비", "판매비와관리비합계"],
+    영업외수익: ["영업외수익", "기타수익", "영업외수익합계", "금융수익"],
+    이자비용: ["이자비용", "총이자비용", "금융비용"],
+    영업비용: ["판매비와관리비", "판관비", "영업비용"],
+    당기순이익: ["당기순이익", "당기순이익(손실)", "당기순손익", "연결당기순이익", "당기순이익(당기순손실)", "당기순손실"],
+    법인세차감전이익: ["법인세차감전이익", "법인세차감전순이익", "법인세비용차감전순이익", "세전계속사업이익", "법인세차감전이익(손실)", "법인세비용차감전순이익(손실)", "법인세비용차감전계속사업이익", "법인세차감전손실", "법인세차감전순손실", "법인세비용차감전순손실"],
+    법인세등: ["법인세등", "법인세 등", "법인세비용", "법인세비용(수익)", "법인세수익", "계속사업법인세비용", "당기법인세비용", "이연법인세비용", "법인세환급"],
+    계속사업당기순이익: ["당기순이익", "당기순손실", "당기순이익(손실)", "당기순손익", "계속사업당기순이익", "계속사업당기순손실", "계속사업당기순이익(손실)"],
+    결손금: ["결손금", "미처리결손금"],
+    이익잉여금: ["이익잉여금", "미처분이익잉여금", "이익잉여금결손금"]
+  },
   sectionSignOverrides: {
     비유동부채: { 퇴직연금운용자산: 1, 사외적립자산: 1 },
     유동부채: { 퇴직연금운용자산: 1, 사외적립자산: 1 },
@@ -275,9 +296,9 @@ export const DEFAULT_LOGIC_CONFIG: LogicConfig = {
 export const DEFAULT_COMPANY_CONFIGS: CompanyConfigs = {};
 
 /**
- * Legacy hand-curated parent groups — kept as starting point.
- * Seed-derived 세분류 groups are merged in by `buildDefaultClassificationGroups()` below,
- * which is what actually populates DEFAULT_CLASSIFICATION_GROUPS.
+ * 합산 자식 목록만 남은 임시 정의. 부모 별칭은 DEFAULT_LOGIC_CONFIG.parentAliases로
+ * 이전됨. 보고서 카드(차입금/인건비/매출채권 합산)에서 자식 alias 모음으로 사용 중.
+ * 추후 결과물DB(result-classification.ts)의 group 필드로 옮기고 제거 예정.
  */
 const LEGACY_PARENT_GROUPS: ClassificationGroups = {
   유동자산: ["유동자산"],
@@ -426,11 +447,12 @@ const LEGACY_PARENT_GROUPS: ClassificationGroups = {
 };
 
 /**
- * Build the runtime DEFAULT_CLASSIFICATION_GROUPS by merging the seed catalog (632 entries)
- * with hand-curated parent groups (SYSTEM_FIXED + MANAGED roll-ups).
+ * Build the runtime DEFAULT_CLASSIFICATION_GROUPS from the seed + LEGACY children list.
  *
- * Resulting structure: { canonicalKey: aliases[] } where canonicalKey is the 세분류 name
- * (from seed) or a hand-curated parent name (자산, 차입금 등).
+ * 부모 별칭(자본총계, 판관비 등)은 logicConfig.parentAliases로 분리됐고,
+ * 부호 lookup도 더 이상 이 데이터를 거치지 않는다 (시드 우선). 여기 남아있는 LEGACY
+ * 머지는 report.ts의 보고서 카드 자식 합산 path에서만 사용 — 다음 푸시에서
+ * 결과물DB의 group 필드로 옮기면 LEGACY 자체 제거 가능.
  */
 function buildDefaultClassificationGroups(): ClassificationGroups {
   const groups: ClassificationGroups = {};

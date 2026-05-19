@@ -36,6 +36,7 @@ import {
   type ValidationResult,
   type SessionSignFixes
 } from "@/lib/validation/engine";
+import { RESULT_CLASSIFICATION, RESULT_BY_GROUP } from "@/lib/validation/result-classification";
 import { type SharedStateResponse } from "@/lib/shared-state";
 import {
   buildHeaderRow as buildSheetsHeaderRow,
@@ -62,7 +63,7 @@ import {
   type StatementMatrixRow
 } from "@/lib/validation/report";
 
-type TabKey = "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db";
+type TabKey = "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db" | "result-db";
 
 type OverrideRow = {
   section: string;
@@ -1547,6 +1548,98 @@ function ClassificationTableViewInner({
 
 // Memoized so the table doesn't re-render when unrelated parent state changes.
 export const ClassificationTableView = memo(ClassificationTableViewInner);
+
+/**
+ * 결과물DB 표 (4-1 탭). 사용자가 만든 엑셀(재무제표 음양.xlsx)을 그대로 가져온
+ * result-classification.ts의 632개 entry를 보여줌. 분류DB와 코드(넘버)로 연결됨.
+ * 편집 불가 — 엑셀에서 관리.
+ */
+function ResultClassificationTableView() {
+  const [search, setSearch] = useState("");
+  const [groupFilter, setGroupFilter] = useState<string>("");
+  const deferredSearch = useDeferredValue(search);
+
+  const groupOptions = useMemo(() => {
+    return Array.from(RESULT_BY_GROUP.keys()).sort((a, b) => a.localeCompare(b, "ko"));
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = deferredSearch.trim().toLowerCase();
+    return RESULT_CLASSIFICATION.filter((e) => {
+      if (groupFilter && e.group !== groupFilter) return false;
+      if (!q) return true;
+      return (
+        String(e.code).includes(q)
+        || e.대분류.toLowerCase().includes(q)
+        || e.중분류.toLowerCase().includes(q)
+        || e.소분류.toLowerCase().includes(q)
+        || e.세분류.toLowerCase().includes(q)
+        || (e.group ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [deferredSearch, groupFilter]);
+
+  return (
+    <section className="config-card">
+      <div className="classification-table-toolbar">
+        <input
+          className="input"
+          placeholder="코드/이름/묶음 검색"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ minWidth: 240, flex: "0 1 320px" }}
+        />
+        <select className="select" value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} style={{ minWidth: 180 }}>
+          <option value="">모든 묶음</option>
+          {groupOptions.map((g) => (
+            <option key={g} value={g}>{g} ({RESULT_BY_GROUP.get(g)?.length ?? 0})</option>
+          ))}
+        </select>
+        <span className="muted" style={{ marginLeft: "auto", fontSize: 12 }}>
+          전체 {RESULT_CLASSIFICATION.length.toLocaleString()} · 묶음 {RESULT_BY_GROUP.size}개 · 필터 후 {filtered.length.toLocaleString()}
+        </span>
+      </div>
+      <div className="classification-table-scroll">
+        <table className="table report-table classification-flat-table">
+          <thead>
+            <tr>
+              <th>코드</th>
+              <th>대분류</th>
+              <th>중분류</th>
+              <th>소분류</th>
+              <th>세분류</th>
+              <th>부호</th>
+              <th>묶음</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.slice(0, 200).map((e) => (
+              <tr key={e.code}>
+                <td className="cell-code">{e.code}</td>
+                <td>{e.대분류}</td>
+                <td>{e.중분류}</td>
+                <td>{e.소분류 || ""}</td>
+                <td>{e.세분류}</td>
+                <td className={e.sign === 1 ? "cell-sign cell-sign-minus" : "cell-sign cell-sign-plus"}>
+                  {e.sign === 1 ? "−" : "+"}
+                </td>
+                <td>{e.group ?? ""}</td>
+              </tr>
+            ))}
+            {filtered.length > 200 && (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "#9ca3af", padding: 12 }}>
+                상위 200건만 표시 — 검색·필터로 좁혀주세요 (전체 {filtered.length.toLocaleString()}건)
+              </td></tr>
+            )}
+            {filtered.length === 0 && (
+              <tr><td colSpan={7} style={{ textAlign: "center", color: "#9ca3af", padding: 24 }}>표시할 행이 없습니다.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
 // Top-level tree view with expand-all / collapse-all controls.
 export function ClassificationTreeView({
@@ -4107,6 +4200,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <button className={`side-nav-item tab-highlighted ${activeTab === "report" ? "active" : ""}`} onClick={() => setActiveTab("report")}>3. 결과물</button>
               <button className={`side-nav-item ${activeTab === "formulas" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("formulas")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>3-1. 수식</button>
               <button className={`side-nav-item tab-highlighted ${activeTab === "account-db" ? "active" : ""} ${!canEditConfig ? "is-locked" : ""}`} onClick={() => canEditConfig && setActiveTab("account-db")} disabled={!canEditConfig} title={!canEditConfig ? "관리자만 수정 가능합니다" : undefined}>4. 분류DB</button>
+              <button className={`side-nav-item ${activeTab === "result-db" ? "active" : ""}`} onClick={() => setActiveTab("result-db")}>4-1. 결과물DB</button>
             </div>
             <div className="side-nav-divider" />
             <div className="side-nav-utils">
@@ -5024,6 +5118,24 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                   onOverridesChange={handleClassificationOverrides}
                 />
               </section>
+            </>
+          )}
+
+          {activeTab === "result-db" && (
+            <>
+              <section className="overview-card report-hero-card">
+                <div className="section-title">
+                  <div>
+                    <span className="section-kicker">4-1. 결과물DB</span>
+                    <h3>결과물 화면용 분류 트리 + 묶음</h3>
+                    <p className="muted" style={{ marginTop: 4 }}>
+                      보고서·매트릭스 화면에서 사용하는 분류 트리(영업비용/변동비/고정비 등)와 묶음(인건비, 차입금 등 27개) 정의입니다.
+                      OCR 매칭·부호 결정은 4. 분류DB(시드)에서 합니다. 두 DB는 코드(넘버)로 연결됩니다.
+                    </p>
+                  </div>
+                </div>
+              </section>
+              <ResultClassificationTableView />
             </>
           )}
 

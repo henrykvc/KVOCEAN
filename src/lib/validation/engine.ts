@@ -176,6 +176,10 @@ function mergeLogicConfig(defaults: LogicConfig, persisted?: Partial<LogicConfig
     sectionSignOverrides: {
       ...defaults.sectionSignOverrides,
       ...(persisted?.sectionSignOverrides ?? {})
+    },
+    parentAliases: {
+      ...(defaults.parentAliases ?? {}),
+      ...(persisted?.parentAliases ?? {})
     }
   };
 }
@@ -384,15 +388,25 @@ export function resolveSign(
   return { sign: 0, matched: false };
 }
 
-function getAccountValue(nameToValue: Record<string, { value: number | null; col: number }>, account: string): number | null {
-  const matched = getAccountMatch(nameToValue, account);
+function getAccountValue(
+  nameToValue: Record<string, { value: number | null; col: number }>,
+  account: string,
+  logicConfig?: LogicConfig
+): number | null {
+  const matched = getAccountMatch(nameToValue, account, logicConfig);
   return matched?.value ?? null;
 }
 
-function getAccountMatch(nameToValue: Record<string, { value: number | null; col: number }>, account: string): { alias: string; value: number; col: number } | null {
-  // All matching now flows through the seed-derived classificationGroups.
-  // Resolve aliases from DEFAULT_CLASSIFICATION_GROUPS — single source of truth.
-  const aliases = DEFAULT_CLASSIFICATION_GROUPS[account] ?? [account];
+function getAccountMatch(
+  nameToValue: Record<string, { value: number | null; col: number }>,
+  account: string,
+  logicConfig?: LogicConfig
+): { alias: string; value: number; col: number } | null {
+  // 부모 항목의 별칭 lookup. 회사마다 paste 표기가 달라서(자본 vs 자본총계 vs
+  // 총자본) 별칭으로 매칭. logicConfig.parentAliases는 사용자가 1-1 검증 규칙
+  // 관리 탭에서 편집 가능. 시드 정답표(분류DB) 단독으로는 부모 별칭을 모르기 때문에
+  // 검증 합산 규칙(SUMMARY_RULES)이 깨지지 않도록 여기서 보조.
+  const aliases = logicConfig?.parentAliases?.[account] ?? [account];
   for (const alias of aliases) {
     const item = nameToValue[alias];
     if (item && item.value !== null && item.value !== undefined) {
@@ -465,8 +479,8 @@ export function validatePasteSections(
     if (!childrenRaw.length) {
       continue;
     }
-    const parentVal = getAccountValue(nameToValue, parentName);
-    const parentMatch = getAccountMatch(nameToValue, parentName);
+    const parentVal = getAccountValue(nameToValue, parentName, logicConfig);
+    const parentMatch = getAccountMatch(nameToValue, parentName, logicConfig);
     if (parentVal === null) {
       continue;
     }
@@ -541,19 +555,19 @@ export function validatePasteSections(
     });
   }
 
-  const capitalVal = getAccountValue(nameToValue, "자본");
-  const capitalMatch = getAccountMatch(nameToValue, "자본");
+  const capitalVal = getAccountValue(nameToValue, "자본", logicConfig);
+  const capitalMatch = getAccountMatch(nameToValue, "자본", logicConfig);
   if (capitalVal !== null) {
     const used: DetailRow[] = [];
     let computed = 0;
     const capitalOverrides = sectionOverrides["자본"] ?? {};
     for (const [compName, isPositive] of Object.entries(logicConfig.capitalL1Signs)) {
       const parent = logicConfig.capitalL1Parent[compName];
-      const parentVal = parent ? getAccountValue(nameToValue, parent) : null;
+      const parentVal = parent ? getAccountValue(nameToValue, parent, logicConfig) : null;
       if (parentVal !== null && parentVal !== 0) {
         continue;
       }
-      const value = getAccountValue(nameToValue, compName);
+      const value = getAccountValue(nameToValue, compName, logicConfig);
       if (value === null) {
         continue;
       }
@@ -568,13 +582,13 @@ export function validatePasteSections(
         sign = sessionSignFixes["자본"][compName];
       }
       if (sign === 2) {
-        const capitalMatch = getAccountMatch(nameToValue, compName);
+        const capitalMatch = getAccountMatch(nameToValue, compName, logicConfig);
         used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _row: rowIndex, _col: capitalMatch?.col, _allowedSigns: [0, 1, 2] });
         continue;
       }
       const signedValue = applySign(value, sign);
       computed += signedValue;
-      const capitalMatch = getAccountMatch(nameToValue, compName);
+      const capitalMatch = getAccountMatch(nameToValue, compName, logicConfig);
       used.push({
         계정명: compName,
         원본값: value,
@@ -605,7 +619,7 @@ export function validatePasteSections(
   }
 
   for (const [ruleName, parentName, components] of SUMMARY_RULES) {
-    const parentMatch = getAccountMatch(nameToValue, parentName);
+    const parentMatch = getAccountMatch(nameToValue, parentName, logicConfig);
     if (!parentMatch) {
       continue;
     }
@@ -619,7 +633,7 @@ export function validatePasteSections(
     let computed = 0;
 
     for (const [compName, defaultSign] of components) {
-      const compMatch = getAccountMatch(nameToValue, compName);
+      const compMatch = getAccountMatch(nameToValue, compName, logicConfig);
       if (!compMatch) {
         missing.push(compName);
         continue;
