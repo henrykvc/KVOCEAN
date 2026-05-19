@@ -2465,11 +2465,18 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       return;
     }
 
+    // First boot under this CATALOG_SYNC_LS_KEY version → force PUT every
+    // dataset so Supabase rows pick up the new clean source shape (legacy
+    // logicConfig/classificationGroups/etc. stripped) even when signFlag
+    // didn't change. After this initial pass, future runs only PUT rows
+    // whose signFlag actually moved.
+    const forceAll = lastSignature === null;
+
     // Delay 600ms so the first paint + heavy useMemo work finishes before we
     // start rebuilding datasets, otherwise the browser flags the tab as
     // unresponsive on first load.
     const timeout = window.setTimeout(async () => {
-      await syncStoredDatasetsToClassificationDB();
+      await syncStoredDatasetsToClassificationDB(undefined, undefined, forceAll);
       try {
         window.localStorage.setItem(CATALOG_SYNC_LS_KEY, currentSignature);
       } catch {
@@ -3545,7 +3552,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
    */
   async function syncStoredDatasetsToClassificationDB(
     catalogOverride?: ClassificationCatalogGroup[],
-    groupsOverride?: ClassificationGroups
+    groupsOverride?: ClassificationGroups,
+    forceAll: boolean = false
   ) {
     if (!savedDatasets.length) return;
     const effectiveCatalog = catalogOverride ?? classificationCatalog;
@@ -3576,7 +3584,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         const matched = fresh.find((s) => s.id === dataset.id);
         if (!matched) continue;
         const changed =
-          matched.adjustedStatementRows.length !== dataset.adjustedStatementRows.length
+          forceAll
+          || matched.adjustedStatementRows.length !== dataset.adjustedStatementRows.length
           || matched.adjustedStatementRows.some((newRow, idx) => {
             const oldRow = dataset.adjustedStatementRows[idx];
             return !oldRow || oldRow.signFlag !== newRow.signFlag;
@@ -3615,8 +3624,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }
   }
 
-  function runConsistencyCheck() {
+  async function runConsistencyCheck() {
     setConsistencyChecking(true);
+    setConsistencyMessage(null);
     try {
       const results: Array<{
         datasetId: string;
@@ -3626,60 +3636,70 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         failedChecks: Array<{ rule: string; parent: string; expected: number; actual: number; diff: number }>;
       }> = [];
 
-      for (const dataset of savedDatasets) {
-        // Re-normalize pasteEdits against the current 분류DB before validating.
-        // Stored pasteEdits were generated with the old catalog (sign=− rows
-        // got absolute-value normalization stamped in); if we feed them back
-        // unchanged, the check fails even though re-pasting the same text
-        // passes — because the new validator sees stale value normalization.
-        const reNormalizedPasteEdits = normalizePasteEditsForValidation({
-          pastedText: dataset.source.pastedText,
-          selectedCompany: dataset.companyName,
-          logicConfig,
-          companyConfigs,
-          classificationGroups,
-          classificationCatalog,
-          pasteEdits: dataset.source.pasteEdits ?? {},
-          nameEdits: dataset.source.nameEdits ?? {},
-          sessionSignFixes: {}
-        });
-        const result = runValidation({
-          pastedText: dataset.source.pastedText,
-          selectedCompany: dataset.companyName,
-          tolerance: dataset.source.tolerance ?? 0,
-          logicConfig,
-          companyConfigs,
-          pasteEdits: reNormalizedPasteEdits,
-          nameEdits: dataset.source.nameEdits ?? {},
-          // Intentionally drop stored sessionSignFixes: this check answers
-          // "does the data pass under the *current* 분류DB?". Stored sign
-          // overrides hide that — they force the historical decision regardless
-          // of what the user has since fixed in the DB.
-          sessionSignFixes: {},
-          classificationCatalog
-        });
+      const total = savedDatasets.length;
+      // Chunk + yield so the main thread stays responsive while we re-validate
+      // each dataset (each call re-parses the paste + re-normalizes edits
+      // against the current 분류DB — heavy when many datasets are saved).
+      const CHUNK = 5;
+      const yieldToMain = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 
-        const failed: Array<{ rule: string; parent: string; expected: number; actual: number; diff: number }> = [];
-        for (const r of result.allResults) {
-          if (!r.passed) {
-            failed.push({
-              rule: r.rule,
-              parent: r.parent,
-              expected: r.parent_val,
-              actual: r.computed,
-              diff: r.diff
+      for (let i = 0; i < total; i += CHUNK) {
+        const slice = savedDatasets.slice(i, i + CHUNK);
+        for (const dataset of slice) {
+          // Re-normalize stored pasteEdits against the current 분류DB so the
+          // check matches what the user would see in a fresh paste.
+          const reNormalizedPasteEdits = normalizePasteEditsForValidation({
+            pastedText: dataset.source.pastedText,
+            selectedCompany: dataset.companyName,
+            logicConfig,
+            companyConfigs,
+            classificationGroups,
+            classificationCatalog,
+            pasteEdits: dataset.source.pasteEdits ?? {},
+            nameEdits: dataset.source.nameEdits ?? {},
+            sessionSignFixes: {}
+          });
+          const result = runValidation({
+            pastedText: dataset.source.pastedText,
+            selectedCompany: dataset.companyName,
+            tolerance: dataset.source.tolerance ?? 0,
+            logicConfig,
+            companyConfigs,
+            pasteEdits: reNormalizedPasteEdits,
+            nameEdits: dataset.source.nameEdits ?? {},
+            // Drop stored sessionSignFixes — this check answers "does the data
+            // pass under the *current* 분류DB?". Historical overrides would
+            // hide that.
+            sessionSignFixes: {},
+            classificationCatalog
+          });
+
+          const failed: Array<{ rule: string; parent: string; expected: number; actual: number; diff: number }> = [];
+          for (const r of result.allResults) {
+            if (!r.passed) {
+              failed.push({
+                rule: r.rule,
+                parent: r.parent,
+                expected: r.parent_val,
+                actual: r.computed,
+                diff: r.diff
+              });
+            }
+          }
+          if (failed.length) {
+            results.push({
+              datasetId: dataset.id,
+              companyName: dataset.companyName,
+              quarterLabel: dataset.quarterLabel,
+              totalChecks: result.stats.total,
+              failedChecks: failed
             });
           }
         }
-        if (failed.length) {
-          results.push({
-            datasetId: dataset.id,
-            companyName: dataset.companyName,
-            quarterLabel: dataset.quarterLabel,
-            totalChecks: result.stats.total,
-            failedChecks: failed
-          });
-        }
+        const done = Math.min(i + CHUNK, total);
+        setConsistencyMessage(`정합성 점검 진행 중... ${done} / ${total}`);
+        // Yield so React can flush the progress update and clicks register.
+        await yieldToMain();
       }
 
       setConsistencyResults(results);
