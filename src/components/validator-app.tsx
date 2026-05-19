@@ -2849,6 +2849,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   }
 
   function loadDatasetIntoValidator(dataset: SavedQuarterSnapshot) {
+    // Drop stored sessionSignFixes when loading: the validator should re-decide
+    // signs from the current 분류DB. pasteEdits/nameEdits are kept because they
+    // are OCR value/name corrections — not sign overrides.
     const normalizedPasteEdits = normalizePasteEditsForValidation({
       pastedText: dataset.source.pastedText,
       selectedCompany: dataset.companyName,
@@ -2858,7 +2861,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       classificationCatalog,
       pasteEdits: dataset.source.pasteEdits,
       nameEdits: dataset.source.nameEdits ?? {},
-      sessionSignFixes: cloneSessionSignFixes(dataset.source.sessionSignFixes)
+      sessionSignFixes: {}
     });
 
     setPastedText(dataset.source.pastedText);
@@ -2866,7 +2869,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     setSelectedCompany(dataset.companyName);
     setPasteEdits(normalizedPasteEdits);
     setNameEdits({ ...(dataset.source.nameEdits ?? {}) });
-    setSessionSignFixes(cloneSessionSignFixes(dataset.source.sessionSignFixes));
+    setSessionSignFixes({});
     setPendingInsertedRows({});
     setSelectedDatasetId(dataset.id);
     setActiveTab("validate");
@@ -3411,7 +3414,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
           companyConfigs,
           pasteEdits: dataset.source.pasteEdits ?? {},
           nameEdits: dataset.source.nameEdits ?? {},
-          sessionSignFixes: dataset.source.sessionSignFixes ?? {},
+          // Intentionally drop stored sessionSignFixes: this check answers
+          // "does the data pass under the *current* 분류DB?". Stored sign
+          // overrides hide that — they force the historical decision regardless
+          // of what the user has since fixed in the DB.
+          sessionSignFixes: {},
           classificationCatalog
         });
 
