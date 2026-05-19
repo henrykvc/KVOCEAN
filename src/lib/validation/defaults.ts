@@ -542,9 +542,13 @@ export function mergeDefaultClassificationCatalog(catalog: ClassificationCatalog
   DEFAULT_CLASSIFICATION_CATALOG.forEach((defaultItem) => {
     const existing = byCanonicalKey.get(defaultItem.canonicalKey);
     if (existing) {
+      // Group metadata (groupId, 대/중/소분류, sign) is owned by the seed —
+      // users only edit alias membership via the 분류DB UI. Letting stored
+      // metadata win meant any seed/resolver fix (e.g. 영업외비용 전기오류수정손실
+      // sign) would never reach users who already had a saved catalog.
       byCanonicalKey.set(defaultItem.canonicalKey, {
-        ...defaultItem,
         ...existing,
+        ...defaultItem,
         aliases: MANAGED_CLASSIFICATION_KEY_SET.has(defaultItem.canonicalKey)
           ? Array.from(new Set(existing.aliases))
           : Array.from(new Set([...defaultItem.aliases, ...existing.aliases]))
