@@ -452,8 +452,12 @@ export const DEFAULT_CLASSIFICATION_GROUPS: ClassificationGroups = buildDefaultC
 
 export function classificationGroupsToCatalog(groups: ClassificationGroups): ClassificationCatalogGroup[] {
   return Object.entries(groups).map(([canonicalKey, aliases], index) => {
-    // Try to enrich with seed metadata: look up by canonicalKey itself, then by any alias.
-    let seed = findEntryByAlias(canonicalKey);
+    // Prefer the seed whose 세분류 exactly matches canonicalKey — buildDefaultClassificationGroups
+    // keys groups by 세분류, so this lands on the right entry even when an alias is shared by
+    // multiple seeds (e.g. "전기오류수정손실" is both 자본/3051000 and 영업외비용/5082000).
+    let seed: ClassificationEntry | null =
+      CLASSIFICATION_ENTRIES.find((e) => e.세분류 === canonicalKey) ?? null;
+    if (!seed) seed = findEntryByAlias(canonicalKey);
     if (!seed) {
       for (const alias of aliases) {
         const hit = findEntryByAlias(alias);
