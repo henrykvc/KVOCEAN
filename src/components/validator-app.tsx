@@ -690,7 +690,10 @@ const UNCLASSIFIED_LABEL = "미분류";
 // localStorage key for the last 분류DB signature this browser synced its
 // stored datasets against. If the current catalog hashes to the same value,
 // the dataset-sync work can be skipped on boot.
-const CATALOG_SYNC_LS_KEY = "kvocean.lastSyncedCatalogSignature";
+// Bump the version suffix whenever a deploy needs every browser to re-run
+// the sync once (e.g. when legacy source.* fields stop being written and
+// we want existing rows in Supabase to lose them on the next PUT).
+const CATALOG_SYNC_LS_KEY = "kvocean.lastSyncedCatalogSignature.v2";
 
 /**
  * Compact fingerprint of the sign-deciding fields of every catalog group.

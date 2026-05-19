@@ -75,11 +75,15 @@ export type SavedQuarterSnapshot = {
     tolerance: number;
     pasteEdits: Record<string, number>;
     nameEdits: Record<string, string>;
-    sessionSignFixes: SessionSignFixes;
-    logicConfig: LogicConfig;
-    companyConfigs: CompanyConfigs;
-    classificationGroups: ClassificationGroups;
     statementType?: string;
+    // The fields below are legacy: snapshots saved by older code captured a
+    // frozen view of the rules so the back-end could re-normalize. We now
+    // treat 분류DB as the single source of truth and validate snapshots in
+    // place at the call site, so new snapshots leave these undefined.
+    sessionSignFixes?: SessionSignFixes;
+    logicConfig?: LogicConfig;
+    companyConfigs?: CompanyConfigs;
+    classificationGroups?: ClassificationGroups;
   };
 };
 
@@ -1857,61 +1861,23 @@ export function buildQuarterSnapshots(args: {
       tolerance: args.tolerance,
       pasteEdits: { ...normalizedPasteEdits },
       nameEdits: { ...args.nameEdits },
-      sessionSignFixes: structuredClone(args.sessionSignFixes),
-      logicConfig: structuredClone(args.logicConfig),
-      companyConfigs: structuredClone(args.companyConfigs),
-      classificationGroups: structuredClone(args.classificationGroups),
       statementType
+      // Intentionally not snapshotting logicConfig/companyConfigs/
+      // classificationGroups/sessionSignFixes — they're decided live from
+      // 분류DB at every call site. Storing them stale caused validation to
+      // drift between fresh-paste and load/re-check.
     }
   } satisfies SavedQuarterSnapshot));
 }
 
 export function normalizeSavedQuarterSnapshot(snapshot: SavedQuarterSnapshot) {
-  const normalizedPasteEdits = normalizePasteEditsForValidation({
-    pastedText: snapshot.source.pastedText,
-    selectedCompany: snapshot.companyName,
-    logicConfig: snapshot.source.logicConfig,
-    companyConfigs: snapshot.source.companyConfigs,
-    classificationGroups: snapshot.source.classificationGroups,
-    pasteEdits: snapshot.source.pasteEdits,
-    nameEdits: snapshot.source.nameEdits ?? {},
-    sessionSignFixes: snapshot.source.sessionSignFixes
-  });
-
-  const rebuiltSnapshots = buildQuarterSnapshots({
-    pastedText: snapshot.source.pastedText,
-    selectedCompany: snapshot.companyName,
-    tolerance: snapshot.source.tolerance,
-    logicConfig: snapshot.source.logicConfig,
-    companyConfigs: snapshot.source.companyConfigs,
-    classificationGroups: snapshot.source.classificationGroups,
-    pasteEdits: normalizedPasteEdits,
-    nameEdits: snapshot.source.nameEdits ?? {},
-    sessionSignFixes: snapshot.source.sessionSignFixes,
-    statementType: snapshot.source.statementType
-  });
-
-  const rebuilt = rebuiltSnapshots.find((item) => item.quarterKey === snapshot.quarterKey)
-    ?? rebuiltSnapshots.find((item) => item.id === snapshot.id);
-
-  if (!rebuilt) {
-    return {
-      ...snapshot,
-      source: {
-        ...snapshot.source,
-        pasteEdits: normalizedPasteEdits
-      }
-    } satisfies SavedQuarterSnapshot;
-  }
-
-  return {
-    ...rebuilt,
-    id: snapshot.id,
-    savedAt: snapshot.savedAt,
-    quarterKey: snapshot.quarterKey,
-    quarterLabel: snapshot.quarterLabel,
-    companyName: snapshot.companyName
-  } satisfies SavedQuarterSnapshot;
+  // 분류DB is the single source of truth. The client always builds snapshots
+  // under the current catalog before sending, so there's nothing to
+  // re-normalize against the snapshot's own (now-deprecated) source.* rules.
+  // Trust the payload as-is — legacy fields, if any, get dropped on the next
+  // write because mapDatasetRow strips them on read and buildQuarterSnapshots
+  // doesn't write them anymore.
+  return snapshot;
 }
 
 export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClassificationGroups?: ClassificationGroups) {

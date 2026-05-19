@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { DEFAULT_CLASSIFICATION_GROUPS, DEFAULT_COMPANY_CONFIGS, DEFAULT_LOGIC_CONFIG } from "@/lib/validation/defaults";
 import type { SavedQuarterSnapshot } from "@/lib/validation/report";
 
 type DatasetRow = {
@@ -19,17 +18,26 @@ export type DatasetApiResponse = {
   trashedDatasets: SavedQuarterSnapshot[];
 };
 
-export function mapDatasetRow(item: DatasetRow): SavedQuarterSnapshot {
-  const source = (item.source && typeof item.source === "object") ? item.source as SavedQuarterSnapshot["source"] : {
-    pastedText: "",
-    tolerance: 1,
-    pasteEdits: {},
-    nameEdits: {},
-    sessionSignFixes: {},
-    logicConfig: structuredClone(DEFAULT_LOGIC_CONFIG),
-    companyConfigs: structuredClone(DEFAULT_COMPANY_CONFIGS),
-    classificationGroups: structuredClone(DEFAULT_CLASSIFICATION_GROUPS)
+/**
+ * Strip legacy fields (logicConfig/companyConfigs/classificationGroups/
+ * sessionSignFixes) off any incoming source. 분류DB is now the live source of
+ * truth — older rows still carry these in Supabase, but we drop them on the
+ * way in so nothing downstream is tempted to use stale rules. Once a dataset
+ * is re-saved (manually or via the boot-time sync) the row in Supabase loses
+ * those fields permanently.
+ */
+function sanitizeSource(raw: unknown): SavedQuarterSnapshot["source"] {
+  const obj = (raw && typeof raw === "object") ? raw as Record<string, unknown> : {};
+  return {
+    pastedText: typeof obj.pastedText === "string" ? obj.pastedText : "",
+    tolerance: typeof obj.tolerance === "number" ? obj.tolerance : 1,
+    pasteEdits: (obj.pasteEdits && typeof obj.pasteEdits === "object") ? obj.pasteEdits as Record<string, number> : {},
+    nameEdits: (obj.nameEdits && typeof obj.nameEdits === "object") ? obj.nameEdits as Record<string, string> : {},
+    statementType: typeof obj.statementType === "string" ? obj.statementType : undefined
   };
+}
+
+export function mapDatasetRow(item: DatasetRow): SavedQuarterSnapshot {
   return {
     id: item.id,
     companyName: item.company_name,
@@ -38,7 +46,7 @@ export function mapDatasetRow(item: DatasetRow): SavedQuarterSnapshot {
     savedAt: item.saved_at,
     rawStatementRows: Array.isArray(item.raw_statement_rows) ? item.raw_statement_rows as SavedQuarterSnapshot["rawStatementRows"] : [],
     adjustedStatementRows: Array.isArray(item.adjusted_statement_rows) ? item.adjusted_statement_rows as SavedQuarterSnapshot["adjustedStatementRows"] : [],
-    source
+    source: sanitizeSource(item.source)
   };
 }
 
