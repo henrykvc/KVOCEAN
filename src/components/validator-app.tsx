@@ -2289,10 +2289,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
 
     async function loadSharedState() {
       setMounted(true);
-      // 임시 진단 — 부팅이 어느 단계에서 멈추는지 측정. 원인 확정 후 제거.
-      const __bootT0 = performance.now();
-      const __bootLog = (label: string) => console.log("[KVOCEAN boot]", label, Math.round(performance.now() - __bootT0) + "ms");
-      __bootLog("start");
 
       let nextPersisted = getDefaultPersistedState();
       let nextSaved: SavedQuarterSnapshot[] = [];
@@ -2300,15 +2296,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
 
       try {
         // datasets pre-loaded server-side when available; only fetch if not provided
-        // 임시 진단 — 두 fetch를 분리 측정해 어느 쪽이 느린지 본다.
-        const sharedStateFetch = fetch("/api/shared-state", { cache: "no-store" })
-          .then((response) => { __bootLog("shared-state fetched"); return response; });
-        const datasetsFetch: Promise<Response | null> = initialDatasets
-          ? Promise.resolve(null)
-          : fetch("/api/datasets", { cache: "no-store" })
-              .then((response) => { __bootLog("datasets fetched"); return response; });
-        const [configResponse, datasetsResponse] = await Promise.all([sharedStateFetch, datasetsFetch]);
-        __bootLog("both fetches done");
+        const fetchPromises: [Promise<Response>, Promise<Response> | null] = [
+          fetch("/api/shared-state", { cache: "no-store" }),
+          initialDatasets ? null : fetch("/api/datasets", { cache: "no-store" })
+        ];
+        const [configResponse, datasetsResponse] = await Promise.all(fetchPromises);
 
         if (!configResponse.ok) {
           throw new Error("공용 데이터를 불러오지 못했습니다.");
@@ -2325,7 +2317,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
           nextTrashed = parsedDatasetResponse.trashedDatasets;
         }
 
-        __bootLog("datasets parsed");
         const remote = await configResponse.json() as SharedStateResponse;
         const remoteMemo = typeof remote.config.workspaceMemo === "string" ? remote.config.workspaceMemo : "";
         const legacyMemo = typeof window !== "undefined" ? window.localStorage.getItem("kvocean-workspace-memo") : null;
@@ -2370,7 +2361,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
             : remotePersisted,
           remoteSaved
         );
-        __bootLog("managed assignments done");
 
         if (shouldRecoverRemoteClassification || autoAssignedChanged) {
           const mergedConfig = autoAssignedRemotePersisted;
@@ -2419,7 +2409,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       setTrashedDatasets(nextTrashed);
       setSelectedDatasetId(sortedDatasets[0]?.id ?? "");
       setComparisonSelections(buildInitialComparisonSelections(sortedDatasets));
-      __bootLog("state ready (about to render)");
       setSharedStateReady(true);
     }
 
@@ -2850,23 +2839,27 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     return relations;
   }, [classificationCatalog]);
 
+  // pasteEdits를 의존성에 넣고 setPasteEdits를 호출하면, normalize 결과가
+  // 입력과 미세하게라도 달라지는 순간 무한 리렌더에 빠진다(매 루프마다 거대
+  // 카탈로그를 풀스캔 → 메인 스레드 영구 점유 → 클릭 불가). 함수형 업데이트로
+  // prev를 직접 받고, 결과가 같으면 prev를 그대로 반환해 리렌더를 끊는다.
   useEffect(() => {
-    const normalizedPasteEdits = normalizePasteEditsForValidation({
-      pastedText,
-      selectedCompany,
-      logicConfig,
-      companyConfigs,
-      classificationGroups,
-      classificationCatalog,
-      pasteEdits,
-      nameEdits,
-      sessionSignFixes
+    setPasteEdits((prev) => {
+      const normalized = normalizePasteEditsForValidation({
+        pastedText,
+        selectedCompany,
+        logicConfig,
+        companyConfigs,
+        classificationGroups,
+        classificationCatalog,
+        pasteEdits: prev,
+        nameEdits,
+        sessionSignFixes
+      });
+      return JSON.stringify(normalized) !== JSON.stringify(prev) ? normalized : prev;
     });
-
-    if (JSON.stringify(normalizedPasteEdits) !== JSON.stringify(pasteEdits)) {
-      setPasteEdits(normalizedPasteEdits);
-    }
-  }, [pastedText, selectedCompany, logicConfig, companyConfigs, classificationGroups, classificationCatalog, pasteEdits, nameEdits, sessionSignFixes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastedText, selectedCompany, logicConfig, companyConfigs, classificationGroups, classificationCatalog, nameEdits, sessionSignFixes]);
 
   function resetAdjustments() {
     setPasteEdits({});
