@@ -688,25 +688,6 @@ type ClassificationTreeNode = ClassificationTreeLeaf | ClassificationTreeBranch;
 
 const UNCLASSIFIED_LABEL = "미분류";
 
-// localStorage key for the last 분류DB signature this browser synced its
-// stored datasets against. If the current catalog hashes to the same value,
-// the dataset-sync work can be skipped on boot.
-// Bump the version suffix whenever a deploy needs every browser to re-run
-// the sync once (e.g. when legacy source.* fields stop being written and
-// we want existing rows in Supabase to lose them on the next PUT).
-const CATALOG_SYNC_LS_KEY = "kvocean.lastSyncedCatalogSignature.v4";
-
-/**
- * Compact fingerprint of the sign-deciding fields of every catalog group.
- * Identical fingerprint = no change that could affect any dataset's sign.
- */
-function catalogSyncSignature(catalog: ClassificationCatalogGroup[]): string {
-  return catalog
-    .map((g) => `${g.groupId}|${g.sign}|${g.canonicalKey}|${[...g.aliases].sort().join(",")}`)
-    .sort()
-    .join("\n");
-}
-
 // Same rule as normalizeLookupKey in defaults.ts — keeps OCR-side dedup
 // (occurrences, 미분류 detection) in sync with the validator's matching.
 function normalizeAliasKey(value: string): string {
@@ -2266,10 +2247,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [classificationHistory, setClassificationHistory] = useState<ClassificationCatalogGroup[][]>([]);
   const [configRulesHistory, setConfigRulesHistory] = useState<ConfigRulesSnapshot[]>([]);
   const configRulesSnapshotPendingRef = useRef(false);
-  const classificationSyncOnceRef = useRef(false);
-  // 서버(Supabase app_config)에 저장된 마지막 동기화 signature. localStorage보다
-  // 우선해서, 한 사용자가 동기화하면 나머지 전원이 부팅 시 skip할 수 있게 한다.
-  const serverSyncSignatureRef = useRef<string | null>(null);
   const [classificationSyncMessage, setClassificationSyncMessage] = useState<string | null>(null);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>(initialDatasets ?? []);
@@ -2341,7 +2318,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         }
 
         const remote = await configResponse.json() as SharedStateResponse;
-        serverSyncSignatureRef.current = remote.config.lastSyncedCatalogSignature ?? null;
         const remoteMemo = typeof remote.config.workspaceMemo === "string" ? remote.config.workspaceMemo : "";
         const legacyMemo = typeof window !== "undefined" ? window.localStorage.getItem("kvocean-workspace-memo") : null;
         const shouldMigrateLegacy = !!legacyMemo && !remoteMemo;
@@ -2545,108 +2521,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     return () => window.clearTimeout(timeout);
   }, [mounted, sharedStateReady, workspaceMemo]);
 
-  // After initial Supabase load, re-sync stored datasets against the current
-  // 분류DB — but only when the catalog has actually changed since the last
-  // time this browser synced. We hash the catalog's sign-deciding fields and
-  // stash it in localStorage; subsequent loads with the same hash skip the
-  // dataset rebuild entirely (fast path).
-  useEffect(() => {
-    if (!mounted || !sharedStateReady) return;
-    if (classificationSyncOnceRef.current) return;
-    if (!savedDatasets.length) return;
-    classificationSyncOnceRef.current = true;
-
-    const currentSignature = catalogSyncSignature(classificationCatalog);
-    let localSignature: string | null = null;
-    try {
-      localSignature = window.localStorage.getItem(CATALOG_SYNC_LS_KEY);
-    } catch {
-      // Private mode / storage disabled — fall through and sync anyway.
-    }
-    // 서버(Supabase app_config) signature 우선. 다른 사용자가 이미 동기화했으면
-    // 그 값이 들어있어 이 브라우저는 작업을 건너뛴다. 서버 컬럼이 없으면
-    // (마이그레이션 전) null이 와서 localStorage 기반으로 자연스럽게 fallback된다.
-    const lastSignature = serverSyncSignatureRef.current ?? localSignature;
-    // 임시 진단 로그 — 동기화가 매번 도는 원인 추적용. 원인 확정 후 제거.
-    console.log("[KVOCEAN sync-diag]", {
-      willSkip: !!lastSignature && lastSignature === currentSignature,
-      currentLen: currentSignature.length,
-      serverLen: serverSyncSignatureRef.current?.length ?? null,
-      localLen: localSignature?.length ?? null,
-      firstDiff: lastSignature
-        ? [...currentSignature].findIndex((ch, i) => ch !== lastSignature[i])
-        : -1,
-      currentHead: currentSignature.slice(0, 160),
-      lastHead: lastSignature?.slice(0, 160) ?? null
-    });
-    if (lastSignature && lastSignature === currentSignature) {
-      // Catalog hasn't moved since the datasets were last synced — nothing to do.
-      return;
-    }
-
-    // 서버·로컬 모두 signature가 없으면 한 번도 동기화된 적이 없는 것 →
-    // stored override를 시드로 wipe하고 전체 force PUT. 이후 실행은
-    // 변경된 row만 PUT.
-    const forceAll = !lastSignature;
-
-    const persistSyncSignature = (signature: string) => {
-      try {
-        window.localStorage.setItem(CATALOG_SYNC_LS_KEY, signature);
-      } catch {
-        // localStorage 불가 — 서버 저장으로 충분.
-      }
-      serverSyncSignatureRef.current = signature;
-      // 서버에 기록 → 다른 사용자는 부팅 시 이 값과 비교만 하고 skip.
-      // 컬럼이 없으면 route가 graceful 응답하므로 localStorage fallback만 남는다.
-      fetch("/api/shared-state", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ syncSignature: { value: signature } })
-      }).catch(() => {
-        // 서버 저장 실패해도 localStorage fallback이 있어 치명적이지 않다.
-      });
-    };
-
-    // Delay 600ms so the first paint + heavy useMemo work finishes before we
-    // start rebuilding datasets, otherwise the browser flags the tab as
-    // unresponsive on first load.
-    const timeout = window.setTimeout(async () => {
-      if (forceAll) {
-        // Wipe every stored override that influences sign decisions back to
-        // the code-side defaults: classification catalog, logicConfig
-        // (sectionSignOverrides etc.), and per-company configs. Whatever was
-        // sitting in Supabase from old code paths is replaced. The existing
-        // 700ms shared-state PUT effect picks the state changes up and
-        // mirrors them into Supabase.
-        const defaultCatalog = cloneClassificationCatalog(DEFAULT_CLASSIFICATION_CATALOG);
-        const defaultGroups = classificationCatalogToGroups(defaultCatalog);
-        const defaultLogic = cloneLogicConfig(DEFAULT_LOGIC_CONFIG);
-        const defaultCompanies: CompanyConfigs = structuredClone(DEFAULT_COMPANY_CONFIGS);
-        setClassificationCatalog(defaultCatalog);
-        setClassificationGroups(defaultGroups);
-        setLogicConfig(defaultLogic);
-        setCompanyConfigs(defaultCompanies);
-        // Pass the fresh values into sync directly — React state hasn't
-        // propagated yet, so reading from state here would still see the
-        // pre-reset values.
-        await syncStoredDatasetsToClassificationDB(
-          defaultCatalog,
-          defaultGroups,
-          true,
-          defaultLogic,
-          defaultCompanies
-        );
-        // Recompute the signature against the catalog we just wrote so the
-        // next boot's compare doesn't re-trigger.
-        persistSyncSignature(catalogSyncSignature(defaultCatalog));
-      } else {
-        await syncStoredDatasetsToClassificationDB();
-        persistSyncSignature(currentSignature);
-      }
-    }, 600);
-    return () => window.clearTimeout(timeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, sharedStateReady, savedDatasets.length, classificationCatalog]);
+  // 부팅 시 저장 데이터 자동 동기화는 제거됨. 매 부팅마다 전체 데이터셋을
+  // 재계산·PUT하느라 탭이 멈추고, 큰 PUT은 413으로 실패해 무한 반복됐다.
+  // 분류DB를 편집·저장할 때만 syncStoredDatasetsToClassificationDB가 돈다.
 
   useEffect(() => {
     const company = selectedCompany.trim();
