@@ -2267,6 +2267,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [configRulesHistory, setConfigRulesHistory] = useState<ConfigRulesSnapshot[]>([]);
   const configRulesSnapshotPendingRef = useRef(false);
   const classificationSyncOnceRef = useRef(false);
+  // 서버(Supabase app_config)에 저장된 마지막 동기화 signature. localStorage보다
+  // 우선해서, 한 사용자가 동기화하면 나머지 전원이 부팅 시 skip할 수 있게 한다.
+  const serverSyncSignatureRef = useRef<string | null>(null);
   const [classificationSyncMessage, setClassificationSyncMessage] = useState<string | null>(null);
   const [resultOpenState, setResultOpenState] = useState<Record<string, boolean>>({});
   const [savedDatasets, setSavedDatasets] = useState<SavedQuarterSnapshot[]>(initialDatasets ?? []);
@@ -2338,6 +2341,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         }
 
         const remote = await configResponse.json() as SharedStateResponse;
+        serverSyncSignatureRef.current = remote.config.lastSyncedCatalogSignature ?? null;
         const remoteMemo = typeof remote.config.workspaceMemo === "string" ? remote.config.workspaceMemo : "";
         const legacyMemo = typeof window !== "undefined" ? window.localStorage.getItem("kvocean-workspace-memo") : null;
         const shouldMigrateLegacy = !!legacyMemo && !remoteMemo;
@@ -2553,21 +2557,43 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     classificationSyncOnceRef.current = true;
 
     const currentSignature = catalogSyncSignature(classificationCatalog);
-    let lastSignature: string | null = null;
+    let localSignature: string | null = null;
     try {
-      lastSignature = window.localStorage.getItem(CATALOG_SYNC_LS_KEY);
+      localSignature = window.localStorage.getItem(CATALOG_SYNC_LS_KEY);
     } catch {
       // Private mode / storage disabled — fall through and sync anyway.
     }
+    // 서버(Supabase app_config) signature 우선. 다른 사용자가 이미 동기화했으면
+    // 그 값이 들어있어 이 브라우저는 작업을 건너뛴다. 서버 컬럼이 없으면
+    // (마이그레이션 전) null이 와서 localStorage 기반으로 자연스럽게 fallback된다.
+    const lastSignature = serverSyncSignatureRef.current ?? localSignature;
     if (lastSignature && lastSignature === currentSignature) {
-      // Catalog hasn't moved since this browser last synced — nothing to do.
+      // Catalog hasn't moved since the datasets were last synced — nothing to do.
       return;
     }
 
-    // First boot under this CATALOG_SYNC_LS_KEY version → wipe stored
-    // 분류DB edits back to the seed and force PUT every dataset. After this
-    // initial pass, future runs only PUT rows whose signFlag actually moved.
-    const forceAll = lastSignature === null;
+    // 서버·로컬 모두 signature가 없으면 한 번도 동기화된 적이 없는 것 →
+    // stored override를 시드로 wipe하고 전체 force PUT. 이후 실행은
+    // 변경된 row만 PUT.
+    const forceAll = !lastSignature;
+
+    const persistSyncSignature = (signature: string) => {
+      try {
+        window.localStorage.setItem(CATALOG_SYNC_LS_KEY, signature);
+      } catch {
+        // localStorage 불가 — 서버 저장으로 충분.
+      }
+      serverSyncSignatureRef.current = signature;
+      // 서버에 기록 → 다른 사용자는 부팅 시 이 값과 비교만 하고 skip.
+      // 컬럼이 없으면 route가 graceful 응답하므로 localStorage fallback만 남는다.
+      fetch("/api/shared-state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ syncSignature: { value: signature } })
+      }).catch(() => {
+        // 서버 저장 실패해도 localStorage fallback이 있어 치명적이지 않다.
+      });
+    };
 
     // Delay 600ms so the first paint + heavy useMemo work finishes before we
     // start rebuilding datasets, otherwise the browser flags the tab as
@@ -2600,18 +2626,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         );
         // Recompute the signature against the catalog we just wrote so the
         // next boot's compare doesn't re-trigger.
-        try {
-          window.localStorage.setItem(CATALOG_SYNC_LS_KEY, catalogSyncSignature(defaultCatalog));
-        } catch {
-          // No-op if storage unavailable.
-        }
+        persistSyncSignature(catalogSyncSignature(defaultCatalog));
       } else {
         await syncStoredDatasetsToClassificationDB();
-        try {
-          window.localStorage.setItem(CATALOG_SYNC_LS_KEY, currentSignature);
-        } catch {
-          // No-op if storage unavailable.
-        }
+        persistSyncSignature(currentSignature);
       }
     }, 600);
     return () => window.clearTimeout(timeout);

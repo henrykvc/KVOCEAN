@@ -40,8 +40,20 @@ export async function GET() {
     memoRow = memoData;
   }
 
+  // Loaded separately so a missing column (pre-migration deploys) degrades
+  // gracefully to localStorage-based sync instead of failing the whole GET.
+  let signatureRow: { last_synced_catalog_signature?: string | null } | null = null;
+  const { data: signatureData, error: signatureError } = await supabase
+    .from("app_config")
+    .select("last_synced_catalog_signature")
+    .eq("id", "global")
+    .maybeSingle();
+  if (!signatureError && signatureData) {
+    signatureRow = signatureData;
+  }
+
   const response: SharedStateResponse = {
-    config: deserializeSharedConfig({ ...(configRow ?? {}), ...(memoRow ?? {}) }),
+    config: deserializeSharedConfig({ ...(configRow ?? {}), ...(memoRow ?? {}), ...(signatureRow ?? {}) }),
     datasets: []
   };
 
@@ -51,6 +63,7 @@ export async function GET() {
 type SharedStatePutBody = {
   config?: Partial<SharedStateResponse["config"]>;
   memo?: { value: string };
+  syncSignature?: { value: string };
 };
 
 export async function PUT(request: Request) {
@@ -72,7 +85,9 @@ export async function PUT(request: Request) {
 
   const hasMemoUpdate = !!body.memo && typeof body.memo.value === "string";
 
-  if (!hasConfigUpdate && !hasMemoUpdate) {
+  const hasSignatureUpdate = !!body.syncSignature && typeof body.syncSignature.value === "string";
+
+  if (!hasConfigUpdate && !hasMemoUpdate && !hasSignatureUpdate) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
@@ -122,6 +137,26 @@ export async function PUT(request: Request) {
       const columnMissing = /workspace_memo/i.test(message) && /(does not exist|column)/i.test(message);
       if (columnMissing) {
         return NextResponse.json({ ok: false, reason: "memo_columns_missing", error: message });
+      }
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
+  }
+
+  if (hasSignatureUpdate) {
+    const { error } = await supabase
+      .from("app_config")
+      .upsert({
+        id: "global",
+        last_synced_catalog_signature: body.syncSignature!.value,
+        updated_at: nowIso,
+        updated_by: user.email
+      }, { onConflict: "id" });
+
+    if (error) {
+      const message = error.message ?? "";
+      const columnMissing = /last_synced_catalog_signature/i.test(message) && /(does not exist|column)/i.test(message);
+      if (columnMissing) {
+        return NextResponse.json({ ok: false, reason: "signature_column_missing", error: message });
       }
       return NextResponse.json({ error: message }, { status: 500 });
     }

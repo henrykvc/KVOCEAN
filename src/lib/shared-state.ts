@@ -21,6 +21,9 @@ export type SharedConfigRecord = {
   workspaceMemo: string;
   workspaceMemoUpdatedAt?: string | null;
   workspaceMemoUpdatedBy?: string | null;
+  // 저장된 datasets가 마지막으로 동기화된 분류DB catalog의 signature.
+  // 부팅 시 현재 catalog와 비교해 같으면 동기화를 건너뛴다 (전 사용자 공유).
+  lastSyncedCatalogSignature?: string | null;
 };
 
 export type SharedStateResponse = {
@@ -52,6 +55,7 @@ export function deserializeSharedConfig(row: {
   workspace_memo?: string | null;
   workspace_memo_updated_at?: string | null;
   workspace_memo_updated_by?: string | null;
+  last_synced_catalog_signature?: string | null;
 } | null | undefined): SharedConfigRecord {
   const catalog = Array.isArray(row?.classification_catalog)
     ? mergeDefaultClassificationCatalog(row?.classification_catalog)
@@ -68,6 +72,7 @@ export function deserializeSharedConfig(row: {
     ...persisted,
     workspaceMemo: typeof row?.workspace_memo === "string" ? row!.workspace_memo : "",
     workspaceMemoUpdatedAt: row?.workspace_memo_updated_at ?? null,
-    workspaceMemoUpdatedBy: row?.workspace_memo_updated_by ?? null
+    workspaceMemoUpdatedBy: row?.workspace_memo_updated_by ?? null,
+    lastSyncedCatalogSignature: typeof row?.last_synced_catalog_signature === "string" ? row!.last_synced_catalog_signature : null
   };
 }

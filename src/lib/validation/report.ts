@@ -1127,7 +1127,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         "현금및현금성자산 / 월 평균 지출액",
         result,
         [
-          { label: "현금및현금성자산", value: cash },
+          { label: "현금및현금성자산", value: cash, components: getAdjustedMetricBreakdown(current, period.key, ["현금및현금성자산"]) },
           { label: "월 평균 지출액", value: monthlySpendBase.monthlySpend }
         ],
         monthlySpendBase.monthlySpend !== null && monthlySpendBase.monthlySpend <= 0 ? "월 평균 지출액이 0 이하라 런웨이를 계산하지 않았습니다." : undefined
@@ -1153,7 +1153,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         result,
         [
           { label: "영업이익", value: operatingIncome },
-          { label: "감가상각비계", value: depreciation }
+          { label: "감가상각비계", value: depreciation, components: getClassifiedMetricBreakdown(current, period.key, DEPRECIATION_ALIASES) }
         ]
       );
     }
@@ -1176,7 +1176,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         [
           { label: "매출액", value: monthlySpendBase.sales },
           { label: "영업이익", value: monthlySpendBase.operatingIncome },
-          { label: "감가상각비계", value: monthlySpendBase.depreciation },
+          { label: "감가상각비계", value: monthlySpendBase.depreciation, components: getClassifiedMetricBreakdown(current, period.key, DEPRECIATION_ALIASES) },
           { label: "누적 지출 추정", value: monthlySpendBase.totalSpend },
           { label: "경과월수", value: period.monthsElapsed },
           { label: "월 평균 지출액", value: monthlySpendBase.monthlySpend }
@@ -1528,8 +1528,7 @@ function buildFinalSections(context: MetricContext): FinalMetricSection[] {
         const variableCostBreakdown = getClassifiedMetricBreakdown(current, period.key, VARIABLE_COST_ALIASES);
         return createCalculationDetail("(매출액 - 변동비) / 매출액 * 100", result, [
           { label: "매출액", value: sales },
-          { label: "변동비 합계", value: variableCosts },
-          ...variableCostBreakdown,
+          { label: "변동비 합계", value: variableCosts, components: variableCostBreakdown },
           { label: "공헌이익", value: contribution }
         ], sales === 0
           ? "매출액이 0이라 비율을 계산하지 않았습니다."

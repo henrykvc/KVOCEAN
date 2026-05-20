@@ -12,6 +12,10 @@ __pycache__/
 .env.local
 .env.*.local
 
+# Service account keys
+kv-ocean-*.json
+*-service-account.json
+
 # Logs and temp outputs
 npm-debug.log*
 yarn-debug.log*

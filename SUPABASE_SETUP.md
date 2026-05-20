@@ -22,8 +22,9 @@
 
 1. Supabase에서 `SQL Editor`를 엽니다.
 2. 저장소의 `supabase/001_auth_and_shared_data.sql` 내용을 먼저 실행합니다.
-3. 이어서 `supabase/002_access_control.sql`, `supabase/003_dataset_trash.sql`도 순서대로 실행합니다.
-4. 이 스크립트들은 공용 설정, 데이터셋, 변경 이력 테이블과 접근 제어, 휴지통용 소프트 삭제 컬럼을 생성합니다.
+3. 이어서 `supabase/002_access_control.sql`, `supabase/003_dataset_trash.sql`, `supabase/004_roles.sql`, `supabase/005_catalog_sync_signature.sql`도 순서대로 실행합니다.
+4. 이 스크립트들은 공용 설정·데이터셋·변경 이력 테이블, 접근 제어, 휴지통용 소프트 삭제 컬럼, 역할(roles) 컬럼, 그리고 부팅 동기화용 catalog signature 컬럼을 생성합니다.
+5. `005`는 부팅 시 저장 데이터 동기화 여부를 전 사용자가 공유하기 위한 컬럼입니다. 실행 전에는 각 브라우저가 localStorage 기준으로 동기화하며, 실행 후 자동으로 공유 모드로 전환됩니다.
 
 ## 4. 환경변수 설정
 
