@@ -1,5 +1,4 @@
 import { CLASSIFICATION_SEED, type ClassificationSeedEntry } from "./classification-seed";
-import { buildReportKeywordGroups } from "./result-group-mapping";
 
 export type SignCode = 0 | 1 | 2;
 
@@ -299,12 +298,16 @@ export const DEFAULT_COMPANY_CONFIGS: CompanyConfigs = {};
 /**
  * Build the runtime DEFAULT_CLASSIFICATION_GROUPS.
  *
- * 세 갈래로 빌드한다:
+ * 두 갈래로 빌드한다:
  *  1. 시드(분류DB) — 각 세분류별 OCR 별칭. raw 계정명 정규화에 사용.
- *  2. 보고서 합산 묶음 — 결과물DB(result-classification.ts)의 group/소분류 기반.
- *     report.ts 보고서 카드의 자식 합산 path에서 사용.
- *  3. 부모 별칭 — logicConfig.parentAliases. 판관비→판매비와관리비 같은
- *     OCR 텍스트 정규화용 (옛 LEGACY_PARENT_GROUPS의 부모 별칭 역할 대체).
+ *  2. 부모 별칭 — logicConfig.parentAliases. 판관비→판매비와관리비 같은
+ *     OCR 텍스트 정규화용.
+ *
+ * 결과물DB 합산 묶음(인건비/변동비 등)은 더 이상 여기 머지하지 않는다.
+ * 보고서 합산·breakdown은 code 기반(report.ts의 REPORT_KEYWORD_CODE_SETS)
+ * 으로 동작하므로 묶음을 이름 목록으로 가질 필요가 없다. 머지하면 한 그룹의
+ * 별칭이 수백 개로 불어나 resolveCanonicalAccountKey 등의 선형 순회가
+ * 폭발해 메인 스레드를 멈추게 했다.
  */
 function buildDefaultClassificationGroups(): ClassificationGroups {
   const groups: ClassificationGroups = {};
@@ -316,11 +319,6 @@ function buildDefaultClassificationGroups(): ClassificationGroups {
     if (groups[key]) {
       groups[key].forEach((alias) => merged.add(alias));
     }
-    groups[key] = Array.from(merged);
-  }
-
-  for (const [key, members] of Object.entries(buildReportKeywordGroups())) {
-    const merged = new Set<string>([key, ...(groups[key] ?? []), ...members]);
     groups[key] = Array.from(merged);
   }
 
