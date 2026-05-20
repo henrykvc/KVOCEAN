@@ -1,5 +1,25 @@
 import { buildCatalogAliasLookup, DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, MANAGED_CLASSIFICATION_KEY_SET, type CatalogAliasMatch, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 import { applySign, detectCompanyFromPaste, formatNumber, parsePastedText, pasteEditKey, resolveEditedNameRow, resolveSign, safeFloat, type SessionSignFixes } from "./engine";
+import { buildReportKeywordCodes } from "./result-group-mapping";
+
+// 보고서 키워드(인건비/현금및현금성자산/차입금 …) → 묶음 멤버 code 집합.
+// 행의 code가 이 집합에 들면 곧 그 묶음 멤버 — 이름 대조 없이 즉시 판정한다.
+const REPORT_KEYWORD_CODE_SETS: Record<string, Set<number>> = (() => {
+  const out: Record<string, Set<number>> = {};
+  for (const [keyword, codes] of Object.entries(buildReportKeywordCodes())) {
+    out[keyword] = new Set(codes);
+  }
+  return out;
+})();
+
+// candidates 중 묶음 키워드에 해당하는 모든 code를 한 집합으로 모은다.
+function collectKeywordCodeSet(candidates: string[]): Set<number> {
+  const codeSet = new Set<number>();
+  for (const candidate of candidates) {
+    for (const code of REPORT_KEYWORD_CODE_SETS[candidate] ?? []) codeSet.add(code);
+  }
+  return codeSet;
+}
 
 export type ReportPeriod = {
   key: string;
@@ -536,12 +556,15 @@ function getRowEntries(rows: StatementMatrixRow[], candidates: string[], section
   });
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
+  // 묶음 키워드면 code 집합. 행의 code가 여기 들면 이름 대조 없이 매칭.
+  const codeSet = collectKeywordCodeSet(candidates);
   const matches = rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const rowName = normalizeText(row.accountName);
+    const byCode = codeSet.size > 0 && typeof row.code === "number" && codeSet.has(row.code);
     const byName = canonicalCandidates.some((candidate) => rowKey === candidate || rowName === candidate);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
-    return byName && bySection;
+    return (byCode || byName) && bySection;
   });
 
   return applyCanonicalBucketPrecedence(matches)
@@ -713,13 +736,15 @@ function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, cand
   const canonicalCandidates = buildClassifiedCandidateSet(candidates, classificationGroups, sectionName);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
+  const codeSet = collectKeywordCodeSet(candidates);
   const values = applyClassifiedBucketPrecedence(rows
     .filter((row) => {
       const rowKey = normalizeText(row.canonicalKey || row.accountName);
       const rowName = normalizeText(row.accountName);
+      const byCode = codeSet.size > 0 && typeof row.code === "number" && codeSet.has(row.code);
       const byName = canonicalCandidates.has(rowKey) || canonicalCandidates.has(rowName);
       const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
-      return byName && bySection;
+      return (byCode || byName) && bySection;
     })
     , preferredSections).sort((a, b) => {
       const aPreferred = preferredSections.includes(a.sectionKey) ? 1 : 0;
@@ -740,12 +765,14 @@ function getClassifiedRows(rows: StatementMatrixRow[], candidates: string[], sec
   const canonicalCandidates = buildClassifiedCandidateSet(candidates, classificationGroups, sectionName);
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
 
+  const codeSet = collectKeywordCodeSet(candidates);
   return applyClassifiedBucketPrecedence(rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const rowName = normalizeText(row.accountName);
+    const byCode = codeSet.size > 0 && typeof row.code === "number" && codeSet.has(row.code);
     const byName = canonicalCandidates.has(rowKey) || canonicalCandidates.has(rowName);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
-    return byName && bySection;
+    return (byCode || byName) && bySection;
   }), getPreferredSectionKeys(candidates));
 }
 

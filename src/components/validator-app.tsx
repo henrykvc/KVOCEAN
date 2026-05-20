@@ -3630,7 +3630,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
           || matched.adjustedStatementRows.length !== dataset.adjustedStatementRows.length
           || matched.adjustedStatementRows.some((newRow, idx) => {
             const oldRow = dataset.adjustedStatementRows[idx];
-            return !oldRow || oldRow.signFlag !== newRow.signFlag;
+            // 부호 변화뿐 아니라 code 변화도 동기화 대상 — 옛 데이터(code 없음)에
+            // code를 채우는 1회 마이그레이션이 이 비교로 트리거된다.
+            return !oldRow
+              || oldRow.signFlag !== newRow.signFlag
+              || (oldRow.code ?? null) !== (newRow.code ?? null);
           });
         if (changed) changedSnapshots.push(matched);
       }

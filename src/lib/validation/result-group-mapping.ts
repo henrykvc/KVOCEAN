@@ -91,3 +91,32 @@ export function buildReportKeywordGroups(): Record<string, string[]> {
 
   return result;
 }
+
+// 보고서 키워드 → 묶음 멤버의 code 목록.
+// 보고서 합산·breakdown은 행의 code가 이 목록에 있는지로 묶음을 판정한다 —
+// 이름을 매번 대조하지 않아 빠르고, 이름 표기 차이에 영향받지 않는다.
+export function buildReportKeywordCodes(): Record<string, number[]> {
+  const result: Record<string, number[]> = {};
+
+  for (const [keyword, groupNames] of Object.entries(REPORT_KEYWORD_GROUPS)) {
+    const codes = new Set<number>();
+    for (const groupName of groupNames) {
+      for (const entry of RESULT_BY_GROUP.get(groupName) ?? []) {
+        codes.add(entry.code);
+      }
+    }
+    result[keyword] = Array.from(codes);
+  }
+
+  for (const [keyword, sobunryuList] of Object.entries(REPORT_KEYWORD_SOBUNRYU)) {
+    const codes = new Set<number>();
+    for (const entry of RESULT_CLASSIFICATION) {
+      if (sobunryuList.includes(entry.소분류.trim())) {
+        codes.add(entry.code);
+      }
+    }
+    result[keyword] = Array.from(codes);
+  }
+
+  return result;
+}
