@@ -1,10 +1,5 @@
 import { buildCatalogAliasLookup, DEFAULT_CLASSIFICATION_GROUPS, LOSS_ACCOUNTS, MANAGED_CLASSIFICATION_KEY_SET, type CatalogAliasMatch, type ClassificationCatalogGroup, type ClassificationGroups, type CompanyConfigs, type LogicConfig, type SignCode } from "./defaults";
 import { applySign, detectCompanyFromPaste, formatNumber, parsePastedText, pasteEditKey, resolveEditedNameRow, resolveSign, safeFloat, type SessionSignFixes } from "./engine";
-import { buildReportKeywordGroups } from "./result-group-mapping";
-
-// 보고서 합산·breakdown이 쓰는 결과물DB 묶음 멤버. catalog 라운드트립에서
-// MANAGED 키의 alias가 비워져도 영향받지 않도록, 코드 상수에서 한 번 계산해 둔다.
-const RESULT_DB_KEYWORD_GROUPS = buildReportKeywordGroups();
 
 export type ReportPeriod = {
   key: string;
@@ -1956,22 +1951,9 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
       return a.label.localeCompare(b.label);
     });
 
-  const baseClassificationGroups = activeClassificationGroups
+  const reportClassificationGroups = activeClassificationGroups
     ?? snapshots[0]?.source?.classificationGroups
     ?? structuredClone(DEFAULT_CLASSIFICATION_GROUPS);
-
-  // 결과물DB 묶음(인건비/현금및현금성자산/차입금 등)은 보고서 합산·breakdown의
-  // 진실원천이다. 런타임 classificationGroups는 catalog에서 오는데, catalog는
-  // MANAGED 키의 alias를 비워 저장하므로 그대로 쓰면 묶음 멤버가 사라진다.
-  // 여기서 결과물DB 기반 묶음을 합쳐 항상 온전한 멤버를 보장한다.
-  const reportClassificationGroups: ClassificationGroups = { ...baseClassificationGroups };
-  for (const [keyword, members] of Object.entries(RESULT_DB_KEYWORD_GROUPS)) {
-    reportClassificationGroups[keyword] = Array.from(new Set([
-      keyword,
-      ...(reportClassificationGroups[keyword] ?? []),
-      ...members
-    ]));
-  }
 
   const buildMatrix = (kind: "rawStatementRows" | "adjustedStatementRows") => {
     const rowMap = new Map<string, StatementMatrixRow>();
