@@ -2289,6 +2289,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
 
     async function loadSharedState() {
       setMounted(true);
+      // 임시 진단 — 부팅이 어느 단계에서 멈추는지 측정. 원인 확정 후 제거.
+      const __bootT0 = performance.now();
+      const __bootLog = (label: string) => console.log("[KVOCEAN boot]", label, Math.round(performance.now() - __bootT0) + "ms");
+      __bootLog("start");
 
       let nextPersisted = getDefaultPersistedState();
       let nextSaved: SavedQuarterSnapshot[] = [];
@@ -2301,6 +2305,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
           initialDatasets ? null : fetch("/api/datasets", { cache: "no-store" })
         ];
         const [configResponse, datasetsResponse] = await Promise.all(fetchPromises);
+        __bootLog("fetch done");
 
         if (!configResponse.ok) {
           throw new Error("공용 데이터를 불러오지 못했습니다.");
@@ -2317,6 +2322,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
           nextTrashed = parsedDatasetResponse.trashedDatasets;
         }
 
+        __bootLog("datasets parsed");
         const remote = await configResponse.json() as SharedStateResponse;
         const remoteMemo = typeof remote.config.workspaceMemo === "string" ? remote.config.workspaceMemo : "";
         const legacyMemo = typeof window !== "undefined" ? window.localStorage.getItem("kvocean-workspace-memo") : null;
@@ -2361,6 +2367,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
             : remotePersisted,
           remoteSaved
         );
+        __bootLog("managed assignments done");
 
         if (shouldRecoverRemoteClassification || autoAssignedChanged) {
           const mergedConfig = autoAssignedRemotePersisted;
@@ -2409,6 +2416,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       setTrashedDatasets(nextTrashed);
       setSelectedDatasetId(sortedDatasets[0]?.id ?? "");
       setComparisonSelections(buildInitialComparisonSelections(sortedDatasets));
+      __bootLog("state ready (about to render)");
       setSharedStateReady(true);
     }
 
