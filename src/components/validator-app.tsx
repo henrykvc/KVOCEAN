@@ -3646,19 +3646,30 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }
 
     try {
-      setClassificationSyncMessage(`${changedSnapshots.length}개 데이터 저장 중...`);
-      const response = await fetch("/api/datasets", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshots: changedSnapshots, validatedText: "" })
-      });
-      if (!response.ok) {
-        setClassificationSyncMessage(null);
-        return;
+      // 변경된 스냅샷을 한 번에 PUT하면 payload가 커서 413으로 실패한다.
+      // 작은 배치로 나눠 보내 — 각 PUT은 부분 배열만 upsert하고,
+      // 응답은 항상 전체 datasets라 마지막 응답을 최종 상태로 쓴다.
+      const PUT_CHUNK = 5;
+      let latest: ReturnType<typeof parseDatasetApiResponse> | null = null;
+      for (let i = 0; i < changedSnapshots.length; i += PUT_CHUNK) {
+        const batch = changedSnapshots.slice(i, i + PUT_CHUNK);
+        const done = Math.min(i + PUT_CHUNK, changedSnapshots.length);
+        setClassificationSyncMessage(`${changedSnapshots.length}개 중 ${done}개 저장 중...`);
+        const response = await fetch("/api/datasets", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ snapshots: batch, validatedText: "" })
+        });
+        if (!response.ok) {
+          setClassificationSyncMessage(null);
+          return;
+        }
+        latest = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
       }
-      const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
-      setSavedDatasets(payload.datasets);
-      setTrashedDatasets(payload.trashedDatasets);
+      if (latest) {
+        setSavedDatasets(latest.datasets);
+        setTrashedDatasets(latest.trashedDatasets);
+      }
       setClassificationSyncMessage(`분류DB 기준으로 ${changedSnapshots.length}개 저장 데이터를 자동 갱신했습니다.`);
       window.setTimeout(() => setClassificationSyncMessage(null), 5000);
     } catch {
