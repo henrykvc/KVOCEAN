@@ -125,6 +125,10 @@ type MetricContext = {
   periods: ReportPeriod[];
   rawRows: StatementMatrixRow[];
   adjustedRows: StatementMatrixRow[];
+  // 묶음별로 합쳐지지 않은 명세서 원본 행 — breakdown을 세부 계정 단위로
+  // 펼칠 때 쓴다 (예: 현금및현금성자산 → 보통예금/외화예금/정기예적금).
+  detailRawRows: StatementMatrixRow[];
+  detailAdjustedRows: StatementMatrixRow[];
   sectionTotals: Map<string, Record<string, number>>;
   classificationGroups: ClassificationGroups;
 };
@@ -797,7 +801,10 @@ function getClassifiedRows(rows: StatementMatrixRow[], candidates: string[], sec
 }
 
 function getClassifiedMetricBreakdown(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
-  return getClassifiedRows(context.adjustedRows, names, sectionName, context.classificationGroups)
+  return expandToDetailRows(
+    getClassifiedRows(context.adjustedRows, names, sectionName, context.classificationGroups),
+    context.detailAdjustedRows
+  )
     .map<MetricCalculationInput | null>((row) => {
       const value = row.values[periodKey];
       if (value === null || value === undefined) {
@@ -837,18 +844,38 @@ function getNetMetricBreakdown(context: MetricContext, periodKey: string, names:
     .filter((item): item is MetricCalculationInput => item !== null);
 }
 
+// 묶음으로 합쳐진 매칭 행을 실제 명세서 세부 계정 행으로 펼친다.
+// 멤버십(어느 묶음에 드는지)은 merged 행으로 이미 확정됐고, 표시만 세부로
+// 푼다 — 예: "현금및현금성자산" 한 줄 → 보통예금/외화예금/정기예적금.
+// 세부 행이 없으면 merged 행 그대로 둔다.
+function expandToDetailRows(merged: StatementMatrixRow[], detailRows: StatementMatrixRow[]) {
+  return merged.flatMap((m) => {
+    const details = detailRows.filter(
+      (d) => d.sectionKey === m.sectionKey
+        && normalizeText(d.canonicalKey || d.accountName) === normalizeText(m.canonicalKey || m.accountName)
+    );
+    return details.length ? details : [m];
+  });
+}
+
 // raw/adjusted 합계(getRawMetricSum/getAdjustedMetricSum)와 같은 row 목록을
 // 펼친 breakdown. 합계와 멤버 합이 정확히 일치한다.
 function getRawMetricBreakdown(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
   return rowEntriesToBreakdown(
-    getRowEntries(context.rawRows, names, sectionName, context.classificationGroups),
+    expandToDetailRows(
+      getRowEntries(context.rawRows, names, sectionName, context.classificationGroups),
+      context.detailRawRows
+    ),
     periodKey
   );
 }
 
 function getAdjustedMetricBreakdown(context: MetricContext, periodKey: string, names: string[], sectionName?: string) {
   return rowEntriesToBreakdown(
-    getRowEntries(context.adjustedRows, names, sectionName, context.classificationGroups),
+    expandToDetailRows(
+      getRowEntries(context.adjustedRows, names, sectionName, context.classificationGroups),
+      context.detailAdjustedRows
+    ),
     periodKey
   );
 }
@@ -1897,6 +1924,8 @@ export function buildReportingModel(args: {
     periods,
       rawRows: rawStatementRows,
       adjustedRows: adjustedStatementRows,
+      detailRawRows: rawStatementRows,
+      detailAdjustedRows: adjustedStatementRows,
       sectionTotals: getSectionTotals(adjustedStatementRows, periods),
       classificationGroups: args.classificationGroups
     };
@@ -2081,11 +2110,14 @@ export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClas
 
   const rawStatementRows = buildMatrix("rawStatementRows");
   const adjustedStatementRows = buildMatrix("adjustedStatementRows");
+  const detailRawStatementRows = buildDetailedMatrix("rawStatementRows");
   const detailAdjustedStatementRows = buildDetailedMatrix("adjustedStatementRows");
   const context: MetricContext = {
     periods,
     rawRows: rawStatementRows,
     adjustedRows: adjustedStatementRows,
+    detailRawRows: detailRawStatementRows,
+    detailAdjustedRows: detailAdjustedStatementRows,
     sectionTotals: getSectionTotals(adjustedStatementRows, periods),
     classificationGroups: reportClassificationGroups
   };
