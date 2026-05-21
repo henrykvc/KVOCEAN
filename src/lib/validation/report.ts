@@ -242,23 +242,54 @@ function stripDerivedSuffix(accountName: string) {
   return null;
 }
 
+// classificationGroups(수백 그룹·수천 별칭)를 매 행마다 선형 스캔하면
+// 보고서 한 번 빌드에 resolveCanonicalAccountKey가 수천 번 불려 메인
+// 스레드를 수 초간 멈춘다. 그룹 객체별로 정규화 인덱스를 1회 만들어
+// 캐시 — 정확 일치는 O(1), 부분 일치(loop 3)도 재정규화 없이 순회.
+type CanonicalKeyIndex = {
+  keyIndex: Map<string, string>;
+  aliasIndex: Map<string, string>;
+  normalizedAliasPairs: Array<{ normalizedAlias: string; canonicalKey: string }>;
+};
+const canonicalKeyIndexCache = new WeakMap<ClassificationGroups, CanonicalKeyIndex>();
+
+function getCanonicalKeyIndex(classificationGroups: ClassificationGroups): CanonicalKeyIndex {
+  const cached = canonicalKeyIndexCache.get(classificationGroups);
+  if (cached) return cached;
+
+  const keyIndex = new Map<string, string>();
+  const aliasIndex = new Map<string, string>();
+  const normalizedAliasPairs: Array<{ normalizedAlias: string; canonicalKey: string }> = [];
+
+  // 원래 동작 보존: canonicalKey 정확일치(키 순서) → 별칭 정확일치(엔트리
+  // 순서, 그룹 내 첫 별칭) → 부분일치. 먼저 등록된 것이 이긴다.
+  for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
+    const nk = normalizeText(canonicalKey);
+    if (!keyIndex.has(nk)) keyIndex.set(nk, canonicalKey);
+    for (const alias of aliases) {
+      const na = normalizeText(alias);
+      if (!aliasIndex.has(na)) aliasIndex.set(na, canonicalKey);
+      normalizedAliasPairs.push({ normalizedAlias: na, canonicalKey });
+    }
+  }
+
+  const built = { keyIndex, aliasIndex, normalizedAliasPairs };
+  canonicalKeyIndexCache.set(classificationGroups, built);
+  return built;
+}
+
 function resolveBaseCanonicalAccountKey(accountName: string, sectionKey: string, classificationGroups: ClassificationGroups) {
   const normalizedName = normalizeText(accountName);
+  const { keyIndex, aliasIndex, normalizedAliasPairs } = getCanonicalKeyIndex(classificationGroups);
 
-  for (const canonicalKey of Object.keys(classificationGroups)) {
-    if (normalizedName === normalizeText(canonicalKey)) {
-      return canonicalKey;
-    }
-  }
+  const keyHit = keyIndex.get(normalizedName);
+  if (keyHit !== undefined) return keyHit;
 
-  for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
-    if (aliases.some((alias) => normalizedName === normalizeText(alias))) {
-      return canonicalKey;
-    }
-  }
+  const aliasHit = aliasIndex.get(normalizedName);
+  if (aliasHit !== undefined) return aliasHit;
 
-  for (const [canonicalKey, aliases] of Object.entries(classificationGroups)) {
-    if (aliases.some((alias) => normalizedName.includes(normalizeText(alias)))) {
+  for (const { normalizedAlias, canonicalKey } of normalizedAliasPairs) {
+    if (normalizedName.includes(normalizedAlias)) {
       return canonicalKey;
     }
   }
@@ -755,6 +786,7 @@ function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, cand
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
   const codeSet = collectKeywordCodeSet(candidates);
+  const sectionRollupNames = buildSectionRollupNameSet(rows);
   const values = applyClassifiedBucketPrecedence(rows
     .filter((row) => {
       const rowKey = normalizeText(row.canonicalKey || row.accountName);
@@ -762,8 +794,9 @@ function sumClassifiedValues(rows: StatementMatrixRow[], periodKey: string, cand
       const byCode = codeSet.size > 0 && typeof row.code === "number" && codeSet.has(row.code);
       const byName = canonicalCandidates.has(rowKey) || canonicalCandidates.has(rowName);
       const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
-      // 묶음 키워드면 code로만 판정 — 부모·총계 줄이 이름 매칭으로 끌려들지 않게.
-      const byMembership = codeSet.size > 0 ? byCode : byName;
+      // 묶음 키워드는 code로 판정하되, 섹션 총계(부모 롤업) 줄은 제외 —
+      // 부모 총계가 변동비 code를 달고 들어와 자식과 이중계산되는 것 방지.
+      const byMembership = codeSet.size > 0 ? (byCode && !sectionRollupNames.has(rowName)) : byName;
       return byMembership && bySection;
     })
     , preferredSections).sort((a, b) => {
