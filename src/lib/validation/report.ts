@@ -546,6 +546,15 @@ export function normalizePasteEditsForValidation(args: {
   return nextPasteEdits;
 }
 
+// 섹션 총계(롤업) 줄 = accountName이 다른 행들의 섹션명과 같은 행.
+// 예: 손익계산서 섹션의 "판매비와관리비" 줄은 "판매비와관리비" 섹션에 속한
+// 자식 계정들의 부모 총계다. 묶음(code) 합산에서 이런 부모 줄을 빼야
+// 자식과 같이 더해져 이중계산되는 것을 막는다 (부모가 분류DB 오염으로
+// 변동비 code를 달고 들어와도 섹션 구조로 걸러낸다).
+function buildSectionRollupNameSet(rows: StatementMatrixRow[]) {
+  return new Set(rows.map((row) => normalizeText(row.section)).filter(Boolean));
+}
+
 // 합계(getRowValues)와 breakdown(getRowEntries 기반)이 동일한 row 목록을
 // 공유하도록, 행 선별·정렬 로직은 여기 한 곳에 둔다.
 function getRowEntries(rows: StatementMatrixRow[], candidates: string[], sectionName: string | undefined, classificationGroups: ClassificationGroups) {
@@ -558,16 +567,17 @@ function getRowEntries(rows: StatementMatrixRow[], candidates: string[], section
   const preferredSections = sectionName ? [canonicalSection!].filter(Boolean) : getPreferredSectionKeys(candidates);
   // 묶음 키워드면 code 집합. 행의 code가 여기 들면 이름 대조 없이 매칭.
   const codeSet = collectKeywordCodeSet(candidates);
+  const sectionRollupNames = buildSectionRollupNameSet(rows);
   const matches = rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const rowName = normalizeText(row.accountName);
     const byCode = codeSet.size > 0 && typeof row.code === "number" && codeSet.has(row.code);
     const byName = canonicalCandidates.some((candidate) => rowKey === candidate || rowName === candidate);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
-    // 묶음 키워드면 code로만 판정한다. 이름 매칭을 fallback으로 두면
-    // "매출원가"·"판매비와관리비" 같은 부모·총계 줄(분류DB 매칭이 안 돼
-    // code가 없는)이 이름으로 끌려들어와 합계가 이중 계산된다.
-    const byMembership = codeSet.size > 0 ? byCode : byName;
+    // 묶음 키워드는 code로 판정하되, 섹션 총계(부모 롤업) 줄은 제외한다.
+    // "판매비와관리비"·"매출원가" 같은 부모 총계가 분류DB 오염으로 변동비
+    // code를 달고 들어오면 자식 항목과 같이 더해져 이중계산되기 때문.
+    const byMembership = codeSet.size > 0 ? (byCode && !sectionRollupNames.has(rowName)) : byName;
     return byMembership && bySection;
   });
 
@@ -772,14 +782,16 @@ function getClassifiedRows(rows: StatementMatrixRow[], candidates: string[], sec
   const canonicalSection = sectionName ? normalizeSectionKey(sectionName) : null;
 
   const codeSet = collectKeywordCodeSet(candidates);
+  const sectionRollupNames = buildSectionRollupNameSet(rows);
   return applyClassifiedBucketPrecedence(rows.filter((row) => {
     const rowKey = normalizeText(row.canonicalKey || row.accountName);
     const rowName = normalizeText(row.accountName);
     const byCode = codeSet.size > 0 && typeof row.code === "number" && codeSet.has(row.code);
     const byName = canonicalCandidates.has(rowKey) || canonicalCandidates.has(rowName);
     const bySection = !canonicalSection || row.sectionKey === canonicalSection || normalizeSectionKey(row.section) === canonicalSection;
-    // 묶음 키워드면 code로만 판정 — 부모·총계 줄이 이름 매칭으로 끌려들지 않게.
-    const byMembership = codeSet.size > 0 ? byCode : byName;
+    // 묶음 키워드는 code로 판정하되, 섹션 총계(부모 롤업) 줄은 제외 —
+    // 부모 총계가 변동비 code를 달고 들어와 자식과 이중계산되는 것 방지.
+    const byMembership = codeSet.size > 0 ? (byCode && !sectionRollupNames.has(rowName)) : byName;
     return byMembership && bySection;
   }), getPreferredSectionKeys(candidates));
 }
