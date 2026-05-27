@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 
 type LoginFormProps = {
@@ -11,12 +11,40 @@ type LoginFormProps = {
 const ERROR_MESSAGES: Record<string, string> = {
   callback: "로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.",
   missing_code: "로그인 링크가 올바르지 않습니다. 다시 시도해 주세요.",
-  not_allowed: "허용된 계정이 아닙니다. 접근 권한이 있는 계정으로 로그인해 주세요."
+  not_allowed: "허용된 계정이 아닙니다."
 };
 
 export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
+
+  // 미승인 케이스: 콜백이 세션을 살려둔 상태 → email을 클라이언트에서 조회.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [pendingName, setPendingName] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [requestStatus, setRequestStatus] = useState<"idle" | "submitting" | "sent" | "error">("idle");
+  const [requestMessage, setRequestMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (errorCode !== "not_allowed") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (user?.email) {
+          setPendingEmail(user.email);
+          const meta = user.user_metadata as Record<string, unknown> | undefined;
+          const name = (meta?.full_name as string | undefined) ?? (meta?.name as string | undefined) ?? null;
+          setPendingName(name);
+        }
+      } catch {
+        /* swallow — pending email은 없으면 그냥 안 보임 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [errorCode]);
 
   const errorMessage = errorCode ? (ERROR_MESSAGES[errorCode] ?? "로그인 중 오류가 발생했습니다. 다시 시도해 주세요.") : null;
 
@@ -37,6 +65,33 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "로그인에 실패했습니다.");
+    }
+  }
+
+  async function handleAccessRequest(event: React.FormEvent) {
+    event.preventDefault();
+    setRequestStatus("submitting");
+    setRequestMessage(null);
+
+    try {
+      const res = await fetch("/api/access-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() || null })
+      });
+      const json = await res.json() as { ok?: boolean; alreadyAllowed?: boolean; error?: string };
+      if (!res.ok) {
+        setRequestStatus("error");
+        setRequestMessage(json.error ?? "요청 제출에 실패했습니다.");
+        return;
+      }
+      if (json.alreadyAllowed) {
+        setRequestMessage("이미 승인된 계정입니다. 다시 로그인해 주세요.");
+      }
+      setRequestStatus("sent");
+    } catch (error) {
+      setRequestStatus("error");
+      setRequestMessage(error instanceof Error ? error.message : "요청 제출에 실패했습니다.");
     }
   }
 
@@ -68,6 +123,40 @@ export function LoginForm({ nextPath = "/", errorCode }: LoginFormProps) {
       {(errorMessage || message) && (
         <p className={`auth-message ${status === "error" || errorMessage ? "is-error" : "is-success"}`.trim()}>
           {errorMessage ?? message}
+        </p>
+      )}
+
+      {errorCode === "not_allowed" && pendingEmail && requestStatus !== "sent" && (
+        <form onSubmit={handleAccessRequest} className="auth-request" style={{ marginTop: "1rem", padding: "1rem", border: "1px solid var(--line)", borderRadius: 12, background: "var(--panel-strong)" }}>
+          <p style={{ fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.5rem" }}>접근 요청 보내기</p>
+          <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
+            <strong>{pendingEmail}</strong>{pendingName ? ` (${pendingName})` : ""} 계정으로 관리자에게 접근을 요청합니다. 승인되면 다시 로그인해 주세요.
+          </p>
+          <textarea
+            placeholder="요청 사유 (선택)"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            maxLength={500}
+            style={{ width: "100%", padding: "0.5rem 0.75rem", border: "1px solid var(--line-strong)", borderRadius: 10, fontSize: "0.875rem", fontFamily: "inherit", resize: "vertical", marginBottom: "0.5rem" }}
+          />
+          <button
+            type="submit"
+            className="button"
+            disabled={requestStatus === "submitting"}
+            style={{ width: "100%" }}
+          >
+            {requestStatus === "submitting" ? "요청 중..." : "요청 보내기"}
+          </button>
+          {requestStatus === "error" && requestMessage && (
+            <p className="auth-message is-error" style={{ marginTop: "0.5rem" }}>{requestMessage}</p>
+          )}
+        </form>
+      )}
+
+      {requestStatus === "sent" && (
+        <p className="auth-message is-success" style={{ marginTop: "1rem" }}>
+          {requestMessage ?? "관리자에게 접근 요청을 보냈습니다. 승인 후 다시 로그인해 주세요."}
         </p>
       )}
     </div>

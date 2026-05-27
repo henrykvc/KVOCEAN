@@ -67,7 +67,9 @@ export async function GET(request: NextRequest) {
       if (adminClient && email) {
         const allowed = await isActiveAllowedUser(adminClient, email).catch(() => false);
         if (!allowed) {
-          await supabase.auth.signOut();
+          // Google OAuth는 통과했지만 화이트리스트에는 없음 — 세션을 잠시 유지해
+          // 접근 요청 폼이 이메일을 검증된 세션에서 읽을 수 있게 한다. 요청 제출
+          // 또는 페이지 이탈 시 클라이언트가 명시적으로 signOut을 호출한다.
           return NextResponse.redirect(new URL("/login?error=not_allowed", request.url));
         }
       }

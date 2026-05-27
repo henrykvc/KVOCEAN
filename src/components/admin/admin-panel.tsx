@@ -15,6 +15,15 @@ type AllowedUser = {
   hasAuthAccount?: boolean;
 };
 
+export type AccessRequest = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  reason: string | null;
+  status: "pending" | "approved" | "rejected";
+  requested_at: string;
+};
+
 const ROLE_LABELS: Record<UserRole, string> = {
   creator: "제작자",
   admin: "관리자",
@@ -27,8 +36,17 @@ const ROLE_COLORS: Record<UserRole, string> = {
   manager: "#374151",
 };
 
-export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
+export function AdminPanel({
+  initialUsers,
+  initialPendingRequests = []
+}: {
+  initialUsers: AllowedUser[];
+  initialPendingRequests?: AccessRequest[];
+}) {
   const [users, setUsers] = useState<AllowedUser[]>(initialUsers);
+  const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>(initialPendingRequests);
+  const [requestLoadingId, setRequestLoadingId] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "manager">("manager");
@@ -37,6 +55,40 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
   const [loadingEmail, setLoadingEmail] = useState<string | null>(null);
   const [bulkReinviting, setBulkReinviting] = useState(false);
+
+  async function handleAccessRequestAction(req: AccessRequest, action: "approve" | "reject") {
+    setRequestLoadingId(req.id);
+    setRequestError(null);
+    try {
+      const res = await fetch(`/api/admin/access-requests/${req.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+      const json = await res.json() as { ok?: boolean; error?: string; inviteSent?: boolean };
+      if (!res.ok || !json.ok) {
+        setRequestError(json.error ?? "처리에 실패했습니다.");
+        return;
+      }
+      setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
+      if (action === "approve") {
+        // Optimistically add to the users list — re-fetch would also work but adds a roundtrip.
+        setUsers((prev) => {
+          if (prev.find((u) => u.email === req.email)) return prev;
+          return [{
+            email: req.email,
+            display_name: req.display_name,
+            is_active: true,
+            role: "manager",
+            created_at: new Date().toISOString(),
+            hasAuthAccount: Boolean(json.inviteSent)
+          }, ...prev];
+        });
+      }
+    } finally {
+      setRequestLoadingId(null);
+    }
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -137,6 +189,73 @@ export function AdminPanel({ initialUsers }: { initialUsers: AllowedUser[] }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem", padding: "1.5rem 1rem", maxWidth: 760, margin: "0 auto" }}>
+      {pendingRequests.length > 0 && (
+        <section className="config-card" style={{ borderLeft: "3px solid #ea580c" }}>
+          <div className="section-title">
+            <div>
+              <span className="section-kicker">대기 중</span>
+              <h3>접근 요청 ({pendingRequests.length}건)</h3>
+              <p className="result-meta">미승인 계정에서 접근 요청을 보냈습니다. 승인 시 매니저 역할로 추가됩니다.</p>
+            </div>
+          </div>
+          {requestError && (
+            <p style={{ color: "var(--red)", fontSize: "0.875rem", marginTop: "0.5rem" }}>{requestError}</p>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.75rem" }}>
+            {pendingRequests.map((req) => {
+              const isLoading = requestLoadingId === req.id;
+              return (
+                <div
+                  key={req.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "0.75rem",
+                    padding: "0.75rem 1rem",
+                    border: "1px solid rgba(234,88,12,0.25)",
+                    borderRadius: 12,
+                    background: "rgba(234,88,12,0.04)",
+                  }}
+                >
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", minWidth: 0, flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                      {req.display_name && (
+                        <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>{req.display_name}</span>
+                      )}
+                      <span style={{ fontSize: "0.875rem", color: "var(--muted)" }}>{req.email}</span>
+                    </div>
+                    {req.reason && (
+                      <span style={{ fontSize: "0.8rem", color: "var(--muted)", whiteSpace: "pre-wrap" }}>“{req.reason}”</span>
+                    )}
+                    <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                      {new Date(req.requested_at).toLocaleString("ko-KR")} 요청
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+                    <button
+                      className="button"
+                      style={{ padding: "0.4rem 0.75rem", fontSize: "0.8rem", borderRadius: 8 }}
+                      disabled={isLoading}
+                      onClick={() => handleAccessRequestAction(req, "approve")}
+                    >
+                      {isLoading ? "처리 중..." : "승인"}
+                    </button>
+                    <button
+                      className="danger-button"
+                      style={{ padding: "0.4rem 0.75rem", fontSize: "0.8rem", borderRadius: 8 }}
+                      disabled={isLoading}
+                      onClick={() => handleAccessRequestAction(req, "reject")}
+                    >
+                      거절
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <section className="config-card">
         <div className="section-title">
           <div>

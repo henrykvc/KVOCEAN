@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getUserRole, CREATOR_EMAIL } from "@/lib/supabase/access";
-import { AdminPanel } from "@/components/admin/admin-panel";
+import { AdminPanel, type AccessRequest } from "@/components/admin/admin-panel";
 
 type AllowedUser = {
   email: string;
@@ -43,6 +44,20 @@ export default async function AdminPage() {
     }));
   }
 
+  // 대기 중 접근 요청. 테이블이 아직 없으면 마이그레이션 전 → 빈 배열로 fallback.
+  let pendingRequests: AccessRequest[] = [];
+  const adminClient = createAdminClient();
+  if (adminClient) {
+    const { data: reqRows, error: reqError } = await adminClient
+      .from("access_requests")
+      .select("id, email, display_name, reason, status, requested_at")
+      .eq("status", "pending")
+      .order("requested_at", { ascending: false });
+    if (!reqError && reqRows) {
+      pendingRequests = reqRows as AccessRequest[];
+    }
+  }
+
   return (
     <>
       <div className="workspace-bar">
@@ -62,7 +77,7 @@ export default async function AdminPage() {
           </form>
         </div>
       </div>
-      <AdminPanel initialUsers={users ?? []} />
+      <AdminPanel initialUsers={users ?? []} initialPendingRequests={pendingRequests} />
     </>
   );
 }
