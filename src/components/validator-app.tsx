@@ -990,6 +990,11 @@ function buildClassificationTableRows(
     for (const alias of aliasList) {
       const normKey = normalizeAliasKey(alias);
       if (!normKey) continue;
+      // Seed wins for OCR matching — if this alias has a different seed home
+      // (e.g. "매출채권_대손충당금" belongs to 1001100 but the persisted catalog
+      // mistakenly also has it in 1001000), don't render a duplicate row here.
+      const seedHome = findEntryByAlias(alias);
+      if (seedHome && seedHome.code !== seed.code) continue;
       const rowKey = `catalog::${code}::${normKey}`;
       if (seenRowKeys.has(rowKey)) continue;
       seenRowKeys.add(rowKey);
