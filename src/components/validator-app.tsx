@@ -13,6 +13,7 @@ import {
   classificationCatalogToGroups,
   classificationGroupsToCatalog,
   findEntryByAlias,
+  findEntryByCode,
   isSystemFixedClassificationKey,
   mergeDefaultClassificationCatalog,
   sanitizeClassificationAliases,
@@ -948,7 +949,8 @@ type ClassificationTableRow = {
 const UNCLASSIFIED_ROW_CODE = 9999999;
 
 function buildClassificationTableRows(
-  accountEntries: SectionAccountDbEntry[]
+  accountEntries: SectionAccountDbEntry[],
+  catalog: ClassificationCatalogGroup[]
 ): ClassificationTableRow[] {
   // Build occurrence lookup from current saved data.
   const occByName = new Map<string, { occurrences: number; sources: Array<{ companyName: string; quarterLabel: string }> }>();
@@ -969,21 +971,44 @@ function buildClassificationTableRows(
     }
   }
 
-  // Use cached seed rows — only attach live occurrences here.
-  const seedRows = getSeedTableRows();
+  // Rows are derived from the runtime catalog (the source of truth) rather than
+  // the static seed file — otherwise user-added aliases (e.g. classifying a
+  // 미분류 OCR row) wouldn't appear after save, and that row would keep
+  // showing up as 미분류 on every refresh. Seed provides the 대/중/소/세/sign
+  // metadata via groupId/code lookup.
   const matchedAliasKeys = new Set<string>();
-  const rows: ClassificationTableRow[] = new Array(seedRows.length);
-  for (let i = 0; i < seedRows.length; i++) {
-    const seed = seedRows[i];
-    const aliasKey = normalizeAliasKey(seed.항목명);
-    matchedAliasKeys.add(aliasKey);
-    const occ = occByName.get(aliasKey);
-    rows[i] = {
-      ...seed,
-      occurrences: occ?.occurrences ?? 0,
-      sources: occ?.sources ?? [],
-      isUnclassified: false
-    };
+  const rows: ClassificationTableRow[] = [];
+  const seenRowKeys = new Set<string>();
+  for (const group of catalog) {
+    const code = parseInt(group.groupId, 10);
+    if (!Number.isFinite(code)) continue;
+    const seed = findEntryByCode(code);
+    if (!seed) continue;
+    // classificationGroupsToCatalog strips canonicalKey (= seed.세분류) out of
+    // group.aliases, so prepend the seed 세분류 itself to keep its row visible.
+    const aliasList: string[] = [seed.세분류, ...group.aliases];
+    for (const alias of aliasList) {
+      const normKey = normalizeAliasKey(alias);
+      if (!normKey) continue;
+      const rowKey = `catalog::${code}::${normKey}`;
+      if (seenRowKeys.has(rowKey)) continue;
+      seenRowKeys.add(rowKey);
+      matchedAliasKeys.add(normKey);
+      const occ = occByName.get(normKey);
+      rows.push({
+        rowKey,
+        code: seed.code,
+        대분류: seed.대분류,
+        중분류: seed.중분류,
+        소분류: seed.소분류,
+        세분류: seed.세분류,
+        항목명: alias,
+        sign: seed.sign,
+        occurrences: occ?.occurrences ?? 0,
+        sources: occ?.sources ?? [],
+        isUnclassified: false
+      });
+    }
   }
 
   // 미분류 — OCR 항목 중 매칭 안 된 것.
@@ -1067,39 +1092,6 @@ function getClassificationOptions(): ClassificationOptions {
 
 // Same idea for the seed-only portion of table rows (everything except live OCR occurrences).
 // We cache the seed rows and only attach occurrences per render.
-type SeedTableRow = Omit<ClassificationTableRow, "occurrences" | "sources" | "isUnclassified">;
-let _cachedSeedRows: SeedTableRow[] | null = null;
-function getSeedTableRows(): SeedTableRow[] {
-  if (_cachedSeedRows) return _cachedSeedRows;
-  const rows: SeedTableRow[] = [];
-  // Dedup by (code, normalized alias) so visually-identical variants like
-  // "현금및현금성자산" vs "현금 및 현금성자산" collapse to one display row.
-  // OCR matching still uses the full SEED_ALIAS_LOOKUP, so both spellings remain matchable.
-  const seenKeys = new Set<string>();
-  for (const entry of CLASSIFICATION_ENTRIES) {
-    const aliasList = entry.aliases.length ? entry.aliases : [entry.세분류];
-    for (const alias of aliasList) {
-      const normKey = normalizeAliasKey(alias);
-      if (!normKey) continue;
-      const rowKey = `seed::${entry.code}::${normKey}`;
-      if (seenKeys.has(rowKey)) continue;
-      seenKeys.add(rowKey);
-      rows.push({
-        rowKey,
-        code: entry.code,
-        대분류: entry.대분류,
-        중분류: entry.중분류,
-        소분류: entry.소분류,
-        세분류: entry.세분류,
-        항목명: alias,
-        sign: entry.sign
-      });
-    }
-  }
-  _cachedSeedRows = rows;
-  return rows;
-}
-
 function buildClassificationOptions(): ClassificationOptions {
   const 대Set = new Set<string>();
   const 중Map = new Map<string, Set<string>>();
@@ -1176,14 +1168,16 @@ type AliasOverride = {
 
 function ClassificationTableViewInner({
   accountEntries,
+  catalog,
   onOverridesChange,
   initialFilters
 }: {
   accountEntries: SectionAccountDbEntry[];
+  catalog: ClassificationCatalogGroup[];
   onOverridesChange?: (overrides: Map<string, AliasOverride>) => void;
   initialFilters?: { showOnlyUnclassified?: boolean; showOnlyEncountered?: boolean };
 }) {
-  const baseRows = useMemo(() => buildClassificationTableRows(accountEntries), [accountEntries]);
+  const baseRows = useMemo(() => buildClassificationTableRows(accountEntries, catalog), [accountEntries, catalog]);
   const options = useMemo(() => getClassificationOptions(), []);
   const [overrides, setOverrides] = useState<Map<string, AliasOverride>>(new Map());
 
@@ -1271,13 +1265,17 @@ function ClassificationTableViewInner({
   function saveAllDrafts() {
     const next = new Map(overrides);
     let saved = 0;
+    const failures: Array<{ name: string; error: string }> = [];
     for (const [rowKey, draft] of drafts.entries()) {
       const row = allRows.find((r) => r.rowKey === rowKey);
       if (!row) continue;
       // skip rows whose draft equals the saved value (no actual change)
       if (!isDirty(row)) continue;
       const result = validateDraft(draft, options);
-      if (!result.entry) continue;
+      if (!result.entry) {
+        failures.push({ name: row.항목명, error: result.error ?? "유효하지 않은 분류" });
+        continue;
+      }
       next.set(row.항목명, {
         code: result.entry.code,
         대분류: draft.대분류,
@@ -1291,6 +1289,15 @@ function ClassificationTableViewInner({
     if (saved > 0) {
       setOverrides(next);
       onOverridesChange?.(next);
+    }
+    // Stay in edit mode if anything failed so the user can finish the
+    // incomplete row(s) — otherwise the partial pick is silently lost.
+    if (failures.length > 0) {
+      const shown = failures.slice(0, 10).map((f) => `• ${f.name}: ${f.error}`).join("\n");
+      const extra = failures.length > 10 ? `\n...외 ${failures.length - 10}건` : "";
+      const savedNote = saved > 0 ? `\n\n${saved}개 행은 정상 저장되었습니다.` : "";
+      window.alert(`${failures.length}개 행이 분류 미완성으로 저장되지 않았습니다 (대/중/소/세 모두 선택 필요):\n${shown}${extra}${savedNote}`);
+      return;
     }
     setEditMode(false);
     setDrafts(new Map());
@@ -4984,6 +4991,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <section className="config-card">
                 <ClassificationTableView
                   accountEntries={accountDictionaryEntries}
+                  catalog={classificationCatalog}
                   onOverridesChange={handleClassificationOverrides}
                 />
               </section>
@@ -5098,6 +5106,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <section className="config-card">
                 <ClassificationTableView
                   accountEntries={accountDictionaryEntries}
+                  catalog={classificationCatalog}
                   onOverridesChange={handleClassificationOverrides}
                 />
               </section>
