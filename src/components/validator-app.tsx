@@ -2312,6 +2312,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [accountTreeLookup, setAccountTreeLookup] = useState<ReturnType<typeof buildTreeCatalogLookupFromRows> | null>(null);
   // 트리 모든 노드 이름(leaf+구조노드) — OCR 섹션 총계줄(자산/매출액 등)을 미분류에서 거르는 용도.
   const [accountTreeNodeNames, setAccountTreeNodeNames] = useState<Set<string>>(() => new Set());
+  // 섹션/구조노드 이름 → {대분류,중분류} — 미분류를 어느 가지에 넣을지(③) 매핑용.
+  const [structToBranch, setStructToBranch] = useState<Map<string, { l1: string; l2: string }>>(() => new Map());
   useEffect(() => {
     let cancelled = false;
     fetch("/api/classification-tree")
@@ -2320,12 +2322,27 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         if (cancelled || !data?.ok || !Array.isArray(data.rows)) return;
         setAccountTreeLookup(buildTreeCatalogLookupFromRows(data.rows as AccountTreeRow[]));
         const names = new Set<string>();
+        const branchMap = new Map<string, { l1: string; l2: string }>();
         for (const r of (data.rows as AccountTreeRow[])) {
           for (const label of [r.l1, r.l2, r.l3, r.l4, r.l5]) {
             if (label) names.add(normalizeAccountName(label));
           }
+          if (!r.l5 && r.code) {
+            // 구조노드 — 가장 깊은 라벨로 가지 매핑
+            const labels = [r.l1, r.l2, r.l3, r.l4].filter(Boolean);
+            const deepest = labels[labels.length - 1] ?? "";
+            if (deepest) {
+              const k = normalizeAccountName(deepest);
+              if (!branchMap.has(k)) branchMap.set(k, { l1: r.l1, l2: r.l2 });
+            }
+          } else if (r.l5 && r.l2) {
+            // leaf의 중분류도 섹션 매핑 단서로 (유동자산 등)
+            const k2 = normalizeAccountName(r.l2);
+            if (!branchMap.has(k2)) branchMap.set(k2, { l1: r.l1, l2: r.l2 });
+          }
         }
         setAccountTreeNodeNames(names);
+        setStructToBranch(branchMap);
         // 묶음(변동비/인건비/차입금 …) 코드셋도 트리(13자리)로 교체 = 컷오버.
         // 이게 없으면 스냅샷은 트리코드인데 묶음셋은 레거시(7자리)라 묶음 합산이 0.
         if (Array.isArray(data.values) && data.values.length) {
@@ -2762,15 +2779,27 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const treeSourceData = useMemo(() => {
     const sourcesByCode = new Map<string, AccountSource[]>();
     const unclassified: AccountOccurrence[] = [];
-    const occurrences = collectAccountOccurrences(savedDatasets);
-    if (!accountTreeLookup) return { sourcesByCode, unclassified };
-    // OCR 섹션 이름(자산/매출액/판관비 등 총계 헤더) — 미분류로 안 친다.
+    const pendingRows: Array<{ l1: string; l2: string; accountName: string; source: string }> = [];
+    if (!accountTreeLookup) return { sourcesByCode, unclassified, pendingRows };
+
+    // 한 번 순회: 계정명 → 출처(회사·분기) + 섹션 등장수
     const sectionNames = new Set<string>();
+    const agg = new Map<string, { accountName: string; sources: AccountSource[]; sections: Map<string, number> }>();
     for (const ds of savedDatasets) {
       for (const row of ds.adjustedStatementRows) {
-        if (row.sectionKey) sectionNames.add(normalizeAccountName(row.sectionKey));
+        const sec = (row.sectionKey ?? "").trim();
+        if (sec) sectionNames.add(normalizeAccountName(sec));
+        const name = (row.accountName ?? "").trim();
+        if (!name) continue;
+        const e = agg.get(name) ?? { accountName: name, sources: [], sections: new Map<string, number>() };
+        if (!e.sources.some((s) => s.companyName === ds.companyName && s.quarterLabel === ds.quarterLabel)) {
+          e.sources.push({ companyName: ds.companyName, quarterLabel: ds.quarterLabel });
+        }
+        if (sec) { const sk = normalizeAccountName(sec); e.sections.set(sk, (e.sections.get(sk) ?? 0) + 1); }
+        agg.set(name, e);
       }
     }
+
     const pushSources = (code: string, sources: AccountSource[]) => {
       const list = sourcesByCode.get(code) ?? [];
       for (const s of sources) {
@@ -2778,20 +2807,27 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       }
       sourcesByCode.set(code, list);
     };
-    for (const occ of occurrences) {
-      const key = normalizeAccountName(occ.accountName);
+    const yymm = (label: string) => { const m = /^(\d{4})-(\d{2})/.exec((label ?? "").trim()); return m ? `${m[1].slice(2)}${m[2]}` : (label ?? "").trim(); };
+
+    for (const e of agg.values()) {
+      const key = normalizeAccountName(e.accountName);
       const matches = accountTreeLookup.get(key);
       if (matches && matches.length) {
-        for (const m of matches) pushSources(m.groupId, occ.sources);
-      } else if (accountTreeNodeNames.has(key) || sectionNames.has(key)) {
-        // 트리 구조노드(대/중/소분류) 또는 OCR 섹션 총계 헤더 — 분류 대상 아님.
-      } else {
-        unclassified.push(occ);
+        for (const m of matches) pushSources(m.groupId, e.sources);
+        continue;
       }
+      if (accountTreeNodeNames.has(key) || sectionNames.has(key)) continue; // 구조노드/섹션 총계
+      // 미분류 — 뷰용 + 시트 append용 행(가지 매핑)
+      unclassified.push({ accountName: e.accountName, sources: e.sources });
+      const topSec = [...e.sections.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+      const branch = structToBranch.get(topSec);
+      const source = e.sources.slice(0, 20).map((s) => `${s.companyName} ${yymm(s.quarterLabel)}`).join(", ");
+      pendingRows.push({ l1: branch?.l1 ?? "미분류", l2: branch?.l2 ?? "", accountName: e.accountName, source });
     }
     unclassified.sort((a, b) => b.sources.length - a.sources.length);
-    return { sourcesByCode, unclassified };
-  }, [savedDatasets, accountTreeLookup, accountTreeNodeNames]);
+    pendingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
+    return { sourcesByCode, unclassified, pendingRows };
+  }, [savedDatasets, accountTreeLookup, accountTreeNodeNames, structToBranch]);
   const managedClassificationLookup = useMemo(
     () => buildManagedClassificationLookup(classificationCatalog),
     [classificationCatalog]
@@ -5321,7 +5357,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               </section>
 
               <section className="config-card">
-                <AccountTreeMirror sourcesByCode={treeSourceData.sourcesByCode} unclassified={treeSourceData.unclassified} />
+                <AccountTreeMirror sourcesByCode={treeSourceData.sourcesByCode} unclassified={treeSourceData.unclassified} pendingRows={treeSourceData.pendingRows} />
               </section>
             </>
           )}

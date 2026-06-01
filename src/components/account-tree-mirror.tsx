@@ -14,11 +14,15 @@ type TreeMeta = {
 
 type SyncState = { status: "idle" | "syncing" | "ok" | "error"; message?: string };
 
+type PendingAppendRow = { l1: string; l2: string; accountName: string; source: string };
+
 type AccountTreeMirrorProps = {
   /** 트리 코드별 출처(회사·분기) — 저장 OCR 계정이 어느 데이터에서 나왔나. */
   sourcesByCode?: Map<string, AccountSource[]>;
   /** 트리 leaf에 이름이 없는 OCR 계정 = 미분류 (출처 동반, 등장 많은 순). */
   unclassified?: AccountOccurrence[];
+  /** 미분류를 시트에 분류대기 행으로 append할 때 보낼 행들(가지 매핑·출처 포함). */
+  pendingRows?: PendingAppendRow[];
 };
 
 const PAGE_SIZE = 100;
@@ -44,7 +48,7 @@ function formatSources(sources: AccountSource[] | undefined, max = 6): { text: s
  * 저장 데이터의 출처(회사·분기)를 각 계정 행에 붙이고, 트리에 없는 OCR 계정은
  * `미분류` 보기로 빨간색·출처와 함께 추려 보여준다(시트에 추가해 분류).
  */
-export function AccountTreeMirror({ sourcesByCode, unclassified = [] }: AccountTreeMirrorProps) {
+export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRows = [] }: AccountTreeMirrorProps) {
   const [rows, setRows] = useState<AccountTreeRow[]>([]);
   const [meta, setMeta] = useState<TreeMeta | null>(null);
   const [loading, setLoading] = useState(true);
@@ -105,6 +109,29 @@ export function AccountTreeMirror({ sourcesByCode, unclassified = [] }: AccountT
     }
   }, [load]);
 
+  const appendPending = useCallback(async () => {
+    if (!pendingRows.length) return;
+    if (!window.confirm(`미분류 ${pendingRows.length}건을 구글시트에 '분류 대기' 행으로 추가합니다.\n\n· 코드·부호는 비워서 추가됩니다(합산엔 영향 없음).\n· 가지(대/중분류)는 OCR 섹션 기준 추정치이며, 못 잡으면 대분류 '미분류'로 들어갑니다.\n· 시트에 이미 있는 계정은 건너뜁니다(중복 방지).\n\n진행할까요?`)) return;
+    setSync({ status: "syncing", message: "시트에 미분류 추가 중..." });
+    try {
+      const res = await fetch("/api/classification-tree", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "append-pending", rows: pendingRows })
+      });
+      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; reason?: string; appended?: number; appendSkipped?: number } | null;
+      if (data?.ok) {
+        setSync({ status: "ok", message: `시트에 ${data.appended ?? 0}건 추가${data.appendSkipped ? `, ${data.appendSkipped}건 중복 skip` : ""}. 분류는 시트에서 코드를 채우면 됩니다.` });
+        await load();
+        window.setTimeout(() => setSync((p) => p.status === "ok" ? { status: "idle" } : p), 7000);
+      } else {
+        setSync({ status: "error", message: data?.error ?? "미분류 추가 실패" });
+      }
+    } catch (e) {
+      setSync({ status: "error", message: e instanceof Error ? e.message : "미분류 추가 실패" });
+    }
+  }, [pendingRows, load]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
@@ -149,6 +176,16 @@ export function AccountTreeMirror({ sourcesByCode, unclassified = [] }: AccountT
             style={view === "unclassified" ? undefined : { color: unclassified.length ? "#b91c1c" : undefined }}
           >미분류 {unclassified.length ? `(${unclassified.length.toLocaleString()})` : "(0)"}</button>
         </div>
+        {view === "unclassified" && pendingRows.length > 0 && (
+          <button
+            type="button"
+            className="button button-tiny"
+            onClick={appendPending}
+            disabled={sync.status === "syncing"}
+            style={{ background: "#b91c1c", color: "#fff", borderColor: "#b91c1c" }}
+            title="미분류 계정을 구글시트에 분류대기 행으로 추가(코드 비움). 분류는 시트에서 코드를 채워 합니다."
+          >미분류 {pendingRows.length}건 시트에 추가</button>
+        )}
         <input
           className="input"
           placeholder={view === "tree" ? "코드/이름 검색" : "미분류 계정명 검색"}

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAllowedUser } from "@/lib/supabase/access";
 import { parseAccountTree } from "@/lib/validation/account-tree";
-import { readTreeSheetValues, buildTreeCache } from "@/lib/classification-tree-sync";
+import { readTreeSheetValues, buildTreeCache, appendPendingRows, type PendingAppendRow } from "@/lib/classification-tree-sync";
 
 export const runtime = "nodejs";
 
@@ -47,9 +47,32 @@ export async function GET() {
 }
 
 // 시트 → 검증 → (통과 시) 캐시 저장.
-export async function POST() {
+// body.action === "append-pending"이면 먼저 미분류 pending 행을 시트에 append한 뒤 재동기화.
+export async function POST(req: Request) {
   const { supabase, user } = await requireAuthorizedUser();
   if (!user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  let body: { action?: string; rows?: PendingAppendRow[] } | null = null;
+  try { body = await req.json(); } catch { body = null; }
+
+  let appendResult: { appended: number; skipped: number; names: string[] } | null = null;
+  if (body?.action === "append-pending") {
+    if (!Array.isArray(body.rows) || !body.rows.length) {
+      return NextResponse.json({ ok: false, error: "추가할 미분류 행이 없습니다." }, { status: 400 });
+    }
+    try {
+      appendResult = await appendPendingRows(body.rows);
+    } catch (e) {
+      return NextResponse.json({ ok: false, reason: "sheet_write_failed", error: e instanceof Error ? e.message : "시트에 쓰지 못했습니다." }, { status: 502 });
+    }
+    await supabase.from("change_logs").insert({
+      action: "classification_tree_pending_appended",
+      target_type: "app_config",
+      target_id: "global",
+      payload: { appended: appendResult.appended, skipped: appendResult.skipped, names: appendResult.names.slice(0, 200) },
+      created_by: user.email
+    }).then(() => undefined, () => undefined);
+  }
 
   let values: string[][];
   try {
@@ -106,6 +129,8 @@ export async function POST() {
     syncedAt,
     stats: tree.stats,
     warnings: tree.warnings.slice(0, 50),
-    warningCount: tree.warnings.length
+    warningCount: tree.warnings.length,
+    appended: appendResult?.appended ?? 0,
+    appendSkipped: appendResult?.skipped ?? 0
   });
 }
