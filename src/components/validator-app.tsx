@@ -73,6 +73,17 @@ import {
 
 type TabKey = "validate" | "data" | "trash" | "report" | "config" | "classify" | "formulas" | "account-db" | "result-db";
 
+// OCR 섹션 이름이 트리 가지 이름과 달라 매핑이 빗나갈 때 이어주는 별칭.
+// (미분류 대분류·중분류 추정 + ③ 시트 append 가지 결정에 함께 쓰임)
+// 예: OCR "영업비용" → 트리 "판매비와관리비", OCR "매출액" → 트리 "영업수익".
+const SECTION_BRANCH_ALIASES: Record<string, string> = {
+  [normalizeAccountName("영업비용")]: normalizeAccountName("판매비와관리비"),
+  [normalizeAccountName("판관비")]: normalizeAccountName("판매비와관리비"),
+  [normalizeAccountName("판매관리비")]: normalizeAccountName("판매비와관리비"),
+  [normalizeAccountName("매출액")]: normalizeAccountName("영업수익"),
+  [normalizeAccountName("매출")]: normalizeAccountName("영업수익")
+};
+
 type OverrideRow = {
   section: string;
   keyword: string;
@@ -2819,7 +2830,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       if (accountTreeNodeNames.has(key) || sectionNames.has(key)) continue; // 구조노드/섹션 총계
       // 미분류 — 뷰용 + 시트 append용 행(가지 매핑)
       const topSec = [...e.sections.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-      const branch = structToBranch.get(topSec);
+      const branch = structToBranch.get(topSec)
+        ?? (SECTION_BRANCH_ALIASES[topSec] ? structToBranch.get(SECTION_BRANCH_ALIASES[topSec]) : undefined);
       const l1 = branch?.l1 ?? "미분류";
       const l2 = branch?.l2 ?? "";
       unclassified.push({ l1, l2, accountName: e.accountName, sources: e.sources });
