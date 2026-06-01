@@ -31,14 +31,17 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const cache = data?.classification_tree as { stats?: unknown; warningCount?: number } | null;
+  const cache = data?.classification_tree as { values?: string[][]; stats?: unknown; warningCount?: number } | null;
+  // 캐시된 시트 스냅샷을 파싱해 표시용 행을 만든다 (4.분류DB 탭 거울).
+  const rows = Array.isArray(cache?.values) ? parseAccountTree(cache!.values).rows : [];
   return NextResponse.json({
     ok: true,
     cached: !!cache,
     syncedAt: data?.classification_tree_synced_at ?? null,
     syncedBy: data?.classification_tree_synced_by ?? null,
     stats: cache?.stats ?? null,
-    warningCount: cache?.warningCount ?? 0
+    warningCount: cache?.warningCount ?? 0,
+    rows
   });
 }
 
