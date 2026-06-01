@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AccountTreeRow } from "@/lib/validation/account-tree";
-import type { AccountOccurrence, AccountSource } from "@/lib/sheets-export";
+import type { AccountSource } from "@/lib/sheets-export";
 
 type TreeMeta = {
   cached: boolean;
@@ -15,14 +15,17 @@ type TreeMeta = {
 type SyncState = { status: "idle" | "syncing" | "ok" | "error"; message?: string };
 
 type PendingAppendRow = { l1: string; l2: string; accountName: string; source: string };
+type UnclassifiedRow = { l1: string; l2: string; accountName: string; sources: AccountSource[] };
 
 type AccountTreeMirrorProps = {
   /** 트리 코드별 출처(회사·분기) — 저장 OCR 계정이 어느 데이터에서 나왔나. */
   sourcesByCode?: Map<string, AccountSource[]>;
-  /** 트리 leaf에 이름이 없는 OCR 계정 = 미분류 (출처 동반, 등장 많은 순). */
-  unclassified?: AccountOccurrence[];
+  /** 트리 leaf에 이름이 없는 OCR 계정 = 미분류 (대/중분류 추정·출처 동반, 등장 많은 순). */
+  unclassified?: UnclassifiedRow[];
   /** 미분류를 시트에 분류대기 행으로 append할 때 보낼 행들(가지 매핑·출처 포함). */
   pendingRows?: PendingAppendRow[];
+  /** 출처(회사·분기) 클릭 시 그 데이터셋을 OCR검증 탭에 로드. */
+  onOpenSource?: (companyName: string, quarterLabel: string) => void;
 };
 
 const PAGE_SIZE = 100;
@@ -33,13 +36,29 @@ function quarterYYMM(label: string): string {
   return m ? `${m[1].slice(2)}${m[2]}` : (label ?? "").trim();
 }
 
-/** 출처 목록을 "회사 YYMM, 회사 YYMM … 외 N건"으로 압축. 전체는 title 툴팁. */
-function formatSources(sources: AccountSource[] | undefined, max = 6): { text: string; title: string } {
-  if (!sources || !sources.length) return { text: "", title: "" };
-  const labels = sources.map((s) => `${s.companyName} ${quarterYYMM(s.quarterLabel)}`);
-  const shown = labels.slice(0, max).join(", ");
-  const text = labels.length > max ? `${shown} 외 ${labels.length - max}건` : shown;
-  return { text, title: labels.join(", ") };
+/** 출처를 클릭 가능한 칩으로 렌더. onOpen 있으면 누를 때 그 데이터셋을 OCR검증으로 연다. */
+function SourceChips({ sources, max = 6, onOpen }: { sources: AccountSource[] | undefined; max?: number; onOpen?: (c: string, q: string) => void }) {
+  if (!sources || !sources.length) return null;
+  const shown = sources.slice(0, max);
+  return (
+    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+      {shown.map((s, i) => (
+        onOpen ? (
+          <button
+            key={i}
+            type="button"
+            className="ghost-button button-tiny"
+            style={{ padding: "0 6px", fontSize: 11, lineHeight: 1.6 }}
+            onClick={() => onOpen(s.companyName, s.quarterLabel)}
+            title={`${s.companyName} ${s.quarterLabel} → OCR검증으로 열기`}
+          >{s.companyName} {quarterYYMM(s.quarterLabel)}</button>
+        ) : (
+          <span key={i} style={{ fontSize: 11 }}>{s.companyName} {quarterYYMM(s.quarterLabel)}</span>
+        )
+      ))}
+      {sources.length > max && <span className="muted" style={{ fontSize: 11 }}>외 {sources.length - max}건</span>}
+    </span>
+  );
 }
 
 /**
@@ -48,7 +67,7 @@ function formatSources(sources: AccountSource[] | undefined, max = 6): { text: s
  * 저장 데이터의 출처(회사·분기)를 각 계정 행에 붙이고, 트리에 없는 OCR 계정은
  * `미분류` 보기로 빨간색·출처와 함께 추려 보여준다(시트에 추가해 분류).
  */
-export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRows = [] }: AccountTreeMirrorProps) {
+export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRows = [], onOpenSource }: AccountTreeMirrorProps) {
   const [rows, setRows] = useState<AccountTreeRow[]>([]);
   const [meta, setMeta] = useState<TreeMeta | null>(null);
   const [loading, setLoading] = useState(true);
@@ -232,45 +251,43 @@ export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRow
                   </tr>
                 </thead>
                 <tbody>
-                  {pageRows.map((r, i) => {
-                    const src = formatSources(sourcesByCode?.get(r.code));
-                    return (
-                      <tr key={`${r.code}-${r.rowIndex}-${i}`}>
-                        <td className="muted" style={{ fontVariantNumeric: "tabular-nums" }}>{r.code}</td>
-                        <td>{r.l1}</td>
-                        <td>{r.l2}</td>
-                        <td>{r.l3}</td>
-                        <td>{r.l4}</td>
-                        <td><strong>{r.l5}</strong></td>
-                        <td style={{ textAlign: "center", color: r.sign === "-" ? "#b91c1c" : undefined }}>{r.sign}</td>
-                        <td style={{ textAlign: "center" }}>{r.debitCredit}</td>
-                        <td style={{ textAlign: "center" }}>{r.varFix}</td>
-                        <td className="muted" style={{ fontSize: 11, maxWidth: 320, whiteSpace: "normal" }} title={src.title}>{src.text}</td>
-                      </tr>
-                    );
-                  })}
+                  {pageRows.map((r, i) => (
+                    <tr key={`${r.code}-${r.rowIndex}-${i}`}>
+                      <td className="muted" style={{ fontVariantNumeric: "tabular-nums" }}>{r.code}</td>
+                      <td>{r.l1}</td>
+                      <td>{r.l2}</td>
+                      <td>{r.l3}</td>
+                      <td>{r.l4}</td>
+                      <td><strong>{r.l5}</strong></td>
+                      <td style={{ textAlign: "center", color: r.sign === "-" ? "#b91c1c" : undefined }}>{r.sign}</td>
+                      <td style={{ textAlign: "center" }}>{r.debitCredit}</td>
+                      <td style={{ textAlign: "center" }}>{r.varFix}</td>
+                      <td style={{ maxWidth: 340, whiteSpace: "normal" }}><SourceChips sources={sourcesByCode?.get(r.code)} max={6} onOpen={onOpenSource} /></td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             ) : (
               <table className="table report-table classification-flat-table">
                 <thead>
                   <tr>
+                    <th>대분류</th>
+                    <th>중분류</th>
                     <th>미분류 계정명</th>
                     <th style={{ textAlign: "right" }}>등장</th>
-                    <th>출처(회사·분기)</th>
+                    <th>출처 (클릭 → OCR검증으로 열기)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pageUnclassified.map((u, i) => {
-                    const src = formatSources(u.sources, 12);
-                    return (
-                      <tr key={`${u.accountName}-${i}`} style={{ background: "#fef2f2" }}>
-                        <td><strong style={{ color: "#b91c1c" }}>{u.accountName}</strong></td>
-                        <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{u.sources.length.toLocaleString()}</td>
-                        <td className="muted" style={{ fontSize: 11, maxWidth: 480, whiteSpace: "normal" }} title={src.title}>{src.text}</td>
-                      </tr>
-                    );
-                  })}
+                  {pageUnclassified.map((u, i) => (
+                    <tr key={`${u.accountName}-${i}`} style={{ background: "#fef2f2" }}>
+                      <td style={{ color: u.l1 === "미분류" ? "#b91c1c" : undefined, fontWeight: u.l1 === "미분류" ? 600 : undefined }}>{u.l1}</td>
+                      <td className="muted">{u.l2}</td>
+                      <td><strong style={{ color: "#b91c1c" }}>{u.accountName}</strong></td>
+                      <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{u.sources.length.toLocaleString()}</td>
+                      <td style={{ maxWidth: 520, whiteSpace: "normal" }}><SourceChips sources={u.sources} max={12} onOpen={onOpenSource} /></td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}

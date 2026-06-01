@@ -2778,7 +2778,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   //  - unclassified : 트리 leaf에 이름이 없는 OCR 계정 = 미분류 (출처 동반)
   const treeSourceData = useMemo(() => {
     const sourcesByCode = new Map<string, AccountSource[]>();
-    const unclassified: AccountOccurrence[] = [];
+    const unclassified: Array<{ l1: string; l2: string; accountName: string; sources: AccountSource[] }> = [];
     const pendingRows: Array<{ l1: string; l2: string; accountName: string; source: string }> = [];
     if (!accountTreeLookup) return { sourcesByCode, unclassified, pendingRows };
 
@@ -2818,16 +2818,28 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       }
       if (accountTreeNodeNames.has(key) || sectionNames.has(key)) continue; // 구조노드/섹션 총계
       // 미분류 — 뷰용 + 시트 append용 행(가지 매핑)
-      unclassified.push({ accountName: e.accountName, sources: e.sources });
       const topSec = [...e.sections.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
       const branch = structToBranch.get(topSec);
+      const l1 = branch?.l1 ?? "미분류";
+      const l2 = branch?.l2 ?? "";
+      unclassified.push({ l1, l2, accountName: e.accountName, sources: e.sources });
       const source = e.sources.slice(0, 20).map((s) => `${s.companyName} ${yymm(s.quarterLabel)}`).join(", ");
-      pendingRows.push({ l1: branch?.l1 ?? "미분류", l2: branch?.l2 ?? "", accountName: e.accountName, source });
+      pendingRows.push({ l1, l2, accountName: e.accountName, source });
     }
     unclassified.sort((a, b) => b.sources.length - a.sources.length);
     pendingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
     return { sourcesByCode, unclassified, pendingRows };
   }, [savedDatasets, accountTreeLookup, accountTreeNodeNames, structToBranch]);
+
+  // 출처(회사·분기) 클릭 → 그 데이터셋을 OCR검증 탭에 로드(미분류 계정 직접 수정용).
+  function openSourceInValidator(companyName: string, quarterLabel: string) {
+    const ds = savedDatasets.find((d) => d.companyName === companyName && d.quarterLabel === quarterLabel)
+      ?? savedDatasets.find((d) => d.companyName === companyName);
+    if (ds) {
+      loadDatasetIntoValidator(ds);
+      setActiveTab("validate");
+    }
+  }
   const managedClassificationLookup = useMemo(
     () => buildManagedClassificationLookup(classificationCatalog),
     [classificationCatalog]
@@ -5357,7 +5369,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               </section>
 
               <section className="config-card">
-                <AccountTreeMirror sourcesByCode={treeSourceData.sourcesByCode} unclassified={treeSourceData.unclassified} pendingRows={treeSourceData.pendingRows} />
+                <AccountTreeMirror sourcesByCode={treeSourceData.sourcesByCode} unclassified={treeSourceData.unclassified} pendingRows={treeSourceData.pendingRows} onOpenSource={openSourceInValidator} />
               </section>
             </>
           )}
