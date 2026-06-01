@@ -41,7 +41,8 @@ export async function GET() {
     syncedBy: data?.classification_tree_synced_by ?? null,
     stats: cache?.stats ?? null,
     warningCount: cache?.warningCount ?? 0,
-    rows
+    rows,
+    values: Array.isArray(cache?.values) ? cache!.values : []
   });
 }
 

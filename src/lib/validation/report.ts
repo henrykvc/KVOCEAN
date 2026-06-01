@@ -4,13 +4,25 @@ import { buildReportKeywordCodes } from "./result-group-mapping";
 
 // 보고서 키워드(인건비/현금및현금성자산/차입금 …) → 묶음 멤버 code 집합.
 // 행의 code가 이 집합에 들면 곧 그 묶음 멤버 — 이름 대조 없이 즉시 판정한다.
-const REPORT_KEYWORD_CODE_SETS: Record<string, Set<number>> = (() => {
+function buildLegacyKeywordCodeSets(): Record<string, Set<number>> {
   const out: Record<string, Set<number>> = {};
   for (const [keyword, codes] of Object.entries(buildReportKeywordCodes())) {
     out[keyword] = new Set(codes);
   }
   return out;
-})();
+}
+
+// 기본은 옛 분류(시드/결과물DB) 기반이지만, 계정트리 로드 시 validator-app가
+// setReportKeywordCodeSets로 트리 기반(13자리 코드)으로 교체한다 = 컷오버.
+let REPORT_KEYWORD_CODE_SETS: Record<string, Set<number>> = buildLegacyKeywordCodeSets();
+
+export function setReportKeywordCodeSets(sets: Record<string, Set<number>>): void {
+  REPORT_KEYWORD_CODE_SETS = sets;
+}
+
+export function getReportKeywordCodeSets(): Record<string, Set<number>> {
+  return REPORT_KEYWORD_CODE_SETS;
+}
 
 // candidates 중 묶음 키워드에 해당하는 모든 code를 한 집합으로 모은다.
 function collectKeywordCodeSet(candidates: string[]): Set<number> {
@@ -2065,6 +2077,59 @@ export function normalizeSavedQuarterSnapshot(snapshot: SavedQuarterSnapshot) {
   // write because mapDatasetRow strips them on read and buildQuarterSnapshots
   // doesn't write them anymore.
   return snapshot;
+}
+
+/**
+ * 저장 스냅샷을 read-time에 계정트리로 재분류한다(① 컷오버).
+ * 저장된 row.code는 옛 분류(7자리 시드)라 트리 묶음셋(13자리)과 안 맞는다 →
+ * source.pastedText에서 트리모드(accountTreeLookup)로 다시 빌드해 코드를 새로 박는다.
+ * 같은 붙여넣기(여러 분기)는 1회만 재파싱하고, id로 원본 스냅샷에 다시 매핑한다.
+ * 트리에 항목을 추가하면 옛 데이터가 즉시 재분류되고 미분류가 자동 해소된다.
+ */
+export function rebuildSnapshotsWithTree(
+  snapshots: SavedQuarterSnapshot[],
+  ctx: {
+    logicConfig: LogicConfig;
+    companyConfigs: CompanyConfigs;
+    classificationGroups: ClassificationGroups;
+    accountTreeLookup: Map<string, CatalogAliasMatch[]>;
+  }
+): SavedQuarterSnapshot[] {
+  // 붙여넣기 단위로 묶는다(회사+statementType+원문). 한 붙여넣기가 여러 분기를 낳음.
+  const groups = new Map<string, SavedQuarterSnapshot[]>();
+  for (const s of snapshots) {
+    const key = `${s.companyName} ${s.source.statementType ?? "별도"} ${s.source.pastedText}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(s);
+    else groups.set(key, [s]);
+  }
+
+  const out: SavedQuarterSnapshot[] = [];
+  for (const group of groups.values()) {
+    let freshById: Map<string, SavedQuarterSnapshot> | null = null;
+    try {
+      const fresh = buildQuarterSnapshots({
+        pastedText: group[0].source.pastedText,
+        selectedCompany: group[0].companyName,
+        tolerance: group[0].source.tolerance ?? 0,
+        logicConfig: ctx.logicConfig,
+        companyConfigs: ctx.companyConfigs,
+        classificationGroups: ctx.classificationGroups,
+        accountTreeLookup: ctx.accountTreeLookup,
+        pasteEdits: group[0].source.pasteEdits ?? {},
+        nameEdits: group[0].source.nameEdits ?? {},
+        sessionSignFixes: {},
+        statementType: group[0].source.statementType
+      });
+      freshById = new Map(fresh.map((f) => [f.id, f]));
+    } catch {
+      freshById = null; // 재파싱 실패 시 원본 유지
+    }
+    for (const original of group) {
+      out.push(freshById?.get(original.id) ?? original);
+    }
+  }
+  return out;
 }
 
 export function buildCompanyReport(snapshots: SavedQuarterSnapshot[], activeClassificationGroups?: ClassificationGroups) {

@@ -40,8 +40,8 @@ import {
 import { RESULT_CLASSIFICATION, RESULT_BY_GROUP } from "@/lib/validation/result-classification";
 import { type SharedStateResponse } from "@/lib/shared-state";
 import { AccountTreeMirror } from "@/components/account-tree-mirror";
-import { buildTreeCatalogLookupFromRows } from "@/lib/validation/account-tree-adapter";
-import { type AccountTreeRow } from "@/lib/validation/account-tree";
+import { buildTreeCatalogLookupFromRows, buildTreeKeywordCodeSets } from "@/lib/validation/account-tree-adapter";
+import { parseAccountTree, type AccountTreeRow } from "@/lib/validation/account-tree";
 import {
   buildHeaderRow as buildSheetsHeaderRow,
   buildQuarterRows as buildSheetsQuarterRows,
@@ -56,6 +56,8 @@ import {
   buildCompanyReport,
   buildQuarterSnapshots,
   buildReportingModel,
+  rebuildSnapshotsWithTree,
+  setReportKeywordCodeSets,
   formatMetricRatio,
   formatMetricValue,
   isTurnoverMetricLabel,
@@ -120,7 +122,9 @@ function parseDatasetApiResponse(raw: DatasetApiResponse) {
 function buildSheetsSyncPayload(
   savedDatasets: SavedQuarterSnapshot[],
   classificationGroups: ClassificationGroups,
-  classificationCatalog?: ClassificationCatalogGroup[]
+  classificationCatalog?: ClassificationCatalogGroup[],
+  // 계정트리 로드 시 시트도 화면과 동일하게 read-time 재분류한다(① 컷오버).
+  treeCtx?: Parameters<typeof rebuildSnapshotsWithTree>[1]
 ): { quarterTabs: Array<{ tabName: string; headers: string[]; rows: SheetCellValue[][] }> } {
   const byCompany = new Map<string, SavedQuarterSnapshot[]>();
   for (const d of savedDatasets) {
@@ -133,7 +137,8 @@ function buildSheetsSyncPayload(
 
   const companyReports = new Map<string, ReportingModel>();
   for (const [name, snaps] of byCompany.entries()) {
-    companyReports.set(name, buildCompanyReport(snaps, classificationGroups));
+    const reportSnaps = treeCtx ? rebuildSnapshotsWithTree(snaps, treeCtx) : snaps;
+    companyReports.set(name, buildCompanyReport(reportSnaps, classificationGroups));
   }
 
   const quarters = collectSheetsQuarters(Array.from(companyReports.values()));
@@ -2311,6 +2316,16 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       .then((data) => {
         if (cancelled || !data?.ok || !Array.isArray(data.rows)) return;
         setAccountTreeLookup(buildTreeCatalogLookupFromRows(data.rows as AccountTreeRow[]));
+        // 묶음(변동비/인건비/차입금 …) 코드셋도 트리(13자리)로 교체 = 컷오버.
+        // 이게 없으면 스냅샷은 트리코드인데 묶음셋은 레거시(7자리)라 묶음 합산이 0.
+        if (Array.isArray(data.values) && data.values.length) {
+          try {
+            const tree = parseAccountTree(data.values as string[][]);
+            setReportKeywordCodeSets(buildTreeKeywordCodeSets(tree));
+          } catch {
+            /* 파싱 실패 시 레거시 묶음셋 유지 */
+          }
+        }
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
@@ -2559,7 +2574,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     sheetsAutoSyncInitializedRef.current = true;
 
     const timeout = window.setTimeout(() => {
-      const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups, classificationCatalog);
+      const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups, classificationCatalog, accountTreeLookup ? { logicConfig, companyConfigs, classificationGroups, accountTreeLookup } : undefined);
       if (!payload.quarterTabs.length) return;
       setSheetsSyncState({ status: "syncing", message: "페이지 로드 → 시트 자동 동기화 중..." });
       postSheetsSync(payload)
@@ -2725,9 +2740,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         pasteEdits,
         nameEdits,
         sessionSignFixes,
-        classificationCatalog
+        classificationCatalog,
+        accountTreeLookup: accountTreeLookup ?? undefined
       }),
-    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, nameEdits, sessionSignFixes, classificationCatalog]
+    [pastedText, selectedCompany, tolerance, logicConfig, companyConfigs, pasteEdits, nameEdits, sessionSignFixes, classificationCatalog, accountTreeLookup]
   );
   const accountDictionaryEntries = useMemo(() => extractAccountDictionaryEntries(savedDatasets), [savedDatasets]);
   const managedClassificationLookup = useMemo(
@@ -2859,13 +2875,16 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     [savedDatasets]
   );
   const resultReporting = useMemo(
-    () => buildCompanyReport(
-      selectedDataset
+    () => {
+      const snaps = selectedDataset
         ? savedDatasets.filter((item) => item.companyName === selectedDataset.companyName)
-        : [],
-      classificationGroups
-    ),
-    [selectedDataset, savedDatasets, classificationGroups]
+        : [];
+      const reportSnaps = accountTreeLookup
+        ? rebuildSnapshotsWithTree(snaps, { logicConfig, companyConfigs, classificationGroups, accountTreeLookup })
+        : snaps;
+      return buildCompanyReport(reportSnaps, classificationGroups);
+    },
+    [selectedDataset, savedDatasets, classificationGroups, accountTreeLookup, logicConfig, companyConfigs]
   );
   const selectedReportPeriod = useMemo(
     () => selectedDataset
@@ -2880,8 +2899,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         if (!dataset) {
           return null;
         }
+        const companySnaps = savedDatasets.filter((item) => item.companyName === dataset.companyName);
         const model = buildCompanyReport(
-          savedDatasets.filter((item) => item.companyName === dataset.companyName),
+          accountTreeLookup
+            ? rebuildSnapshotsWithTree(companySnaps, { logicConfig, companyConfigs, classificationGroups, accountTreeLookup })
+            : companySnaps,
           classificationGroups
         );
         return {
@@ -2894,7 +2916,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         } satisfies ComparisonColumn;
       })
       .filter((item): item is ComparisonColumn => item !== null),
-    [comparisonSelections, savedDatasets, classificationGroups]
+    [comparisonSelections, savedDatasets, classificationGroups, accountTreeLookup, logicConfig, companyConfigs]
   );
   const comparisonCompanyOptions = useMemo(
     () => Array.from(new Set(savedDatasets.map((item) => item.companyName))),
@@ -2945,6 +2967,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         companyConfigs,
         classificationGroups,
         classificationCatalog,
+        accountTreeLookup: accountTreeLookup ?? undefined,
         pasteEdits: prev,
         nameEdits,
         sessionSignFixes
@@ -2952,7 +2975,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       return JSON.stringify(normalized) !== JSON.stringify(prev) ? normalized : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastedText, selectedCompany, logicConfig, companyConfigs, classificationGroups, classificationCatalog, nameEdits, sessionSignFixes]);
+  }, [pastedText, selectedCompany, logicConfig, companyConfigs, classificationGroups, classificationCatalog, nameEdits, sessionSignFixes, accountTreeLookup]);
 
   function resetAdjustments() {
     setPasteEdits({});
@@ -2973,6 +2996,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       companyConfigs,
       classificationGroups,
       classificationCatalog,
+      accountTreeLookup: accountTreeLookup ?? undefined,
       pasteEdits,
       nameEdits,
       sessionSignFixes,
@@ -3015,7 +3039,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       setActiveTab("data");
 
       // Use freshly-saved data (nextSaved) — React state may not have propagated yet.
-      const sheetsPayload = buildSheetsSyncPayload(nextSaved, classificationGroups, classificationCatalog);
+      const sheetsPayload = buildSheetsSyncPayload(nextSaved, classificationGroups, classificationCatalog, accountTreeLookup ? { logicConfig, companyConfigs, classificationGroups, accountTreeLookup } : undefined);
       if (sheetsPayload.quarterTabs.length) {
         setSheetsSyncState({ status: "syncing", message: "저장 후 시트 동기화 중..." });
         postSheetsSync(sheetsPayload)
@@ -3122,7 +3146,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   async function bulkSyncSheets() {
     setSheetsSyncState({ status: "syncing", message: "전체 동기화 중..." });
     try {
-      const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups, classificationCatalog);
+      const payload = buildSheetsSyncPayload(savedDatasets, classificationGroups, classificationCatalog, accountTreeLookup ? { logicConfig, companyConfigs, classificationGroups, accountTreeLookup } : undefined);
       if (!payload.quarterTabs.length) {
         setSheetsSyncState({ status: "error", message: "저장된 분기 데이터가 없습니다." });
         return;
@@ -3189,6 +3213,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       companyConfigs,
       classificationGroups,
       classificationCatalog,
+      accountTreeLookup: accountTreeLookup ?? undefined,
       pasteEdits: dataset.source.pasteEdits,
       nameEdits: dataset.source.nameEdits ?? {},
       sessionSignFixes: {}
@@ -3672,6 +3697,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       companyConfigs,
       classificationGroups,
       classificationCatalog,
+      accountTreeLookup: accountTreeLookup ?? undefined,
       pasteEdits: prev,
       nameEdits,
       sessionSignFixes: nextSessionSignFixes
