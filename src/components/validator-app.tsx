@@ -1523,10 +1523,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     return Array.from(acc.values()).map((name) => ({ name, quarters: 0, inTree: true }));
   }, [accountTreeLookup]);
 
-  // 붙여넣은 계정명 중 트리에 매칭 안 된(미분류) 열마다:
-  //  - candidates: 오타 후보(≤2). 그 회사 과거 사전 먼저, 없으면 전체 사전 폴백.
+  // 붙여넣은 계정명 중 트리에 매칭 안 된(미분류) 계정은 **무조건** 표시한다:
+  //  - candidates 있음 → 오타 보정 후보(🔤). 그 회사 과거 사전 먼저, 없으면 전체 사전.
+  //  - candidates 없음 → 신규 계정일 수 있음(🆕). 보정할 근거가 없을 뿐 미분류는 항상 노출.
   //  - fromGlobal: 후보가 회사 이력이 아니라 전체 사전에서 나왔는지(표시 문구 구분).
-  //  - isNew     : 어디서도 후보가 없는 신규 계정(회사 이력이 있을 때만 표시).
   const nameSuggestions = useMemo(() => {
     const map = new Map<number, { candidates: TypoCandidate[]; isNew: boolean; fromGlobal: boolean }>();
     if (!accountTreeLookup) return map;
@@ -1534,7 +1534,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     const GLOBAL_OPTS = { nearDistance: 1, highSimilarity: 0.9, maxDistance: 3 };
     const names = validation.editableNameRow;
     const sections = buildEffectiveSections(validation.parsed.catRow, names.length);
-    const hasVocab = companyVocab.length > 0;
     names.forEach((name, colIndex) => {
       const trimmed = (name ?? "").trim();
       if (!trimmed) return;
@@ -1544,7 +1543,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       if (accountTreeNodeNames.has(key)) return; // 섹션 총계/구조노드는 계정 아님
       const section = sections[colIndex]?.trim() || "기타";
       const matched = resolveAccountClassification(trimmed, section, accountTreeLookup, true) !== null;
-      if (matched) return; // 이미 분류됨 → 제안 불필요
+      if (matched) return; // 이미 분류됨 → 표시 불필요
       let candidates = suggestTypoCandidates(trimmed, companyVocab);
       let fromGlobal = false;
       if (candidates.length === 0) {
@@ -1554,7 +1553,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
           fromGlobal = true;
         }
       }
-      if (candidates.length === 0 && !hasVocab) return; // 후보도 없고 비교할 이력도 없음
+      // 후보가 없어도(보정 근거 없음) 미분류 자체는 항상 띄운다 → 🆕 신규 계정.
       map.set(colIndex, { candidates, isNew: candidates.length === 0, fromGlobal });
     });
     return map;
@@ -2083,7 +2082,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       // 후보 없음 = 이 회사 과거 분기에 없던 신규 계정.
       return (
         <div className="name-suggest">
-          <span className="name-suggest-chip is-new" title="이 회사의 다른 분기에는 없던 계정명입니다. 신규면 트리에 추가해 분류하세요.">🆕 신규 계정</span>
+          <span className="name-suggest-chip is-new" title="분류DB(계정트리)에 없는 계정입니다. 비슷한 이름이 없어 오타 보정 후보가 없으니, 신규 계정이면 트리에 추가해 분류하세요.">🆕 미분류 · 신규일 수 있음</span>
         </div>
       );
     }
