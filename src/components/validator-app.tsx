@@ -1507,12 +1507,31 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     return Array.from(acc.values()).map((v) => ({ name: v.name, quarters: v.quarters.size, inTree: v.inTree }));
   }, [selectedCompany, savedDatasets]);
 
+  // 전체 사전: 계정트리의 모든 leaf 이름(L5). 회사 과거 데이터가 없거나 거기서
+  // 오타 후보를 못 찾았을 때의 폴백. 회사 이력보다 약한 신호라 더 엄격하게 본다.
+  const globalVocab = useMemo<VocabEntry[]>(() => {
+    if (!accountTreeLookup) return [];
+    const acc = new Map<string, string>();
+    for (const matches of accountTreeLookup.values()) {
+      for (const m of matches) {
+        const name = m.canonicalKey?.trim();
+        if (!name) continue;
+        const key = normalizeAccountName(name);
+        if (key && !acc.has(key)) acc.set(key, name);
+      }
+    }
+    return Array.from(acc.values()).map((name) => ({ name, quarters: 0, inTree: true }));
+  }, [accountTreeLookup]);
+
   // 붙여넣은 계정명 중 트리에 매칭 안 된(미분류) 열마다:
-  //  - candidates: 그 회사 과거 계정명 사전의 오타 후보(≤2)
-  //  - isNew     : 후보도 없고 과거에도 없던 신규 계정(사전이 있을 때만 판단)
+  //  - candidates: 오타 후보(≤2). 그 회사 과거 사전 먼저, 없으면 전체 사전 폴백.
+  //  - fromGlobal: 후보가 회사 이력이 아니라 전체 사전에서 나왔는지(표시 문구 구분).
+  //  - isNew     : 어디서도 후보가 없는 신규 계정(회사 이력이 있을 때만 표시).
   const nameSuggestions = useMemo(() => {
-    const map = new Map<number, { candidates: TypoCandidate[]; isNew: boolean }>();
+    const map = new Map<number, { candidates: TypoCandidate[]; isNew: boolean; fromGlobal: boolean }>();
     if (!accountTreeLookup) return map;
+    // 전체 사전은 후보가 많아 오탐이 늘기 쉬우므로 회사 사전보다 빡빡하게.
+    const GLOBAL_OPTS = { nearDistance: 1, highSimilarity: 0.9, maxDistance: 3 };
     const names = validation.editableNameRow;
     const sections = buildEffectiveSections(validation.parsed.catRow, names.length);
     const hasVocab = companyVocab.length > 0;
@@ -1526,12 +1545,20 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       const section = sections[colIndex]?.trim() || "기타";
       const matched = resolveAccountClassification(trimmed, section, accountTreeLookup, true) !== null;
       if (matched) return; // 이미 분류됨 → 제안 불필요
-      const candidates = suggestTypoCandidates(trimmed, companyVocab);
-      if (candidates.length === 0 && !hasVocab) return; // 비교할 과거 데이터 없음
-      map.set(colIndex, { candidates, isNew: candidates.length === 0 });
+      let candidates = suggestTypoCandidates(trimmed, companyVocab);
+      let fromGlobal = false;
+      if (candidates.length === 0) {
+        const global = suggestTypoCandidates(trimmed, globalVocab, GLOBAL_OPTS);
+        if (global.length > 0) {
+          candidates = global;
+          fromGlobal = true;
+        }
+      }
+      if (candidates.length === 0 && !hasVocab) return; // 후보도 없고 비교할 이력도 없음
+      map.set(colIndex, { candidates, isNew: candidates.length === 0, fromGlobal });
     });
     return map;
-  }, [validation.editableNameRow, validation.parsed.catRow, validation.parsed.nameRow, accountTreeLookup, accountTreeNodeNames, companyVocab]);
+  }, [validation.editableNameRow, validation.parsed.catRow, validation.parsed.nameRow, accountTreeLookup, accountTreeNodeNames, companyVocab, globalVocab]);
 
   const selectedDataset = useMemo(
     () => savedDatasets.find((item) => item.id === selectedDatasetId) ?? null,
@@ -2067,7 +2094,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
             key={candidate.name}
             type="button"
             className="name-suggest-chip is-typo"
-            title={`다른 분기에서 ${candidate.quarters}회 사용${candidate.inTree ? " · 분류됨" : ""} · 유사도 ${(candidate.similarity * 100).toFixed(0)}%`}
+            title={sug.fromGlobal
+              ? `계정트리에 있는 비슷한 계정명 · 유사도 ${(candidate.similarity * 100).toFixed(0)}% (이 회사 과거 분기엔 없어 전체 사전에서 찾음)`
+              : `다른 분기에서 ${candidate.quarters}회 사용${candidate.inTree ? " · 분류됨" : ""} · 유사도 ${(candidate.similarity * 100).toFixed(0)}%`}
             onClick={() => updateEditableName(colIndex, rawName, candidate.name)}
           >
             🔤 오타? <strong>{candidate.name}</strong>
