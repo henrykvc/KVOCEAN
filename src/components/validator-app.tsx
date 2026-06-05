@@ -2922,6 +2922,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                       <article className="metric-card"><span className="muted">통과</span><strong>{validation.stats.passed}</strong></article>
                       <article className="metric-card"><span className="muted">실패</span><strong>{validation.stats.failed}</strong></article>
                       <article className="metric-card"><span className="muted">통과율</span><strong>{validation.stats.rate.toFixed(1)}%</strong></article>
+                      <article className="metric-card"><span className="muted">미분류 계정</span><strong style={nameSuggestions.size > 0 ? { color: "#c2410c" } : undefined}>{nameSuggestions.size}</strong></article>
                     </div>
                     {validation.stats.failed > 0 && <div className="notice">통과율이 100%가 될 때만 저장할 수 있습니다. 실패 항목의 OCR 수정값과 검증 부호를 먼저 정리해 주세요.</div>}
                   </section>
@@ -3004,7 +3005,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                             const cardKey = `${dateLabel}-${result.rule}-${resultIndex}`;
                             const resultStatus = getResultStatus(result);
                             const hasPendingAdjustments = hasPendingResultAdjustments(result);
-                            const isOpen = resultOpenState[cardKey] ?? (!result.passed || hasPendingAdjustments);
+                            // 오타/신규(미분류) 칩이 달린 계정이 있으면 카드를 자동으로 펼친다.
+                            const hasNameSuggestion = result.detail.some((d) => d._col !== undefined && nameSuggestions.has(d._col));
+                            const autoOpen = !result.passed || hasPendingAdjustments || hasNameSuggestion;
+                            const isOpen = resultOpenState[cardKey] ?? autoOpen;
                             const pendingInsertedRow = pendingInsertedRows[cardKey];
                             const targetRowIndex = result.parent_row ?? result.detail[0]?._row ?? 0;
                             const currentParentValue = result.parent_row !== undefined && result.parent_col !== undefined && pasteEdits[pasteEditKey(result.parent_row, result.parent_col)] !== undefined
@@ -3020,7 +3024,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                   <div className="result-header-actions">
                                     <div className="muted">차이</div>
                                     <strong className={result.passed ? "status-pass" : "status-fail"}>{formatNumber(result.diff)}원</strong>
-                                    <button className="collapse-toggle" onClick={() => toggleResultCard(cardKey, !result.passed || hasPendingAdjustments)} aria-expanded={isOpen}>
+                                    <button className="collapse-toggle" onClick={() => toggleResultCard(cardKey, autoOpen)} aria-expanded={isOpen}>
                                       {isOpen ? "접기" : "펼치기"}
                                     </button>
                                   </div>
@@ -3052,10 +3056,20 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                             const currentValue = currentEditKey && pasteEdits[currentEditKey] !== undefined ? pasteEdits[currentEditKey] : detail.원본값;
                                             const currentSign = displayedSignToCode(detail.부호);
                                             return (
-                                              <tr key={`${detail.계정명}-${index}`}>
+                                              <tr key={detail._col !== undefined ? `col-${detail._col}` : `${detail.계정명}-${index}`}>
                                                 <td>
                                                   <div className="result-account-cell">
-                                                    <span>{detail.계정명}</span>
+                                                    {detail._col !== undefined ? (
+                                                      <input
+                                                        className="mini-input"
+                                                        type="text"
+                                                        value={validation.editableNameRow[detail._col] ?? detail.계정명}
+                                                        onChange={(event) => updateEditableName(detail._col!, validation.parsed.nameRow[detail._col!] ?? detail.계정명, event.target.value)}
+                                                        aria-label={`${detail.계정명} 계정명 수정`}
+                                                      />
+                                                    ) : (
+                                                      <span>{detail.계정명}</span>
+                                                    )}
                                                     {detail._col !== undefined && (
                                                       <button className="icon-button danger" type="button" aria-label={`${detail.계정명} 삭제`} onClick={() => removeValidationAccount(detail._col!)}>🗑</button>
                                                     )}
