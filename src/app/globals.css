@@ -1058,6 +1058,61 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+/* 계정명 셀 아래 오타/신규 추론 칩 */
+.name-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.name-suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  cursor: default;
+}
+
+button.name-suggest-chip {
+  cursor: pointer;
+}
+
+.name-suggest-chip.is-typo {
+  background: rgba(254, 152, 0, 0.14);
+  border-color: rgba(254, 152, 0, 0.4);
+  color: #8a5300;
+}
+
+.name-suggest-chip.is-typo:hover {
+  background: rgba(254, 152, 0, 0.24);
+}
+
+.name-suggest-chip.is-typo strong {
+  font-weight: 700;
+}
+
+.name-suggest-chip.is-keep {
+  background: rgba(139, 149, 161, 0.12);
+  border-color: rgba(139, 149, 161, 0.35);
+  color: var(--muted);
+}
+
+.name-suggest-chip.is-keep:hover {
+  background: rgba(139, 149, 161, 0.22);
+}
+
+.name-suggest-chip.is-new {
+  background: rgba(49, 130, 246, 0.12);
+  border-color: rgba(49, 130, 246, 0.35);
+  color: #1d5fc4;
+}
+
 .preview-scroll-note {
   margin-top: 8px;
   font-size: 12px;

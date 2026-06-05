@@ -17,11 +17,13 @@ import {
   getDefaultPersistedState,
   parsePersistedState,
   pasteEditKey,
+  resolveAccountClassification,
   runValidation,
   safeFloat,
   type ValidationResult,
   type SessionSignFixes
 } from "@/lib/validation/engine";
+import { suggestTypoCandidates, type TypoCandidate, type VocabEntry } from "@/lib/validation/name-suggest";
 import { type SharedStateResponse } from "@/lib/shared-state";
 import { AccountTreeMirror } from "@/components/account-tree-mirror";
 import { buildTreeCatalogLookupFromRows, buildTreeKeywordCodeSets, buildTreeKeywordPrefixes } from "@/lib/validation/account-tree-adapter";
@@ -990,6 +992,8 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [companyConfigs, setCompanyConfigs] = useState<CompanyConfigs>(cloneCompanyConfigs(DEFAULT_COMPANY_CONFIGS));
   const [pasteEdits, setPasteEdits] = useState<Record<string, number>>({});
   const [nameEdits, setNameEdits] = useState<Record<string, string>>({});
+  // 계정명 오타 제안에서 "신규 유지"로 닫은 이름(정규화 키). 새 붙여넣기마다 초기화.
+  const [dismissedTypoNames, setDismissedTypoNames] = useState<Set<string>>(() => new Set());
   const [sessionSignFixes, setSessionSignFixes] = useState<SessionSignFixes>({});
   const [globalOverrideRows, setGlobalOverrideRows] = useState<OverrideRow[]>(overridesToRows(DEFAULT_LOGIC_CONFIG.sectionSignOverrides));
   const [companyOverrideRows, setCompanyOverrideRows] = useState<OverrideRow[]>([]);
@@ -1476,6 +1480,59 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }),
     [validation.parsed.catRow, validation.parsed.nameRow, validation.editableNameRow, validation.parsed.dataRows, pasteEdits]
   );
+  // 오타 추론용 사전: 지금 선택한 회사가 과거 분기에 실제로 쓴 계정명 모음.
+  // 같은 회사는 계정명을 분기마다 재사용하므로, 이번에 트리 매칭 안 된 이름을
+  // 이 사전과 자모 편집거리로 비교해 OCR 오타 후보를 띄운다.
+  const companyVocab = useMemo<VocabEntry[]>(() => {
+    const company = selectedCompany.trim();
+    if (!company) return [];
+    const acc = new Map<string, { name: string; quarters: Set<string>; inTree: boolean }>();
+    for (const dataset of savedDatasets) {
+      if (dataset.companyName !== company) continue;
+      for (const row of dataset.adjustedStatementRows) {
+        const name = row.accountName?.trim();
+        if (!name) continue;
+        const key = normalizeAccountName(name);
+        if (!key) continue;
+        const inTree = row.code != null && row.code > 0;
+        const existing = acc.get(key);
+        if (existing) {
+          existing.quarters.add(dataset.quarterKey);
+          existing.inTree = existing.inTree || inTree;
+        } else {
+          acc.set(key, { name, quarters: new Set([dataset.quarterKey]), inTree });
+        }
+      }
+    }
+    return Array.from(acc.values()).map((v) => ({ name: v.name, quarters: v.quarters.size, inTree: v.inTree }));
+  }, [selectedCompany, savedDatasets]);
+
+  // 붙여넣은 계정명 중 트리에 매칭 안 된(미분류) 열마다:
+  //  - candidates: 그 회사 과거 계정명 사전의 오타 후보(≤2)
+  //  - isNew     : 후보도 없고 과거에도 없던 신규 계정(사전이 있을 때만 판단)
+  const nameSuggestions = useMemo(() => {
+    const map = new Map<number, { candidates: TypoCandidate[]; isNew: boolean }>();
+    if (!accountTreeLookup) return map;
+    const names = validation.editableNameRow;
+    const sections = buildEffectiveSections(validation.parsed.catRow, names.length);
+    const hasVocab = companyVocab.length > 0;
+    names.forEach((name, colIndex) => {
+      const trimmed = (name ?? "").trim();
+      if (!trimmed) return;
+      const rawName = validation.parsed.nameRow[colIndex] ?? trimmed;
+      if (isLockedPreviewNameCell(rawName)) return; // 회사명/날짜 열
+      const key = normalizeAccountName(trimmed);
+      if (accountTreeNodeNames.has(key)) return; // 섹션 총계/구조노드는 계정 아님
+      const section = sections[colIndex]?.trim() || "기타";
+      const matched = resolveAccountClassification(trimmed, section, accountTreeLookup, true) !== null;
+      if (matched) return; // 이미 분류됨 → 제안 불필요
+      const candidates = suggestTypoCandidates(trimmed, companyVocab);
+      if (candidates.length === 0 && !hasVocab) return; // 비교할 과거 데이터 없음
+      map.set(colIndex, { candidates, isNew: candidates.length === 0 });
+    });
+    return map;
+  }, [validation.editableNameRow, validation.parsed.catRow, validation.parsed.nameRow, accountTreeLookup, accountTreeNodeNames, companyVocab]);
+
   const selectedDataset = useMemo(
     () => savedDatasets.find((item) => item.id === selectedDatasetId) ?? null,
     [savedDatasets, selectedDatasetId]
@@ -1986,6 +2043,46 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       return next;
     });
     setLastEditedCell(`0_${colIndex}`);
+  }
+
+  // 계정명 셀 아래 오타/신규 제안 칩. nameSuggestions(트리 미매칭 열)에 한해 렌더.
+  function renderNameSuggestion(colIndex: number, rawName: string) {
+    const sug = nameSuggestions.get(colIndex);
+    if (!sug) return null;
+    const currentName = validation.editableNameRow[colIndex] ?? "";
+    const dismissKey = normalizeAccountName(currentName);
+    if (dismissedTypoNames.has(dismissKey)) return null;
+    if (sug.candidates.length === 0) {
+      // 후보 없음 = 이 회사 과거 분기에 없던 신규 계정.
+      return (
+        <div className="name-suggest">
+          <span className="name-suggest-chip is-new" title="이 회사의 다른 분기에는 없던 계정명입니다. 신규면 트리에 추가해 분류하세요.">🆕 신규 계정</span>
+        </div>
+      );
+    }
+    return (
+      <div className="name-suggest">
+        {sug.candidates.map((candidate) => (
+          <button
+            key={candidate.name}
+            type="button"
+            className="name-suggest-chip is-typo"
+            title={`다른 분기에서 ${candidate.quarters}회 사용${candidate.inTree ? " · 분류됨" : ""} · 유사도 ${(candidate.similarity * 100).toFixed(0)}%`}
+            onClick={() => updateEditableName(colIndex, rawName, candidate.name)}
+          >
+            🔤 오타? <strong>{candidate.name}</strong>
+          </button>
+        ))}
+        <button
+          type="button"
+          className="name-suggest-chip is-keep"
+          title="오타가 아니라 새 계정입니다. 제안을 닫고 입력값을 그대로 둡니다."
+          onClick={() => setDismissedTypoNames((prev) => new Set(prev).add(dismissKey))}
+        >
+          ➕ 신규 유지
+        </button>
+      </div>
+    );
   }
 
   function applySuggestedEdit(rowIndex: number, colIndex: number, nextValue: number) {
@@ -2712,6 +2809,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                     setPastedText(event.target.value);
                     setPasteEdits({});
                     setNameEdits({});
+                    setDismissedTypoNames(new Set());
                     setSessionSignFixes({});
                   }}
                   placeholder={"행1: 기타\t재무상태표\t유동자산\t...\n행2: 회사명\t날짜\t...\n행3: 에이슬립\t2024-12-31\t..."}
@@ -2831,13 +2929,16 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                     {isLockedPreviewNameCell(name) ? (
                                       validation.editableNameRow[index] || `열${index}`
                                     ) : (
-                                      <input
-                                        className="mini-input"
-                                        type="text"
-                                        value={validation.editableNameRow[index] ?? ""}
-                                        onChange={(event) => updateEditableName(index, name, event.target.value)}
-                                        placeholder={`열${index}`}
-                                      />
+                                      <>
+                                        <input
+                                          className="mini-input"
+                                          type="text"
+                                          value={validation.editableNameRow[index] ?? ""}
+                                          onChange={(event) => updateEditableName(index, name, event.target.value)}
+                                          placeholder={`열${index}`}
+                                        />
+                                        {renderNameSuggestion(index, name)}
+                                      </>
                                     )}
                                   </td>
                                 ))}
