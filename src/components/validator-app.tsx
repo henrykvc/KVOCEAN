@@ -169,6 +169,9 @@ type TopViewKey = "menu" | "final-output";
 const DEFAULT_INDUSTRY_OPTIONS = ["서비스", "게임", "기술", "헬스케어", "크립토"] as const;
 const DEFAULT_ACCOUNTING_STANDARDS = ["K-GAAP", "IFRS"] as const;
 
+// 3줄 OCR 데이터가 들어오는 원본 구글시트(OCR검토용 — 코드연결용시트/보정 탭). OCR검증 입력 패널 바로가기용.
+const OCR_SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1sKbhatzVFQKABl2dh1xaRZwbzFYARiPJLZ2MYMtVG2Y/edit";
+
 type AccountingStandard = (typeof DEFAULT_ACCOUNTING_STANDARDS)[number];
 
 type PendingInsertedRow = {
@@ -2900,6 +2903,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <div className="button-row">
                 <button className="button" onClick={() => setActiveTab("validate")}>검증 결과 보기</button>
                 <button className="ghost-button" onClick={resetAdjustments}>입력 수정 초기화</button>
+                <a className="ghost-button" href={OCR_SOURCE_SHEET_URL} target="_blank" rel="noopener noreferrer" title="3줄 데이터가 들어오는 구글시트 열기 (코드연결용시트/보정)" style={{ textDecoration: "none" }}>
+                  구글시트 ↗
+                </a>
               </div>
 
               <div className="notice input-helper">
