@@ -32,6 +32,7 @@ import {
   buildHeaderRow as buildSheetsHeaderRow,
   buildQuarterRows as buildSheetsQuarterRows,
   collectDistinctQuarters as collectSheetsQuarters,
+  collectReportMetrics as collectSheetsMetrics,
   toSheetTabName,
   type SheetCellValue,
   type AccountSource
@@ -134,13 +135,15 @@ function buildSheetsSyncPayload(
     companyReports.set(name, buildCompanyReport(reportSnaps));
   }
 
-  const quarters = collectSheetsQuarters(Array.from(companyReports.values()));
-  const headers = buildSheetsHeaderRow();
+  const reportsArr = Array.from(companyReports.values());
+  const quarters = collectSheetsQuarters(reportsArr);
+  const metrics = collectSheetsMetrics(reportsArr);
+  const headers = buildSheetsHeaderRow(metrics);
 
   const quarterTabs = quarters.map((q) => ({
     tabName: toSheetTabName(q.key),
     headers,
-    rows: buildSheetsQuarterRows({ quarterKey: q.key, companyReports })
+    rows: buildSheetsQuarterRows({ quarterKey: q.key, companyReports, metrics })
   }));
 
   return { quarterTabs };
@@ -922,6 +925,16 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [workspaceMemoMeta, setWorkspaceMemoMeta] = useState<{ updatedAt: string | null; updatedBy: string | null }>({ updatedAt: null, updatedBy: null });
   const memoSyncInitializedRef = useRef(false);
   const [sheetsSyncState, setSheetsSyncState] = useState<{ status: "idle" | "syncing" | "ok" | "error" | "disabled"; message?: string }>({ status: "idle" });
+  // 결과물 동기화 대상 구글시트 링크 — 마운트 시 1회 조회해 동기화 버튼 옆에 표시.
+  const [sheetUrl, setSheetUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/datasets/sheets-sync")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => { if (!cancelled && data?.ok && data.spreadsheetUrl) setSheetUrl(data.spreadsheetUrl as string); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
   // 계정트리 캐시 → 매칭용 lookup. 있으면 검증/점검이 옛 분류 대신 트리로 돈다.
   const [accountTreeLookup, setAccountTreeLookup] = useState<ReturnType<typeof buildTreeCatalogLookupFromRows> | null>(null);
   // 트리 모든 노드 이름(leaf+구조노드) — OCR 섹션 총계줄(자산/매출액 등)을 미분류에서 거르는 용도.
@@ -1032,6 +1045,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [validatePreviewDrafts, setValidatePreviewDrafts] = useState<Record<string, ValidatePreviewDraft>>({});
   const [activeIndustryEditor, setActiveIndustryEditor] = useState<string | null>(null);
   const [dataEditMode, setDataEditMode] = useState(false);
+  // 데이터 탭 검색/필터: 회사명 검색 + 분기 + 산업.
+  const [dataSearch, setDataSearch] = useState("");
+  const [dataQuarterFilter, setDataQuarterFilter] = useState("");
+  const [dataIndustryFilter, setDataIndustryFilter] = useState("");
   const [statementType, setStatementType] = useState<"별도" | "연결">("별도");
   const [datasetActionState, setDatasetActionState] = useState<"idle" | "saving" | "deleting" | "restoring" | "purging">("idle");
   const [configApplyState, setConfigApplyState] = useState<"idle" | "applying" | "applied">("idle");
@@ -1590,6 +1607,24 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }, new Map<string, SavedQuarterSnapshot[]>()).entries()),
     [savedDatasets]
   );
+  // 데이터 탭 분기 필터 옵션 — 저장 데이터의 고유 분기(최신순).
+  const dataQuarterOptions = useMemo(
+    () => Array.from(new Set(savedDatasets.map((d) => d.quarterLabel))).sort((a, b) => b.localeCompare(a)),
+    [savedDatasets]
+  );
+  // 검색(회사명) + 분기 + 산업 필터를 적용한 회사 그룹.
+  const filteredGroupedDatasets = useMemo(() => {
+    const q = dataSearch.trim().toLowerCase();
+    return groupedSavedDatasets.filter(([companyName, datasets]) => {
+      if (q && !companyName.toLowerCase().includes(q)) return false;
+      if (dataQuarterFilter && !datasets.some((d) => d.quarterLabel === dataQuarterFilter)) return false;
+      if (dataIndustryFilter) {
+        const ind = normalizeIndustryLabel(companyConfigs[companyName]?.industry ?? "") || "미분류";
+        if (ind !== dataIndustryFilter) return false;
+      }
+      return true;
+    });
+  }, [groupedSavedDatasets, dataSearch, dataQuarterFilter, dataIndustryFilter, companyConfigs]);
   const resultReporting = useMemo(
     () => {
       const snaps = selectedDataset
@@ -3250,9 +3285,38 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                         <h3>회사/분기 누적 데이터</h3>
                         <p className="result-meta">같은 회사와 같은 분기는 새로 추가되지 않고 최신 검증 결과로 갱신됩니다.</p>
                       </div>
+                      <span className="soft-badge">{filteredGroupedDatasets.length} / {groupedSavedDatasets.length}개사</span>
                     </div>
+                    <div className="data-filter-bar" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center", marginBottom: "0.75rem" }}>
+                      <input
+                        type="text"
+                        value={dataSearch}
+                        onChange={(event) => setDataSearch(event.target.value)}
+                        placeholder="회사명 검색"
+                        style={{ flex: "1 1 180px", minWidth: 140, padding: "0.4rem 0.6rem", borderRadius: 8, border: "1px solid var(--border, #ddd)", fontSize: "0.9rem" }}
+                      />
+                      <select className="mini-select" value={dataQuarterFilter} onChange={(event) => setDataQuarterFilter(event.target.value)}>
+                        <option value="">전체 분기</option>
+                        {dataQuarterOptions.map((quarter) => (
+                          <option key={quarter} value={quarter}>{formatCompactQuarterLabel(quarter)}</option>
+                        ))}
+                      </select>
+                      <select className="mini-select" value={dataIndustryFilter} onChange={(event) => setDataIndustryFilter(event.target.value)}>
+                        <option value="">전체 산업</option>
+                        <option value="미분류">🏷️ 미분류</option>
+                        {industryOptions.map((option) => (
+                          <option key={option} value={option}>{`${getIndustryIcon(option)} ${option}`}</option>
+                        ))}
+                      </select>
+                      {(dataSearch || dataQuarterFilter || dataIndustryFilter) && (
+                        <button className="ghost-button" style={{ padding: "0.35rem 0.6rem", fontSize: "0.85rem" }} onClick={() => { setDataSearch(""); setDataQuarterFilter(""); setDataIndustryFilter(""); }}>초기화</button>
+                      )}
+                    </div>
+                    {!filteredGroupedDatasets.length && (
+                      <div className="notice">검색·필터 조건에 맞는 회사가 없습니다.</div>
+                    )}
                     <div className="data-list grouped-data-list">
-                      {groupedSavedDatasets.map(([companyName, datasets]) => {
+                      {filteredGroupedDatasets.map(([companyName, datasets]) => {
                         const activeDataset = datasets.find((dataset) => dataset.id === selectedDatasetId) ?? null;
                         const companyIndustry = getCompanyIndustry(companyName);
                         const companyIndustryLabel = companyIndustry || "미분류";
@@ -3427,6 +3491,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                         >
                           {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
                         </button>
+                        {sheetUrl && (
+                          <a className="ghost-button" href={sheetUrl} target="_blank" rel="noopener noreferrer" title="동기화 대상 구글시트 열기" style={{ textDecoration: "none" }}>
+                            구글시트 ↗
+                          </a>
+                        )}
                         {sheetsSyncState.status !== "idle" && sheetsSyncState.status !== "syncing" && (
                           <span className={`sheets-sync-status sheets-sync-${sheetsSyncState.status}`}>
                             {sheetsSyncState.status === "ok" && (sheetsSyncState.message ?? "동기화 완료")}
@@ -3780,6 +3849,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               >
                 {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
               </button>
+              {sheetUrl && (
+                <a className="ghost-button" href={sheetUrl} target="_blank" rel="noopener noreferrer" title="동기화 대상 구글시트 열기" style={{ textDecoration: "none" }}>
+                  구글시트 ↗
+                </a>
+              )}
               {sheetsSyncState.status !== "idle" && sheetsSyncState.status !== "syncing" && (
                 <span className={`sheets-sync-status sheets-sync-${sheetsSyncState.status}`}>
                   {sheetsSyncState.status === "ok" && (sheetsSyncState.message ?? "동기화 완료")}

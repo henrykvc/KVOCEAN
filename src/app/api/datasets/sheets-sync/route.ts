@@ -69,6 +69,23 @@ async function writeQuarterTab(
   });
 }
 
+// 결과물 동기화 대상 구글시트 링크를 클라이언트에 알려준다(버튼 옆 링크용).
+export async function GET() {
+  const { user } = await requireAuthorizedUser();
+  if (!user?.email) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  const config = getSheetsConfig();
+  if (!config) {
+    return NextResponse.json({ ok: false, reason: "disabled" });
+  }
+  return NextResponse.json({
+    ok: true,
+    spreadsheetId: config.spreadsheetId,
+    spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${config.spreadsheetId}/edit`
+  });
+}
+
 export async function POST(request: Request) {
   const { user } = await requireAuthorizedUser();
   if (!user?.email) {

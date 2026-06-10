@@ -364,18 +364,46 @@ function lookupKvId(companyName: string): string {
   return COMPANY_TO_KV_ID.get(trimmed) ?? "";
 }
 
-export function buildHeaderRow(): string[] {
-  return [...SHEETS_KEY_COLUMNS, ...TARGET_METRICS.map((m) => m.header)];
+// 결과물 전체 동기화에서 한 지표 = 금액/비율/증감율 3열. 보고서 finalSections의
+// 모든 행(지표)을 섹션·행 순서대로, label 기준 중복 제거해 수집한다.
+export type ReportMetric = { section: string; label: string };
+
+export function collectReportMetrics(reports: ReportingModel[]): ReportMetric[] {
+  const seen = new Set<string>();
+  const metrics: ReportMetric[] = [];
+  for (const report of reports) {
+    for (const section of report.finalSections) {
+      for (const row of section.rows) {
+        if (seen.has(row.label)) continue;
+        seen.add(row.label);
+        metrics.push({ section: section.title, label: row.label });
+      }
+    }
+  }
+  return metrics;
+}
+
+/**
+ * 헤더: [KV ID, 회사명, 그리고 지표마다 (label, `label 비율`, `label 증감율`)].
+ * 지표 목록은 collectReportMetrics로 보고서에서 동적으로 뽑는다.
+ */
+export function buildHeaderRow(metrics: ReportMetric[]): string[] {
+  const cols: string[] = [...SHEETS_KEY_COLUMNS];
+  for (const m of metrics) {
+    cols.push(m.label, `${m.label} 비율`, `${m.label} 증감율`);
+  }
+  return cols;
 }
 
 /**
  * Build rows for ONE quarter.
- * Each row = one company. Columns = [KV ID, 회사명, 런웨이, EBITDA, 월 평균 지출액].
+ * Each row = one company. Columns = [KV ID, 회사명, 지표별 금액·비율·증감율 …].
  * Companies with no data for this quarter are skipped.
  */
 export function buildQuarterRows(args: {
   quarterKey: string;
   companyReports: Map<string, ReportingModel>;
+  metrics: ReportMetric[];
 }): SheetCellValue[][] {
   const rows: SheetCellValue[][] = [];
   const companyNames = Array.from(args.companyReports.keys()).sort((a, b) => a.localeCompare(b, "ko"));
@@ -395,14 +423,17 @@ export function buildQuarterRows(args: {
     }
 
     const row: SheetCellValue[] = [lookupKvId(companyName), companyName];
-    for (const metric of TARGET_METRICS) {
+    for (const metric of args.metrics) {
       const metricRow = labelLookup.get(metric.label);
       if (!metricRow) {
-        row.push(null);
+        row.push(null, null, null);
         continue;
       }
-      const value = metricRow.amounts[period.key];
-      row.push(value ?? null);
+      row.push(
+        metricRow.amounts[period.key] ?? null,
+        metricRow.ratios[period.key] ?? null,
+        metricRow.growthRates[period.key] ?? null
+      );
     }
     rows.push(row);
   }
