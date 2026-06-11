@@ -26,6 +26,7 @@ import {
 import { suggestTypoCandidates, type TypoCandidate, type VocabEntry } from "@/lib/validation/name-suggest";
 import { type SharedStateResponse } from "@/lib/shared-state";
 import { AccountTreeMirror } from "@/components/account-tree-mirror";
+import { HenryFishingLoader, HenryLoadingDots } from "@/components/henry-fishing-loader";
 import { buildTreeCatalogLookupFromRows, buildTreeKeywordCodeSets, buildTreeKeywordPrefixes } from "@/lib/validation/account-tree-adapter";
 import { parseAccountTree, normalizeAccountName, type AccountTreeRow } from "@/lib/validation/account-tree";
 import {
@@ -948,12 +949,16 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [codeToPath, setCodeToPath] = useState<Map<number, string>>(() => new Map());
   // 묶음 키워드(현금및현금성자산·인건비 …) → 코드 범위(노드 prefix). 묶음 줄에 "1001001001000~" 식 범위 표시.
   const [keywordPrefixes, setKeywordPrefixes] = useState<Record<string, string[]>>({});
+  // 부팅 로딩 화면을 트리 로드가 끝날 때까지 유지(트리 도착 시 무거운 재계산이
+  // 입장 직후 화면을 멈추는 문제). 실패해도 true — 트리 없는 모드로 입장한다.
+  const [treeBootDone, setTreeBootDone] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/classification-tree")
       .then((r) => r.json())
       .then((data) => {
-        if (cancelled || !data?.ok || !Array.isArray(data.rows)) return;
+        if (cancelled) return;
+        if (!data?.ok || !Array.isArray(data.rows)) { setTreeBootDone(true); return; }
         setAccountTreeLookup(buildTreeCatalogLookupFromRows(data.rows as AccountTreeRow[]));
         const names = new Set<string>();
         const branchMap = new Map<string, { l1: string; l2: string }>();
@@ -996,8 +1001,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
             /* 파싱 실패 시 레거시 묶음셋 유지 */
           }
         }
+        setTreeBootDone(true);
       })
-      .catch(() => undefined);
+      .catch(() => { if (!cancelled) setTreeBootDone(true); });
     return () => { cancelled = true; };
   }, []);
   const sheetsAutoSyncInitializedRef = useRef(false);
@@ -2915,16 +2921,21 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   // Block the full app until Supabase has handed us the shared catalog +
   // saved datasets — otherwise the user briefly sees an empty/half-built
   // workspace before things pop in.
-  if (!mounted || !sharedStateReady) {
+  // 트리(분류DB)까지 받아야 부팅 완료 — 입장 후 트리 도착 시 재계산으로 화면이
+  // 잠깐 멈추던 것을 로딩 화면 뒤로 숨긴다. 트리 로드 실패 시에도 입장은 된다.
+  if (!mounted || !sharedStateReady || !treeBootDone) {
     return (
       <main className="workspace-shell" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
-        <div style={{ textAlign: "center", maxWidth: 480, padding: 24 }}>
+        <div style={{ textAlign: "center", maxWidth: 560, padding: 24 }}>
           <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
-          <h1 style={{ marginTop: 8, marginBottom: 16 }}>불러오는 중...</h1>
+          <HenryFishingLoader />
+          <h1 style={{ marginTop: 12, marginBottom: 12 }}>앙리가 데이터 가져오는 <span style={{ whiteSpace: "nowrap" }}>중<HenryLoadingDots /></span></h1>
           <p className="muted">
             {sharedStateError
               ? sharedStateError
-              : "공용 Supabase 저장소에서 분류DB와 저장 데이터를 가져오고 있습니다. 잠시만 기다려 주세요."}
+              : !sharedStateReady
+                ? "공용 Supabase 저장소에서 저장 데이터를 받아오고 있어요. 잠시만 기다려 주세요."
+                : "분류DB(계정트리)를 펼치는 중이에요. 거의 다 됐어요."}
           </p>
         </div>
       </main>
