@@ -26,7 +26,7 @@ import {
 import { suggestTypoCandidates, type TypoCandidate, type VocabEntry } from "@/lib/validation/name-suggest";
 import { type SharedStateResponse } from "@/lib/shared-state";
 import { AccountTreeMirror } from "@/components/account-tree-mirror";
-import { HenryFishingLoader, HenryLoadingDots } from "@/components/henry-fishing-loader";
+import { HenryFishingLoader, HenryFishingHero, HenryLoadingDots } from "@/components/henry-fishing-loader";
 import { DEFAULT_FAMILY_COMPANIES, computeFamilyCoverage } from "@/lib/family-companies";
 import { buildTreeCatalogLookupFromRows, buildTreeKeywordCodeSets, buildTreeKeywordPrefixes } from "@/lib/validation/account-tree-adapter";
 import { parseAccountTree, normalizeAccountName, type AccountTreeRow } from "@/lib/validation/account-tree";
@@ -923,6 +923,8 @@ type UserRole = "creator" | "admin" | "manager";
 export function ValidatorApp({ userRole = "manager", initialDatasets, initialTrashedDatasets }: { userRole?: UserRole; initialDatasets?: SavedQuarterSnapshot[]; initialTrashedDatasets?: SavedQuarterSnapshot[] }) {
   const canEditConfig = userRole === "creator" || userRole === "admin";
   const canDeleteData = userRole === "creator";
+  // 구글시트 동기화(결과물 push·계정트리 sync)는 관리자 이상만 — 서버도 403으로 막는다.
+  const canSyncSheets = canEditConfig;
   const [topView, setTopView] = useState<TopViewKey>("menu");
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
   const [mounted, setMounted] = useState(false);
@@ -1216,6 +1218,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     if (!mounted || !sharedStateReady) {
       return;
     }
+
+    // 시트 동기화는 관리자 이상만 — 매니저는 자동 동기화도 건너뛴다(서버도 403).
+    if (!canSyncSheets) return;
 
     // First load: fire once after a short delay so the initial sheet snapshot is fresh.
     // Subsequent edits do NOT auto-sync — that path pushes 2.4K rows and was the
@@ -1610,7 +1615,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     }
 
     // 저장 데이터가 바뀌었으면 결과물 시트도 화면과 같게 갱신(저장 흐름과 동일).
-    if (okLabels.length) {
+    if (okLabels.length && canSyncSheets) {
       const sheetsPayload = buildSheetsSyncPayload(datasetsNow, accountTreeLookup ? { logicConfig, companyConfigs, accountTreeLookup } : undefined);
       if (sheetsPayload.quarterTabs.length) {
         setSheetsSyncState({ status: "syncing", message: "삭제 후 시트 동기화 중..." });
@@ -1987,7 +1992,10 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       setActiveTab("data");
 
       // Use freshly-saved data (nextSaved) — React state may not have propagated yet.
-      const sheetsPayload = buildSheetsSyncPayload(nextSaved, accountTreeLookup ? { logicConfig, companyConfigs, accountTreeLookup } : undefined);
+      // 매니저는 시트 동기화 없이 저장까지만 — 시트 반영은 관리자가 한다.
+      const sheetsPayload = canSyncSheets
+        ? buildSheetsSyncPayload(nextSaved, accountTreeLookup ? { logicConfig, companyConfigs, accountTreeLookup } : undefined)
+        : { quarterTabs: [] as ReturnType<typeof buildSheetsSyncPayload>["quarterTabs"] };
       if (sheetsPayload.quarterTabs.length) {
         setSheetsSyncState({ status: "syncing", message: "저장 후 시트 동기화 중..." });
         postSheetsSync(sheetsPayload)
@@ -3026,16 +3034,18 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       </aside>
 
       <section className="page-shell">
-        <section className="hero">
-        <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
-        <h1>Challenge the Status Quo</h1>
-        <p>{sharedStateReady ? "공용 Supabase 저장소와 동기화된 상태로 작업합니다." : "공용 Supabase 저장소를 불러오는 중입니다..."}</p>
-        <div className="hero-meta">
-          <span className="pill">1. 텍스트 붙여넣기</span>
-          <span className="pill">2. 실패 항목 확인</span>
-          <span className="pill">3. 값/부호 바로 수정</span>
+        <section className="hero hero-fishing">
+        <HenryFishingHero />
+        <div className="hero-fishing-overlay">
+          <span className="hero-eyebrow">KVOCEAN OCR Validator</span>
+          <div className="hero-fishing-bottom">
+            <span className="hero-sync">
+              <span className={`hero-sync-dot${sharedStateReady ? "" : " loading"}`} />
+              {sharedStateReady ? "공용 Supabase 저장소와 동기화된 상태로 작업합니다." : "공용 Supabase 저장소를 불러오는 중입니다..."}
+            </span>
+            {sharedStateError ? <p className="save-feedback warning">{sharedStateError}</p> : null}
+          </div>
         </div>
-        {sharedStateError ? <p className="save-feedback warning">{sharedStateError}</p> : null}
       </section>
 
       <section className="summary-strip">
@@ -3799,14 +3809,18 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                       </div>
                       <div className="result-actions">
                         {selectedReportPeriod && <span className="soft-badge">{selectedReportPeriod.label}</span>}
-                        <button
-                          className="ghost-button"
-                          onClick={bulkSyncSheets}
-                          disabled={sheetsSyncState.status === "syncing"}
-                          title="저장된 모든 회사의 최종결과물을 구글시트에 한 번에 push"
-                        >
-                          {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
-                        </button>
+                        {canSyncSheets ? (
+                          <button
+                            className="ghost-button"
+                            onClick={bulkSyncSheets}
+                            disabled={sheetsSyncState.status === "syncing"}
+                            title="저장된 모든 회사의 최종결과물을 구글시트에 한 번에 push"
+                          >
+                            {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
+                          </button>
+                        ) : (
+                          <span className="soft-badge" title="시트 동기화는 관리자 이상만 실행할 수 있습니다">시트 동기화 — 관리자 전용 🔒</span>
+                        )}
                         {sheetUrl && (
                           <a className="ghost-button" href={sheetUrl} target="_blank" rel="noopener noreferrer" title="동기화 대상 구글시트 열기" style={{ textDecoration: "none" }}>
                             구글시트 ↗
@@ -4157,14 +4171,18 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               <button className={`ghost-button ${sameCompanyMode ? "is-selected" : ""}`.trim()} onClick={toggleSameCompanyMode}>
                 동일 회사 {sameCompanyMode ? "켜짐" : "꺼짐"}
               </button>
-              <button
-                className="ghost-button"
-                onClick={bulkSyncSheets}
-                disabled={sheetsSyncState.status === "syncing"}
-                title="저장된 모든 회사의 최종결과물을 구글시트에 한 번에 push"
-              >
-                {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
-              </button>
+              {canSyncSheets ? (
+                <button
+                  className="ghost-button"
+                  onClick={bulkSyncSheets}
+                  disabled={sheetsSyncState.status === "syncing"}
+                  title="저장된 모든 회사의 최종결과물을 구글시트에 한 번에 push"
+                >
+                  {sheetsSyncState.status === "syncing" ? "동기화 중..." : "전체 회사 시트 동기화"}
+                </button>
+              ) : (
+                <span className="soft-badge" title="시트 동기화는 관리자 이상만 실행할 수 있습니다">시트 동기화 — 관리자 전용 🔒</span>
+              )}
               {sheetUrl && (
                 <a className="ghost-button" href={sheetUrl} target="_blank" rel="noopener noreferrer" title="동기화 대상 구글시트 열기" style={{ textDecoration: "none" }}>
                   구글시트 ↗

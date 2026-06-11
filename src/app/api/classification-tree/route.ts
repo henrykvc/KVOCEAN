@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getAllowedUser } from "@/lib/supabase/access";
+import { getAllowedUser, getUserRole } from "@/lib/supabase/access";
 import { parseAccountTree } from "@/lib/validation/account-tree";
 import { readTreeSheetValues, buildTreeCache, appendPendingRows, type PendingAppendRow } from "@/lib/classification-tree-sync";
 
@@ -51,6 +51,13 @@ export async function GET() {
 export async function POST(req: Request) {
   const { supabase, user } = await requireAuthorizedUser();
   if (!user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // 계정트리 동기화·미분류 시트 추가는 관리자 이상만 (분류DB 탭 자체가 관리자
+  // 전용이지만 API 직접 호출도 막는다).
+  const role = await getUserRole(supabase, user.email).catch(() => "manager" as const);
+  if (role !== "admin" && role !== "creator") {
+    return NextResponse.json({ ok: false, error: "계정트리 동기화는 관리자 이상만 실행할 수 있습니다." }, { status: 403 });
+  }
 
   let body: { action?: string; rows?: PendingAppendRow[] } | null = null;
   try { body = await req.json(); } catch { body = null; }

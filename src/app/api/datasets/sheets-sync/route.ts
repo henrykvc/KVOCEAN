@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { sheets_v4 } from "googleapis";
 import { createClient } from "@/lib/supabase/server";
-import { getAllowedUser } from "@/lib/supabase/access";
+import { getAllowedUser, getUserRole } from "@/lib/supabase/access";
 import { getSheetsConfig, getSheetsEnvDiagnostics, type SheetsConfig } from "@/lib/google-sheets";
 import type { SheetCellValue } from "@/lib/sheets-export";
 
@@ -87,9 +87,16 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const { user } = await requireAuthorizedUser();
+  const { supabase, user } = await requireAuthorizedUser();
   if (!user?.email) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  // 결과물 시트 쓰기는 관리자 이상만 — 매니저는 저장까지만 하고 시트 반영은
+  // 관리자가 한다(클라이언트도 매니저에겐 동기화 호출/버튼을 막아둠).
+  const role = await getUserRole(supabase, user.email).catch(() => "manager" as const);
+  if (role !== "admin" && role !== "creator") {
+    return NextResponse.json({ ok: false, error: "시트 동기화는 관리자 이상만 실행할 수 있습니다." }, { status: 403 });
   }
 
   const body = await request.json().catch(() => null) as SyncBody | null;

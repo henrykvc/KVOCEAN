@@ -127,6 +127,114 @@ export function HenryFishingLoader() {
   );
 }
 
+/**
+ * 작업 화면 상단 히어로 배너 — 로딩 화면과 같은 세계관. 풀폭 바다 위 오른쪽
+ * 부두에서 앙리가 재무제표를 낚고, 물 위로 재무제표들이 떠다닌다.
+ * 히어로는 컨테이너 크기가 유동적이라 CSS keyframes(viewport 좌표 기준
+ * transform-origin이 어긋남) 대신 SMIL(로컬 좌표 기준)로 움직인다.
+ * preserveAspectRatio xMaxYMid slice — 화면이 좁아져도 앙리(오른쪽)는 보인다.
+ */
+export function HenryFishingHero() {
+  const wave1 = "M-48 118 q12 -5 24 0" + " t24 0".repeat(70);
+  const wave2 = "M-48 128 q12 -4 24 0" + " t24 0".repeat(70);
+  return (
+    <svg className="hero-fishing-svg" viewBox="0 0 1600 190" preserveAspectRatio="xMaxYMid slice" role="img" aria-label="정장 입은 앙리가 부두에서 재무제표를 낚는 풍경">
+      <defs>
+        <g id="heroPaper">
+          <rect width="26" height="34" rx="2" fill="#EAF2FA" stroke="#B9D2E8" strokeWidth="0.7" />
+          <line x1="4" y1="6" x2="16" y2="6" stroke="#54718C" strokeWidth="1.6" />
+          <line x1="4" y1="12" x2="22" y2="12" stroke="#8FA9C0" strokeWidth="0.9" />
+          <line x1="4" y1="17" x2="22" y2="17" stroke="#8FA9C0" strokeWidth="0.9" />
+          <line x1="4" y1="22" x2="22" y2="22" stroke="#8FA9C0" strokeWidth="0.9" />
+          <line x1="4" y1="27" x2="22" y2="27" stroke="#8FA9C0" strokeWidth="0.9" />
+          <line x1="13" y1="10" x2="13" y2="27" stroke="#8FA9C0" strokeWidth="0.7" />
+        </g>
+        <clipPath id="heroWaterClip"><rect x="0" y="118" width="1600" height="72" /></clipPath>
+      </defs>
+      {/* 구름 */}
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0 0;18 0;0 0" dur="11s" repeatCount="indefinite" />
+        <ellipse cx="240" cy="46" rx="32" ry="11" fill="#DCE8F2" /><ellipse cx="266" cy="39" rx="22" ry="9" fill="#DCE8F2" />
+      </g>
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0 0;-16 0;0 0" dur="14s" repeatCount="indefinite" />
+        <ellipse cx="700" cy="36" rx="26" ry="9" fill="#E4EEF6" /><ellipse cx="720" cy="30" rx="16" ry="7" fill="#E4EEF6" />
+      </g>
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0 0;14 0;0 0" dur="13s" repeatCount="indefinite" />
+        <ellipse cx="1080" cy="48" rx="28" ry="10" fill="#DCE8F2" /><ellipse cx="1102" cy="42" rx="18" ry="8" fill="#DCE8F2" />
+      </g>
+      {/* 바다 */}
+      <rect x="0" y="118" width="1600" height="72" fill="#9CC6EE" />
+      <g clipPath="url(#heroWaterClip)">
+        {/* 떠다니는 재무제표들 */}
+        <g>
+          <animateTransform attributeName="transform" type="translate" values="1650 130;-80 136" dur="26s" repeatCount="indefinite" />
+          <g transform="rotate(-8)"><use href="#heroPaper" /></g>
+        </g>
+        <g>
+          <animateTransform attributeName="transform" type="translate" values="-80 150;1650 144" dur="34s" begin="-12s" repeatCount="indefinite" />
+          <g transform="scale(0.8) rotate(6)"><use href="#heroPaper" /></g>
+        </g>
+        <g>
+          <animateTransform attributeName="transform" type="translate" values="1650 164;-80 168" dur="42s" begin="-20s" repeatCount="indefinite" />
+          <g transform="scale(0.6) rotate(12)"><use href="#heroPaper" /></g>
+        </g>
+        {/* 기포 (찌 근처) */}
+        <circle cx="1346" cy="156" r="2.2" fill="#E6F1FB">
+          <animateTransform attributeName="transform" type="translate" values="0 0;0 -38" dur="3.4s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="1358" cy="166" r="1.6" fill="#E6F1FB">
+          <animateTransform attributeName="transform" type="translate" values="0 0;0 -38" dur="4.2s" begin="-1.1s" repeatCount="indefinite" />
+        </circle>
+      </g>
+      {/* 물결 */}
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0 0;-48 0" dur="5s" repeatCount="indefinite" />
+        <path d={wave1} fill="none" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.85" />
+      </g>
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="-48 0;0 0" dur="7s" repeatCount="indefinite" />
+        <path d={wave2} fill="none" stroke="#C3DCF3" strokeWidth="1.1" opacity="0.8" />
+      </g>
+      {/* 부두 + 앙리 + 낚싯대 (로더와 동일 좌표계를 통째로 배치) */}
+      <g transform="translate(1138 -15.7) scale(0.62)">
+        <rect x="492" y="226" width="9" height="110" fill="#8A6A4F" />
+        <rect x="612" y="226" width="9" height="110" fill="#8A6A4F" />
+        <rect x="470" y="214" width="210" height="11" rx="2" fill="#B08968" />
+        <rect x="470" y="222" width="210" height="3" fill="#96714F" />
+        <path d="M497 206 q-4 10 -12 12 l0 6 l5 0 q9 -4 12 -12 Z" fill="#23303F" />
+        <rect x="481" y="222" width="10" height="5" rx="2" fill="#1A1A18" />
+        <rect x="485" y="168" width="29" height="40" rx="9" fill="#2C3E50" />
+        <path d="M499 170 l-6 9 l6 22 l6 -22 Z" fill="#F4F7FA" />
+        <path d="M499 173 l-3 4 l3 18 l3 -18 Z" fill="#A32D2D" />
+        <path d="M492 177 q-13 4 -19 11" fill="none" stroke="#2C3E50" strokeWidth="7.5" strokeLinecap="round" />
+        <circle cx="472" cy="190" r="4.5" fill="#F0C4A8" />
+        <circle cx="499" cy="152" r="13.5" fill="#F0C4A8" />
+        <path d="M486 149 a14 14 0 0 1 26 -5 q2 4 1 7 q-5 -6 -12 -6 q-9 0 -15 4 Z" fill="#3B2F2A" />
+        <circle cx="493" cy="154" r="1.4" fill="#2C2C2A" />
+        <path d="M489 161 q3 2.5 6 0" fill="none" stroke="#2C2C2A" strokeWidth="1.1" strokeLinecap="round" />
+        <g>
+          <animateTransform attributeName="transform" type="rotate" values="0 474 188;-2.5 474 188;1.5 474 188;-5 474 188;0.5 474 188;0 474 188" keyTimes="0;0.35;0.55;0.72;0.82;1" dur="3.2s" repeatCount="indefinite" />
+          <line x1="478" y1="191" x2="350" y2="100" stroke="#5F5E5A" strokeWidth="2.6" strokeLinecap="round" />
+          <circle cx="468" cy="196" r="3.4" fill="#444441" />
+          <g>
+            <animateTransform attributeName="transform" type="translate" values="0 0;0 0;0 6;0 1;0 4;0 0" keyTimes="0;0.6;0.7;0.78;0.86;1" dur="3.2s" repeatCount="indefinite" />
+            <line x1="350" y1="100" x2="350" y2="222" stroke="#7A8A99" strokeWidth="0.9" />
+            <circle cx="350" cy="225" r="4.6" fill="#E24B4A" />
+            <path d="M345.4 225 a4.6 4.6 0 0 0 9.2 0 Z" fill="#FFFFFF" />
+            <g>
+              <animateTransform attributeName="transform" type="rotate" values="-4 350 238;5 350 238;-4 350 238" dur="3.2s" repeatCount="indefinite" />
+              <line x1="350" y1="229" x2="350" y2="240" stroke="#7A8A99" strokeWidth="0.8" />
+              <g transform="translate(338 240) rotate(-4)"><use href="#heroPaper" /></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 /** "앙리가 데이터 가져오는 중..." 점 세 개 깜빡임. HenryFishingLoader와 같이 쓴다. */
 export function HenryLoadingDots() {
   return (

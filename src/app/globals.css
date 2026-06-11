@@ -289,6 +289,68 @@ a {
   font-size: 13px;
 }
 
+/* 히어로 — 앙리 낚시 배너 (시안 B: 풀폭 바다) */
+.hero-fishing {
+  position: relative;
+  height: 190px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.hero-fishing-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hero-fishing-overlay {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 18px 24px 14px;
+  pointer-events: none;
+}
+
+.hero-fishing-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.hero-fishing-bottom .save-feedback {
+  margin: 0;
+  pointer-events: auto;
+}
+
+.hero-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border-radius: 10px;
+  background: rgba(230, 241, 251, 0.88);
+  color: #0c447c;
+  font-size: 13px;
+}
+
+.hero-sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2f9e44;
+}
+
+.hero-sync-dot.loading {
+  background: #e8a13c;
+}
+
 .summary-strip {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
