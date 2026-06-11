@@ -26,6 +26,8 @@ type AccountTreeMirrorProps = {
   pendingRows?: PendingAppendRow[];
   /** 출처(회사·분기) 클릭 시 그 데이터셋을 OCR검증 탭에 로드. */
   onOpenSource?: (companyName: string, quarterLabel: string) => void;
+  /** 미분류 행 🗑 — 출처 데이터셋들에서 계정 열을 지우고 재저장. null이면 사용자가 취소. */
+  onDeleteUnclassified?: (accountName: string, sources: AccountSource[]) => Promise<{ ok: boolean; message: string } | null>;
 };
 
 const PAGE_SIZE = 100;
@@ -67,7 +69,7 @@ function SourceChips({ sources, max = 6, onOpen }: { sources: AccountSource[] | 
  * 저장 데이터의 출처(회사·분기)를 각 계정 행에 붙이고, 트리에 없는 OCR 계정은
  * `미분류` 보기로 빨간색·출처와 함께 추려 보여준다(시트에 추가해 분류).
  */
-export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRows = [], onOpenSource }: AccountTreeMirrorProps) {
+export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRows = [], onOpenSource, onDeleteUnclassified }: AccountTreeMirrorProps) {
   const [rows, setRows] = useState<AccountTreeRow[]>([]);
   const [meta, setMeta] = useState<TreeMeta | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,6 +78,23 @@ export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRow
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [view, setView] = useState<"tree" | "unclassified">("tree");
+  const [deletingName, setDeletingName] = useState<string | null>(null);
+
+  const deleteUnclassifiedRow = useCallback(async (row: UnclassifiedRow) => {
+    if (!onDeleteUnclassified || deletingName) return;
+    setDeletingName(row.accountName);
+    setSync({ status: "syncing", message: `'${row.accountName}' 삭제 중...` });
+    try {
+      const result = await onDeleteUnclassified(row.accountName, row.sources);
+      if (!result) { setSync({ status: "idle" }); return; } // 확인창에서 취소
+      setSync({ status: result.ok ? "ok" : "error", message: result.message });
+      if (result.ok) window.setTimeout(() => setSync((p) => p.status === "ok" ? { status: "idle" } : p), 7000);
+    } catch (e) {
+      setSync({ status: "error", message: e instanceof Error ? e.message : "삭제 실패" });
+    } finally {
+      setDeletingName(null);
+    }
+  }, [onDeleteUnclassified, deletingName]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -276,6 +295,7 @@ export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRow
                     <th>미분류 계정명</th>
                     <th style={{ textAlign: "right" }}>등장</th>
                     <th>출처 (클릭 → OCR검증으로 열기)</th>
+                    {onDeleteUnclassified && <th style={{ textAlign: "center" }}>삭제</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -286,6 +306,17 @@ export function AccountTreeMirror({ sourcesByCode, unclassified = [], pendingRow
                       <td><strong style={{ color: "#b91c1c" }}>{u.accountName}</strong></td>
                       <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{u.sources.length.toLocaleString()}</td>
                       <td style={{ maxWidth: 520, whiteSpace: "normal" }}><SourceChips sources={u.sources} max={12} onOpen={onOpenSource} /></td>
+                      {onDeleteUnclassified && (
+                        <td style={{ textAlign: "center" }}>
+                          <button
+                            type="button"
+                            className="icon-button danger"
+                            disabled={deletingName !== null || sync.status === "syncing"}
+                            title="모든 출처의 저장 데이터에서 이 계정 열을 삭제하고 재저장 (OCR검증 🗑 후 저장과 동일)"
+                            onClick={() => void deleteUnclassifiedRow(u)}
+                          >{deletingName === u.accountName ? "⏳" : "🗑"}</button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

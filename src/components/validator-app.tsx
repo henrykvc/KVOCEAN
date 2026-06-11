@@ -1460,6 +1460,166 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
       setActiveTab("validate");
     }
   }
+
+  // 미분류 행의 🗑 → 출처 데이터셋들에서 그 계정 열을 지우고 해당 분기만 재저장.
+  // OCR검증에서 열 🗑 후 저장하는 수작업과 같은 결과를 내되, 검증 탭을 거치지
+  // 않는다. 원문(pastedText)에서 열을 제거해야 다음 로드 때 부활하지 않는다.
+  // 삭제 후 합계 검증이 깨지는 분기는 건너뛴다(합산에 실제로 쓰이는 계정 보호).
+  async function deleteUnclassifiedAccount(
+    accountName: string,
+    sources: AccountSource[]
+  ): Promise<{ ok: boolean; message: string } | null> {
+    const targetKey = normalizeAccountName(accountName);
+    const labels = sources.map((s) => `${s.companyName} ${s.quarterLabel}`).join(", ");
+    const confirmed = window.confirm(
+      `미분류 계정 '${accountName}'을(를) 저장 데이터에서 삭제합니다.\n\n대상: ${labels}\n\n` +
+      `· 각 데이터의 원문에서 이 계정 열을 제거하고 그 분기를 재저장합니다(OCR검증 🗑 후 저장과 동일).\n` +
+      `· 결과물 구글시트도 함께 갱신됩니다.\n` +
+      `· 삭제 후 합계 검증이 실패하는 분기는 건너뜁니다(OCR검증에서 직접 처리).\n\n진행할까요?`
+    );
+    if (!confirmed) return null;
+
+    const okLabels: string[] = [];
+    const failLabels: string[] = [];
+    let datasetsNow = savedDatasets;
+
+    for (const src of sources) {
+      const matches = datasetsNow.filter((d) =>
+        d.companyName === src.companyName
+        && d.quarterLabel === src.quarterLabel
+        && d.adjustedStatementRows.some((row) => normalizeAccountName(row.accountName ?? "") === targetKey)
+      );
+      if (!matches.length) {
+        failLabels.push(`${src.companyName} ${src.quarterLabel} (계정 없음 — 이미 처리됐을 수 있음)`);
+        continue;
+      }
+
+      for (const ds of matches) {
+        const label = `${ds.companyName} ${ds.quarterLabel}`;
+        // loadDatasetIntoValidator와 동일: 현재 분류DB 기준으로 edits 재정규화.
+        const normalizedPasteEdits = normalizePasteEditsForValidation({
+          pastedText: ds.source.pastedText,
+          selectedCompany: ds.companyName,
+          logicConfig,
+          companyConfigs,
+          accountTreeLookup: accountTreeLookup ?? undefined,
+          pasteEdits: ds.source.pasteEdits,
+          nameEdits: ds.source.nameEdits ?? {},
+          sessionSignFixes: {}
+        });
+        const current = runValidation({
+          pastedText: ds.source.pastedText,
+          selectedCompany: ds.companyName,
+          tolerance: ds.source.tolerance,
+          logicConfig,
+          companyConfigs,
+          pasteEdits: normalizedPasteEdits,
+          nameEdits: ds.source.nameEdits ?? {},
+          sessionSignFixes: {},
+          accountTreeLookup: accountTreeLookup ?? undefined
+        });
+        if (current.parsed.error) {
+          failLabels.push(`${label} (원문 파싱 실패)`);
+          continue;
+        }
+
+        const colIndexes = current.editableNameRow
+          .map((name, index) => (normalizeAccountName(name ?? "") === targetKey ? index : -1))
+          .filter((index) => index >= 0);
+        if (!colIndexes.length) {
+          failLabels.push(`${label} (원문에서 계정 열을 찾지 못함)`);
+          continue;
+        }
+
+        // 수정값·이름수정을 행렬에 구워 넣은 뒤 열 제거(removeValidationAccount와 동일).
+        let matrix = {
+          catRow: current.parsed.catRow,
+          nameRow: current.editableNameRow,
+          dataRows: buildEffectiveDataRows(current.parsed.dataRows, normalizedPasteEdits)
+        };
+        for (const colIndex of [...colIndexes].sort((a, b) => b - a)) {
+          matrix = removeColumnFromMatrix(matrix.catRow, matrix.nameRow, matrix.dataRows, colIndex);
+        }
+        const nextText = buildPastedTextFromMatrix(matrix.catRow, matrix.nameRow, matrix.dataRows);
+
+        const recheckArgs = {
+          pastedText: nextText,
+          selectedCompany: ds.companyName,
+          tolerance: ds.source.tolerance,
+          logicConfig,
+          companyConfigs,
+          pasteEdits: {},
+          nameEdits: {},
+          sessionSignFixes: {},
+          accountTreeLookup: accountTreeLookup ?? undefined
+        };
+        const recheck = runValidation(recheckArgs);
+        if (recheck.parsed.error || recheck.stats.total === 0 || recheck.stats.failed > 0) {
+          failLabels.push(`${label} (삭제 후 검증 실패 ${recheck.stats.failed}건 — OCR검증에서 직접 처리)`);
+          continue;
+        }
+
+        // 같은 원문이 여러 분기를 낳으므로, 지금 다루는 분기 스냅샷만 골라 저장한다
+        // (다른 분기 데이터셋을 옛 원문으로 덮어쓰지 않도록). id는 기존 행 유지.
+        const snapshots = buildQuarterSnapshots({ ...recheckArgs, statementType: ds.source.statementType })
+          .filter((s) => s.quarterKey === ds.quarterKey)
+          .map((s) => ({ ...s, id: ds.id }));
+        if (!snapshots.length) {
+          failLabels.push(`${label} (분기 스냅샷 생성 실패)`);
+          continue;
+        }
+
+        try {
+          const response = await fetch("/api/datasets", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ snapshots, validatedText: recheck.copyText })
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null) as { error?: string } | null;
+            throw new Error(payload?.error ?? "저장 실패");
+          }
+          const payload = parseDatasetApiResponse(await response.json() as DatasetApiResponse);
+          datasetsNow = payload.datasets;
+          setSavedDatasets(payload.datasets);
+          setTrashedDatasets(payload.trashedDatasets);
+          okLabels.push(label);
+        } catch (error) {
+          failLabels.push(`${label} (${error instanceof Error ? error.message : "저장 실패"})`);
+        }
+      }
+    }
+
+    // 저장 데이터가 바뀌었으면 결과물 시트도 화면과 같게 갱신(저장 흐름과 동일).
+    if (okLabels.length) {
+      const sheetsPayload = buildSheetsSyncPayload(datasetsNow, accountTreeLookup ? { logicConfig, companyConfigs, accountTreeLookup } : undefined);
+      if (sheetsPayload.quarterTabs.length) {
+        setSheetsSyncState({ status: "syncing", message: "삭제 후 시트 동기화 중..." });
+        postSheetsSync(sheetsPayload)
+          .then((data) => {
+            if (data?.ok) {
+              setSheetsSyncState({ status: "ok", message: `시트 동기화 완료 (탭 ${data.tabsWritten ?? sheetsPayload.quarterTabs.length})` });
+              window.setTimeout(() => setSheetsSyncState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 4000);
+            } else if (data?.reason === "disabled") {
+              setSheetsSyncState({ status: "idle" });
+            } else {
+              setSheetsSyncState({ status: "error", message: describeSheetsError(data) });
+            }
+          })
+          .catch((err) => {
+            setSheetsSyncState({ status: "error", message: err instanceof Error ? err.message : "구글시트 동기화 실패" });
+          });
+      }
+    }
+
+    if (!failLabels.length) {
+      return { ok: true, message: `'${accountName}' 삭제 완료 — ${okLabels.join(", ")}` };
+    }
+    return {
+      ok: okLabels.length > 0,
+      message: `'${accountName}' ${okLabels.length ? `삭제 ${okLabels.length}건 완료` : "삭제 실패"} · 건너뜀: ${failLabels.join(" / ")}`
+    };
+  }
   const reporting = useMemo(
     () => {
       const reportArgs = {
@@ -3827,7 +3987,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
               </section>
 
               <section className="config-card">
-                <AccountTreeMirror sourcesByCode={treeSourceData.sourcesByCode} unclassified={treeSourceData.unclassified} pendingRows={treeSourceData.pendingRows} onOpenSource={openSourceInValidator} />
+                <AccountTreeMirror sourcesByCode={treeSourceData.sourcesByCode} unclassified={treeSourceData.unclassified} pendingRows={treeSourceData.pendingRows} onOpenSource={openSourceInValidator} onDeleteUnclassified={deleteUnclassifiedAccount} />
               </section>
             </>
           )}
