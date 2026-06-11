@@ -27,6 +27,7 @@ import { suggestTypoCandidates, type TypoCandidate, type VocabEntry } from "@/li
 import { type SharedStateResponse } from "@/lib/shared-state";
 import { AccountTreeMirror } from "@/components/account-tree-mirror";
 import { HenryFishingLoader, HenryLoadingDots } from "@/components/henry-fishing-loader";
+import { DEFAULT_FAMILY_COMPANIES, computeFamilyCoverage } from "@/lib/family-companies";
 import { buildTreeCatalogLookupFromRows, buildTreeKeywordCodeSets, buildTreeKeywordPrefixes } from "@/lib/validation/account-tree-adapter";
 import { parseAccountTree, normalizeAccountName, type AccountTreeRow } from "@/lib/validation/account-tree";
 import {
@@ -928,6 +929,13 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
   const [workspaceMemo, setWorkspaceMemo] = useState("");
   const [workspaceMemoMeta, setWorkspaceMemoMeta] = useState<{ updatedAt: string | null; updatedBy: string | null }>({ updatedAt: null, updatedBy: null });
   const memoSyncInitializedRef = useRef(false);
+  // 패밀리사 명단 — null이면 DB 미설정(기본 명단 사용). 데이터 탭 "패밀리 N/M" 칩의 분모.
+  const [familyCompanies, setFamilyCompanies] = useState<string[] | null>(null);
+  const [familyMeta, setFamilyMeta] = useState<{ updatedAt: string | null; updatedBy: string | null }>({ updatedAt: null, updatedBy: null });
+  const [familyPanelOpen, setFamilyPanelOpen] = useState(false);
+  const [familyDraft, setFamilyDraft] = useState<string | null>(null);
+  const [familySaveState, setFamilySaveState] = useState<{ status: "idle" | "saving" | "ok" | "error"; message?: string }>({ status: "idle" });
+  const [familyCopied, setFamilyCopied] = useState(false);
   const [sheetsSyncState, setSheetsSyncState] = useState<{ status: "idle" | "syncing" | "ok" | "error" | "disabled"; message?: string }>({ status: "idle" });
   // 결과물 동기화 대상 구글시트 링크 — 마운트 시 1회 조회해 동기화 버튼 옆에 표시.
   const [sheetUrl, setSheetUrl] = useState<string | null>(null);
@@ -1133,6 +1141,11 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
             })
             .catch(() => {});
         }
+        setFamilyCompanies(remote.config.familyCompanies ?? null);
+        setFamilyMeta({
+          updatedAt: remote.config.familyCompaniesUpdatedAt ?? null,
+          updatedBy: remote.config.familyCompaniesUpdatedBy ?? null
+        });
         const remotePersisted = parsePersistedState(JSON.stringify(remote.config));
         nextPersisted = remotePersisted;
         nextSaved = remoteSaved;
@@ -1781,6 +1794,53 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     () => Array.from(new Set(savedDatasets.map((d) => d.quarterLabel))).sort((a, b) => b.localeCompare(a)),
     [savedDatasets]
   );
+  // 패밀리사 수집 현황 — 분기 필터를 따라가고, "전체 분기"면 최신 분기 기준.
+  const effectiveFamilyList = familyCompanies?.length ? familyCompanies : DEFAULT_FAMILY_COMPANIES;
+  const familyTargetQuarter = dataQuarterFilter || dataQuarterOptions[0] || null;
+  const familyCoverage = useMemo(
+    () => familyTargetQuarter ? computeFamilyCoverage(effectiveFamilyList, savedDatasets, familyTargetQuarter) : null,
+    [effectiveFamilyList, savedDatasets, familyTargetQuarter]
+  );
+
+  // 패밀리 명단 저장 — app_config.family_companies. 컬럼이 없으면(마이그레이션 008 전)
+  // 에러 메시지로 안내하고, 그 전까지는 코드 내장 기본 명단으로 동작한다.
+  async function saveFamilyCompanies() {
+    const lines = (familyDraft ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (!lines.length) {
+      setFamilySaveState({ status: "error", message: "명단이 비어 있습니다. 한 줄에 한 회사씩 적어 주세요." });
+      return;
+    }
+    setFamilySaveState({ status: "saving" });
+    try {
+      const res = await fetch("/api/shared-state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ familyCompanies: { value: lines } })
+      });
+      const data = await res.json().catch(() => null) as { ok?: boolean; reason?: string; error?: string; updatedAt?: string; updatedBy?: string } | null;
+      if (data?.ok) {
+        setFamilyCompanies(lines);
+        setFamilyMeta({ updatedAt: data.updatedAt ?? new Date().toISOString(), updatedBy: data.updatedBy ?? null });
+        setFamilyDraft(null);
+        setFamilySaveState({ status: "ok", message: `명단 ${lines.length}개사 저장 완료` });
+        window.setTimeout(() => setFamilySaveState((prev) => prev.status === "ok" ? { status: "idle" } : prev), 4000);
+      } else if (data?.reason === "family_columns_missing") {
+        setFamilySaveState({ status: "error", message: "DB 컬럼이 아직 없습니다 — supabase/008_family_companies.sql을 먼저 실행하세요. 그 전까지는 기본 명단으로 동작합니다." });
+      } else {
+        setFamilySaveState({ status: "error", message: data?.error ?? "명단 저장에 실패했습니다." });
+      }
+    } catch (error) {
+      setFamilySaveState({ status: "error", message: error instanceof Error ? error.message : "명단 저장에 실패했습니다." });
+    }
+  }
+
+  function copyFamilyMissing() {
+    if (!familyCoverage?.missing.length) return;
+    void navigator.clipboard.writeText(familyCoverage.missing.join("\n")).then(() => {
+      setFamilyCopied(true);
+      window.setTimeout(() => setFamilyCopied(false), 2500);
+    }).catch(() => undefined);
+  }
   // 검색(회사명) + 분기 + 산업 필터를 적용한 회사 그룹.
   const filteredGroupedDatasets = useMemo(() => {
     const q = dataSearch.trim().toLowerCase();
@@ -3485,10 +3545,86 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                           <option key={option} value={option}>{`${getIndustryIcon(option)} ${option}`}</option>
                         ))}
                       </select>
+                      {familyCoverage && (
+                        <button
+                          type="button"
+                          className={`ghost-button ${familyPanelOpen ? "is-selected" : ""}`}
+                          style={{
+                            padding: "0.35rem 0.7rem",
+                            fontSize: "0.85rem",
+                            borderRadius: 999,
+                            fontWeight: 600,
+                            color: familyCoverage.missing.length ? "#b91c1c" : "#15803d",
+                            borderColor: familyCoverage.missing.length ? "#fca5a5" : "#86efac",
+                            background: familyCoverage.missing.length ? "#fef2f2" : "#f0fdf4"
+                          }}
+                          onClick={() => setFamilyPanelOpen((prev) => !prev)}
+                          title={`${formatCompactQuarterLabel(familyTargetQuarter ?? "")} 기준 패밀리사 수집 현황 — 클릭해서 미저장 명단 보기`}
+                        >패밀리 {familyCoverage.saved.length} / {familyCoverage.total} {familyPanelOpen ? "▴" : "▾"}</button>
+                      )}
                       {(dataSearch || dataQuarterFilter || dataIndustryFilter) && (
                         <button className="ghost-button" style={{ padding: "0.35rem 0.6rem", fontSize: "0.85rem" }} onClick={() => { setDataSearch(""); setDataQuarterFilter(""); setDataIndustryFilter(""); }}>초기화</button>
                       )}
                     </div>
+                    {familyPanelOpen && familyCoverage && familyTargetQuarter && (
+                      <div className="notice" style={{ marginBottom: 12, textAlign: "left" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                          <strong>{formatCompactQuarterLabel(familyTargetQuarter)} 분기 — 패밀리 {familyCoverage.total}개사 중 {familyCoverage.saved.length}개사 저장됨 · 미저장 {familyCoverage.missing.length}</strong>
+                          {!dataQuarterFilter && <span className="muted" style={{ fontSize: 12 }}>(분기 필터가 &quot;전체&quot;라 최신 분기 기준)</span>}
+                          {familyCoverage.missing.length > 0 && (
+                            <button className="ghost-button button-tiny" style={{ marginLeft: "auto" }} onClick={copyFamilyMissing}>
+                              {familyCopied ? "✓ 복사됨" : "📋 미저장 명단 복사"}
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ height: 6, borderRadius: 3, background: "#dbeafe", margin: "10px 0 12px", overflow: "hidden" }}>
+                          <div style={{ width: `${familyCoverage.total ? Math.round((familyCoverage.saved.length / familyCoverage.total) * 100) : 0}%`, height: "100%", background: familyCoverage.missing.length ? "#3b82f6" : "#22c55e" }} />
+                        </div>
+                        {familyCoverage.missing.length > 0 ? (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {familyCoverage.missing.map((name) => (
+                              <span key={name} style={{ fontSize: 12, border: "1px solid #fca5a5", color: "#b91c1c", background: "#fef2f2", borderRadius: 999, padding: "2px 10px" }}>{name}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="muted" style={{ margin: 0 }}>이 분기 패밀리 데이터가 모두 저장됐습니다. 🎉</p>
+                        )}
+                        <div style={{ marginTop: 12, display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "flex-start" }}>
+                          {familyCoverage.extras.length > 0 && (
+                            <details style={{ fontSize: 12 }}>
+                              <summary className="muted" style={{ cursor: "pointer" }}>명단 외 저장 회사 {familyCoverage.extras.length}개사 (정리된 옛 패밀리 등)</summary>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                                {familyCoverage.extras.map((name) => (
+                                  <span key={name} style={{ fontSize: 12, border: "1px solid var(--border, #ddd)", borderRadius: 999, padding: "2px 10px", color: "#666" }}>{name}</span>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                          <details style={{ fontSize: 12 }} onToggle={(event) => { if ((event.target as HTMLDetailsElement).open && familyDraft === null) setFamilyDraft(effectiveFamilyList.join("\n")); }}>
+                            <summary className="muted" style={{ cursor: "pointer" }}>
+                              명단 편집 ({effectiveFamilyList.length}개사{familyCompanies === null ? " · 기본 명단" : ""}{familyMeta.updatedAt ? ` · 마지막 수정 ${formatMemoTimestamp(familyMeta.updatedAt)}${familyMeta.updatedBy ? ` · ${familyMeta.updatedBy}` : ""}` : ""})
+                            </summary>
+                            <div style={{ marginTop: 8 }}>
+                              <p className="muted" style={{ margin: "0 0 6px" }}>한 줄에 한 회사. 괄호는 별칭으로 인식합니다 — 예: <code>청연 (구 생활연구소)</code>는 저장명이 &quot;생활연구소&quot;여도 같은 회사로 셉니다.</p>
+                              <textarea
+                                className="textarea"
+                                style={{ width: "100%", minHeight: 220, fontSize: 13 }}
+                                value={familyDraft ?? ""}
+                                onChange={(event) => setFamilyDraft(event.target.value)}
+                              />
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: 6 }}>
+                                <button className="button button-tiny" disabled={familySaveState.status === "saving"} onClick={() => void saveFamilyCompanies()}>
+                                  {familySaveState.status === "saving" ? "저장 중..." : "명단 저장"}
+                                </button>
+                                {familySaveState.message && familySaveState.status !== "saving" && (
+                                  <span style={{ fontSize: 12, color: familySaveState.status === "error" ? "#b91c1c" : "#15803d" }}>{familySaveState.message}</span>
+                                )}
+                              </div>
+                            </div>
+                          </details>
+                        </div>
+                      </div>
+                    )}
                     {!filteredGroupedDatasets.length && (
                       <div className="notice">검색·필터 조건에 맞는 회사가 없습니다.</div>
                     )}

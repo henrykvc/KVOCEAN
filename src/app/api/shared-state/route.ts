@@ -52,8 +52,20 @@ export async function GET() {
     signatureRow = signatureData;
   }
 
+  // 패밀리사 명단 — 마이그레이션 008 전이면(컬럼 없음) 조용히 생략하고
+  // 클라이언트는 코드 내장 기본 명단으로 동작한다.
+  let familyRow: { family_companies?: unknown; family_companies_updated_at?: string | null; family_companies_updated_by?: string | null } | null = null;
+  const { data: familyData, error: familyError } = await supabase
+    .from("app_config")
+    .select("family_companies, family_companies_updated_at, family_companies_updated_by")
+    .eq("id", "global")
+    .maybeSingle();
+  if (!familyError && familyData) {
+    familyRow = familyData;
+  }
+
   const response: SharedStateResponse = {
-    config: deserializeSharedConfig({ ...(configRow ?? {}), ...(memoRow ?? {}), ...(signatureRow ?? {}) }),
+    config: deserializeSharedConfig({ ...(configRow ?? {}), ...(memoRow ?? {}), ...(signatureRow ?? {}), ...(familyRow ?? {}) }),
     datasets: []
   };
 
@@ -64,6 +76,7 @@ type SharedStatePutBody = {
   config?: Partial<SharedStateResponse["config"]>;
   memo?: { value: string };
   syncSignature?: { value: string };
+  familyCompanies?: { value: string[] };
 };
 
 export async function PUT(request: Request) {
@@ -85,7 +98,11 @@ export async function PUT(request: Request) {
 
   const hasSignatureUpdate = !!body.syncSignature && typeof body.syncSignature.value === "string";
 
-  if (!hasConfigUpdate && !hasMemoUpdate && !hasSignatureUpdate) {
+  const hasFamilyUpdate = !!body.familyCompanies
+    && Array.isArray(body.familyCompanies.value)
+    && body.familyCompanies.value.every((v) => typeof v === "string");
+
+  if (!hasConfigUpdate && !hasMemoUpdate && !hasSignatureUpdate && !hasFamilyUpdate) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
@@ -156,6 +173,37 @@ export async function PUT(request: Request) {
       }
       return NextResponse.json({ error: message }, { status: 500 });
     }
+  }
+
+  if (hasFamilyUpdate) {
+    const familyValue = body.familyCompanies!.value.map((v) => v.trim()).filter(Boolean);
+    const { error } = await supabase
+      .from("app_config")
+      .upsert({
+        id: "global",
+        family_companies: familyValue,
+        family_companies_updated_at: nowIso,
+        family_companies_updated_by: user.email,
+        updated_at: nowIso,
+        updated_by: user.email
+      }, { onConflict: "id" });
+
+    if (error) {
+      const message = error.message ?? "";
+      const columnMissing = /family_companies/i.test(message) && /(does not exist|column)/i.test(message);
+      if (columnMissing) {
+        return NextResponse.json({ ok: false, reason: "family_columns_missing", error: message });
+      }
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
+
+    await supabase.from("change_logs").insert({
+      action: "family_companies_updated",
+      target_type: "app_config",
+      target_id: "global",
+      payload: { count: familyValue.length },
+      created_by: user.email
+    });
   }
 
   return NextResponse.json({ ok: true, updatedAt: nowIso, updatedBy: user.email });
