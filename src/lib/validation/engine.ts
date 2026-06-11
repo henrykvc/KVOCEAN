@@ -18,6 +18,10 @@ export type DetailRow = {
   /** true when the account name did not match any seed/catalog entry and
    * the sign was chosen by keyword fallback (or defaulted to +). */
   unmatched?: boolean;
+  /** true when the sign came from the 계정트리(분류DB). Tree-resolved signs are
+   * locked — 같은 이름·다른 부호 케이스는 계정명 분리(_minus/_plus)로 트리에서
+   * 처리한다. */
+  treeMatched?: boolean;
 };
 
 export type ValidationResult = {
@@ -492,6 +496,7 @@ export function validatePasteSections(
       const resolution = resolveSign(child.name, logicConfig, sect, catalogLookup, treeOnly);
       let sign: SignCode | null = resolution.sign;
       let unmatched = !resolution.matched;
+      const treeMatched = resolution.matched;
 
       // 2) Section-level overrides (e.g. 유동부채/퇴직연금운용자산 → −).
       const sectOverride = sectionOverrides[sect] ?? {};
@@ -502,13 +507,14 @@ export function validatePasteSections(
           break;
         }
       }
-      // 3) Per-session manual fixes always win.
-      if (sessionSignFixes[sect]?.[child.name] !== undefined) {
+      // 3) Per-session manual fixes — 트리에 분류된 계정은 부호가 트리에서
+      // 고정이므로 미분류 계정에만 허용한다.
+      if (!treeMatched && sessionSignFixes[sect]?.[child.name] !== undefined) {
         sign = sessionSignFixes[sect][child.name];
         unmatched = false;
       }
       if (sign === 2) {
-        used.push({ 계정명: child.name, 원본값: child.val!, 부호: "제외", 적용값: 0, _row: rowIndex, _col: child.col });
+        used.push({ 계정명: child.name, 원본값: child.val!, 부호: "제외", 적용값: 0, _row: rowIndex, _col: child.col, ...(treeMatched ? { treeMatched: true } : {}) });
         continue;
       }
       const resolvedSign = (sign ?? 0) as 0 | 1;
@@ -521,7 +527,8 @@ export function validatePasteSections(
         적용값: signedValue,
         _row: rowIndex,
         _col: child.col,
-        ...(unmatched ? { unmatched: true } : {})
+        ...(unmatched ? { unmatched: true } : {}),
+        ...(treeMatched ? { treeMatched: true } : {})
       });
     }
 
@@ -571,7 +578,7 @@ export function validatePasteSections(
       }
       if (sign === 2) {
         const capitalMatch = getAccountMatch(nameToValue, compName, logicConfig);
-        used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _row: rowIndex, _col: capitalMatch?.col, _allowedSigns: [0, 1, 2] });
+        used.push({ 계정명: compName, 원본값: value, 부호: "제외", 적용값: 0, _row: rowIndex, _col: capitalMatch?.col, _allowedSigns: [0, 1] });
         continue;
       }
       const signedValue = applySign(value, sign);
@@ -584,7 +591,7 @@ export function validatePasteSections(
         적용값: signedValue,
         _row: rowIndex,
         _col: capitalMatch?.col,
-        _allowedSigns: [0, 1, 2]
+        _allowedSigns: [0, 1]
       });
     }
     if (used.length) {
@@ -719,7 +726,8 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     }
 
     const currentSign = signFromLabel(item.부호);
-    const allowedSigns = item._allowedSigns ?? [0, 1, 2];
+    // 세션 '제외'는 폐지 — 후보는 가산/차감만. (레거시 저장분의 제외 표시는 유지)
+    const allowedSigns = item._allowedSigns ?? [0, 1];
     const isDoubleNegative = currentSign === 1 && item.원본값 < 0;
 
     if (item._row !== undefined && item._col !== undefined && currentSign !== 2 && (shouldSuggestOcrSignCorrection(item.계정명) || isDoubleNegative)) {
@@ -795,25 +803,21 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     if (close(absDiff, absRaw)) {
       if (item.부호 === "−" && diff > 0) {
         actions.push({
-          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **차감** 중 → **제외**로 바꾸면 차이 해소 가능 (OCR이 이미 NET값 제공)`,
-          shortText: `${item.계정명} 검증 부호를 제외로 변경 → 차이 0원 가능`,
+          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 차이와 이 계정 금액이 일치합니다 — OCR이 이미 NET값을 제공해 이중 반영됐을 가능성. 이 계정 열 삭제(🗑) 또는 분류DB 분류 확인이 필요합니다`,
+          shortText: `${item.계정명} 이중 반영 의심 (NET값 가능성) — 열 삭제(🗑) 또는 분류DB 확인`,
           badge: "차이 0원",
           priority: buildDiagnosisPriority(0),
           nextDiff: 0,
-          nextAbsDiff: 0,
-          label: `제외로 수정: ${item.계정명}`,
-          fix: { sect, acct: item.계정명, newSign: 2 }
+          nextAbsDiff: 0
         });
       } else if (item.부호 === "+" && diff < 0) {
         actions.push({
-          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 현재 **가산** 중 → **제외**로 바꾸면 차이 해소 가능 (이중 집계 의심)`,
-          shortText: `${item.계정명} 검증 부호를 제외로 변경 → 차이 0원 가능`,
+          text: `💡 **${item.계정명}** (${formatNumber(item.원본값)}원): 차이와 이 계정 금액이 일치합니다 — 상위 합계에 이미 포함된 이중 집계 의심. 이 계정 열 삭제(🗑) 또는 분류DB 분류 확인이 필요합니다`,
+          shortText: `${item.계정명} 이중 집계 의심 — 열 삭제(🗑) 또는 분류DB 확인`,
           badge: "차이 0원",
           priority: buildDiagnosisPriority(0),
           nextDiff: 0,
-          nextAbsDiff: 0,
-          label: `제외로 수정: ${item.계정명}`,
-          fix: { sect, acct: item.계정명, newSign: 2 }
+          nextAbsDiff: 0
         });
       } else if (item.부호 === "제외" && diff > 0) {
         actions.push({
@@ -876,13 +880,28 @@ export function diagnoseDiff(result: ValidationResult): DiagnosisAction[] {
     return (a.nextAbsDiff ?? Number.POSITIVE_INFINITY) - (b.nextAbsDiff ?? Number.POSITIVE_INFINITY);
   });
 
-  if (!actions.length) {
-    actions.push({
+  // 트리에 분류된 계정은 검증 부호를 직접 바꿀 수 없다 — 부호 변경 제안은
+  // "차이 원인" 힌트로만 남기고 분류DB 처리 안내로 바꾼다.
+  const treeLocked = new Set(result.detail.filter((item) => item.treeMatched).map((item) => item.계정명));
+  const guided = actions.map((action) => {
+    if (!action.fix || !treeLocked.has(action.fix.acct)) {
+      return action;
+    }
+    return {
+      ...action,
+      shortText: `${action.shortText ?? action.text} — 트리 분류 계정이라 여기서 못 바꿉니다. 분류DB(계정트리)에서 부호를 확인하거나 계정명 분리(_minus/_plus)로 처리하세요`,
+      fix: undefined,
+      label: undefined
+    };
+  });
+
+  if (!guided.length) {
+    guided.push({
       text: `⚠️ 차이 ${diff > 0 ? "+" : ""}${formatNumber(diff)}원 — 단일 계정으로 설명되지 않습니다. 먼저 큰 금액 계정의 OCR 수정값 부호를 확인하고, 그다음 검증 부호를 조정해 주세요.`
     });
   }
 
-  return actions.slice(0, 2);
+  return guided.slice(0, 2);
 }
 
 export function buildCopyText(

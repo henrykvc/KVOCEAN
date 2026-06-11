@@ -421,7 +421,9 @@ function resolveRowMeta(
       }
     }
 
-    if (sessionSignFixes[section]?.[accountName] !== undefined) {
+    // 트리에 분류된 계정은 부호가 트리 고정 — 세션 부호 수정은 미분류 계정에만
+    // 적용한다(엔진 step 3과 동일한 게이트).
+    if (!classification.matched && sessionSignFixes[section]?.[accountName] !== undefined) {
       signCode = sessionSignFixes[section][accountName];
     }
 

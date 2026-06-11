@@ -1935,15 +1935,18 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
     if (validation.parsed.error || !canSaveCurrentDataset) {
       return;
     }
+    // 수정 반영본(copyText)을 원문으로 저장한다 — 원본/수정 레이어를 따로
+    // 보관하지 않고, 검증기로 다시 불러오면 저장 당시 수정이 반영된 텍스트가
+    // 그대로 열린다. (옛 저장본의 pasteEdits/nameEdits는 읽기 호환 유지)
     const snapshotArgs = {
-      pastedText,
+      pastedText: validation.copyText,
       selectedCompany: selectedCompany.trim() || null,
       tolerance,
       logicConfig,
       companyConfigs,
       accountTreeLookup: accountTreeLookup ?? undefined,
-      pasteEdits,
-      nameEdits,
+      pasteEdits: {},
+      nameEdits: {},
       sessionSignFixes,
       statementType
     };
@@ -2393,12 +2396,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
         </button>
       </div>
     );
-  }
-
-  function applySuggestedEdit(rowIndex: number, colIndex: number, nextValue: number) {
-    const rawCell = validation.parsed.dataRows[rowIndex]?.[colIndex];
-    const rawValue = typeof rawCell === "number" ? rawCell : 0;
-    updateEditableValue(rowIndex, colIndex, rawValue, String(nextValue));
   }
 
   function removeValidationAccount(colIndex: number) {
@@ -3369,11 +3366,18 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                                 <td>{formatNumber(detail.원본값)}</td>
                                                 <td>{detail._row !== undefined && detail._col !== undefined ? <input className="mini-input" type="number" step={1} value={String(currentValue)} onChange={(event) => updateEditableValue(detail._row!, detail._col!, detail.원본값, event.target.value)} /> : <span className="muted">자동 계산</span>}</td>
                                                 <td>
-                                                  <div className="sign-editor">
-                                                    <select className="mini-select" value={String(currentSign)} onChange={(event) => updateDetailSign(resultSection, detail.계정명, Number(event.target.value) as SignCode)}>
-                                                      <option value="0">가산(+)</option><option value="1">차감(−)</option><option value="2">제외</option>
-                                                    </select>
-                                                  </div>
+                                                  {detail.treeMatched ? (
+                                                    <span className="muted" style={{ whiteSpace: "nowrap" }} title="계정트리에 분류된 계정 — 부호는 분류DB(계정트리 시트)에서만 변경할 수 있습니다. 같은 이름에 다른 부호가 필요하면 계정명 분리(_minus/_plus)로 처리하세요.">
+                                                      {currentSign === 1 ? "차감(−)" : currentSign === 2 ? "제외" : "가산(+)"} 🔒
+                                                    </span>
+                                                  ) : (
+                                                    <div className="sign-editor">
+                                                      <select className="mini-select" value={String(currentSign)} onChange={(event) => updateDetailSign(resultSection, detail.계정명, Number(event.target.value) as SignCode)}>
+                                                        <option value="0">가산(+)</option><option value="1">차감(−)</option>
+                                                        {currentSign === 2 ? <option value="2" disabled>제외</option> : null}
+                                                      </select>
+                                                    </div>
+                                                  )}
                                                 </td>
                                                 <td>{formatNumber(detail.적용값)}</td>
                                               </tr>
@@ -3384,7 +3388,7 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                     </div>
                                   ) : null}
 
-                                  {result.detail.length > 0 && <div className="rule-helper muted">`OCR 수정값`과 계정 삭제/추가는 실제 저장 데이터에 반영됩니다. 부호 변경은 `분류DB에 영구 반영`이 권장됩니다 (모든 회사·분기 적용).</div>}
+                                  {result.detail.length > 0 && <div className="rule-helper muted">`OCR 수정값`과 계정 삭제/추가는 수정한 그대로 저장됩니다. 계정트리에 분류된 계정의 부호(🔒)는 분류DB(계정트리 시트)에서만 바꿀 수 있고, 미분류 계정만 여기서 부호를 정할 수 있습니다.</div>}
 
                                   <div className="two-col">
                                     <div className="diagnosis-card">
@@ -3412,7 +3416,6 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                                               {action.badge ? <span className="soft-badge">{action.badge}</span> : null}
                                             </div>
                                             <div className="pre diagnosis-copy">{renderDiagnosisText(action.shortText ?? action.text)}</div>
-                                            {action.edit ? <div className="inline-actions" style={{ marginTop: 12 }}><button className="secondary-button" onClick={() => applySuggestedEdit(action.edit!.row, action.edit!.col, action.edit!.value)}>{action.editLabel}</button></div> : null}
                                           </div>
                                         ))}
                                       </div>
