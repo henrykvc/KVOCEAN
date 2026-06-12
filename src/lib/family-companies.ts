@@ -25,7 +25,7 @@ export type FamilyCoverage = {
   total: number;
   /** 해당 분기에 저장된 명단 회사(표시명). */
   saved: string[];
-  /** 해당 분기에 저장 안 된 명단 회사(표시명, 명단 순서). */
+  /** 해당 분기에 저장 안 된 명단 회사(표시명, 가나다순). */
   missing: string[];
   /** 명단에 없는 저장 회사(전체 기간) — 정리된 옛 패밀리 등. */
   extras: string[];
@@ -98,7 +98,8 @@ export function computeFamilyCoverage(
   for (const entry of entries) {
     (savedDisplays.has(entry.display) ? saved : missing).push(entry.display);
   }
-  return { total: entries.length, saved, missing, extras: Array.from(extraNames).sort((a, b) => a.localeCompare(b)) };
+  missing.sort((a, b) => a.localeCompare(b, "ko"));
+  return { total: entries.length, saved, missing, extras: Array.from(extraNames).sort((a, b) => a.localeCompare(b, "ko")) };
 }
 
 /** 기본 명단(2026-06 정리본). app_config.family_companies가 비어 있을 때 사용. */

@@ -3594,9 +3594,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                           <div style={{ width: `${familyCoverage.total ? Math.round((familyCoverage.saved.length / familyCoverage.total) * 100) : 0}%`, height: "100%", background: familyCoverage.missing.length ? "#3b82f6" : "#22c55e" }} />
                         </div>
                         {familyCoverage.missing.length > 0 ? (
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                             {familyCoverage.missing.map((name) => (
-                              <span key={name} style={{ fontSize: 12, border: "1px solid #fca5a5", color: "#b91c1c", background: "#fef2f2", borderRadius: 999, padding: "2px 10px" }}>{name}</span>
+                              <span key={name} style={{ fontSize: 12, color: "#b91c1c" }}>{name}</span>
                             ))}
                           </div>
                         ) : (
@@ -3606,9 +3606,9 @@ export function ValidatorApp({ userRole = "manager", initialDatasets, initialTra
                           {familyCoverage.extras.length > 0 && (
                             <details style={{ fontSize: 12 }}>
                               <summary className="muted" style={{ cursor: "pointer" }}>명단 외 저장 회사 {familyCoverage.extras.length}개사 (정리된 옛 패밀리 등)</summary>
-                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 8 }}>
                                 {familyCoverage.extras.map((name) => (
-                                  <span key={name} style={{ fontSize: 12, border: "1px solid var(--border, #ddd)", borderRadius: 999, padding: "2px 10px", color: "#666" }}>{name}</span>
+                                  <span key={name} style={{ fontSize: 12, color: "#666" }}>{name}</span>
                                 ))}
                               </div>
                             </details>
